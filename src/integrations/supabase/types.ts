@@ -65,11 +65,15 @@ export type Database = {
           address: string | null
           city: string | null
           created_at: string
+          custom_domain: string | null
           enabled: boolean
           id: string
+          logo_url: string | null
           monthly_revenue: number
           name: string
+          opening_hours: string | null
           owner_id: string
+          primary_color: string | null
           slug: string | null
           total_seats: number
           updated_at: string
@@ -79,11 +83,15 @@ export type Database = {
           address?: string | null
           city?: string | null
           created_at?: string
+          custom_domain?: string | null
           enabled?: boolean
           id?: string
+          logo_url?: string | null
           monthly_revenue?: number
           name: string
+          opening_hours?: string | null
           owner_id: string
+          primary_color?: string | null
           slug?: string | null
           total_seats?: number
           updated_at?: string
@@ -93,11 +101,15 @@ export type Database = {
           address?: string | null
           city?: string | null
           created_at?: string
+          custom_domain?: string | null
           enabled?: boolean
           id?: string
+          logo_url?: string | null
           monthly_revenue?: number
           name?: string
+          opening_hours?: string | null
           owner_id?: string
+          primary_color?: string | null
           slug?: string | null
           total_seats?: number
           updated_at?: string
@@ -497,11 +509,15 @@ export type Database = {
           address: string | null
           city: string | null
           created_at: string
+          custom_domain: string | null
           enabled: boolean
           id: string
+          logo_url: string | null
           monthly_revenue: number
           name: string
+          opening_hours: string | null
           owner_id: string
+          primary_color: string | null
           slug: string | null
           total_seats: number
           updated_at: string
