@@ -1,28 +1,104 @@
 import { useState } from "react";
+import { useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { BookOpen, MapPin, Clock, Users, Check, ChevronRight } from "lucide-react";
+import { BookOpen, MapPin, Clock, Users, Check, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
-
-const plans = [
-  { name: "4 Hour", price: "₹2,000/mo", features: ["Any 4-hour slot", "Reserved seat", "Wi-Fi access"] },
-  { name: "6 Hour", price: "₹3,000/mo", features: ["Any 6-hour slot", "Reserved seat", "Wi-Fi access", "Locker"] },
-  { name: "Full Day", price: "₹4,500/mo", features: ["6AM – 10PM access", "Reserved seat", "Wi-Fi + Locker", "Priority support"], popular: true },
-];
-
-const slots = [
-  { label: "Morning (6AM–10AM)", available: 3 },
-  { label: "Forenoon (10AM–2PM)", available: 7 },
-  { label: "Afternoon (2PM–6PM)", available: 12 },
-  { label: "Evening (6PM–10PM)", available: 1 },
-];
+import { supabase } from "@/integrations/supabase/client";
 
 const LibraryPublicPage = () => {
+  const { id } = useParams<{ id: string }>();
   const [showForm, setShowForm] = useState(false);
+
+  const { data: library, isLoading: libLoading } = useQuery({
+    queryKey: ["public-library", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("libraries")
+        .select("*")
+        .eq("id", id!)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
+
+  const { data: plans = [] } = useQuery({
+    queryKey: ["public-plans", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("plans")
+        .select("*")
+        .eq("library_id", id!)
+        .eq("is_active", true)
+        .order("price", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
+
+  const { data: slots = [] } = useQuery({
+    queryKey: ["public-slots", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("time_slots")
+        .select("*")
+        .eq("library_id", id!)
+        .eq("is_active", true)
+        .order("start_time", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
+
+  // Count occupied students per slot to calculate availability
+  const { data: studentCounts = [] } = useQuery({
+    queryKey: ["public-student-counts", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("students")
+        .select("slot")
+        .eq("library_id", id!)
+        .eq("status", "active");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
+
+  const slotOccupancy = studentCounts.reduce((acc, s) => {
+    if (s.slot) {
+      acc[s.slot] = (acc[s.slot] || 0) + 1;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
+  if (libLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!library) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Library not found.</p>
+      </div>
+    );
+  }
+
+  // Find the most popular plan (middle or highest price)
+  const popularIndex = plans.length >= 3 ? 1 : plans.length - 1;
 
   return (
     <div className="min-h-screen bg-background">
@@ -33,64 +109,84 @@ const LibraryPublicPage = () => {
             <div className="w-14 h-14 rounded-2xl bg-primary/30 flex items-center justify-center mx-auto mb-6">
               <BookOpen className="w-7 h-7 text-primary-foreground" />
             </div>
-            <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">City Study Hub</h1>
-            <div className="flex items-center justify-center gap-4 text-primary-foreground/60 text-sm">
-              <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> Koramangala, Bangalore</span>
-              <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> 6AM – 10PM</span>
-              <span className="flex items-center gap-1"><Users className="w-4 h-4" /> 40 seats</span>
+            <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">{library.name}</h1>
+            <div className="flex items-center justify-center gap-4 text-primary-foreground/60 text-sm flex-wrap">
+              {library.address && (
+                <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {library.address}{library.city ? `, ${library.city}` : ""}</span>
+              )}
+              {slots.length > 0 && (
+                <span className="flex items-center gap-1">
+                  <Clock className="w-4 h-4" /> {slots[0].start_time.slice(0, 5)} – {slots[slots.length - 1].end_time.slice(0, 5)}
+                </span>
+              )}
+              <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {library.total_seats} seats</span>
             </div>
           </motion.div>
         </div>
       </header>
 
       {/* Live Availability */}
-      <section className="py-12">
-        <div className="container mx-auto px-4 max-w-4xl">
-          <h2 className="text-2xl font-bold font-display text-foreground mb-6">Live Seat Availability</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {slots.map((slot) => (
-              <div key={slot.label} className="bg-card rounded-xl border border-border p-4 text-center">
-                <p className="text-xs text-muted-foreground mb-2">{slot.label}</p>
-                <p className={`text-2xl font-bold font-display ${slot.available <= 3 ? "text-destructive" : "text-success"}`}>
-                  {slot.available}
-                </p>
-                <p className="text-xs text-muted-foreground">seats left</p>
-              </div>
-            ))}
+      {slots.length > 0 && (
+        <section className="py-12">
+          <div className="container mx-auto px-4 max-w-4xl">
+            <h2 className="text-2xl font-bold font-display text-foreground mb-6">Live Seat Availability</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {slots.map((slot) => {
+                const maxSeats = slot.max_seats ?? library.total_seats;
+                const occupied = slotOccupancy[slot.name] || 0;
+                const available = Math.max(0, maxSeats - occupied);
+                return (
+                  <div key={slot.id} className="bg-card rounded-xl border border-border p-4 text-center">
+                    <p className="text-xs text-muted-foreground mb-2">{slot.name}</p>
+                    <p className="text-[10px] text-muted-foreground/60 mb-1">
+                      {slot.start_time.slice(0, 5)} – {slot.end_time.slice(0, 5)}
+                    </p>
+                    <p className={`text-2xl font-bold font-display ${available <= 3 ? "text-destructive" : "text-success"}`}>
+                      {available}
+                    </p>
+                    <p className="text-xs text-muted-foreground">seats left</p>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Plans */}
-      <section className="py-12 bg-secondary/30">
-        <div className="container mx-auto px-4 max-w-4xl">
-          <h2 className="text-2xl font-bold font-display text-foreground mb-6">Plans</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {plans.map((plan) => (
-              <div key={plan.name} className={`relative bg-card rounded-xl border p-6 ${plan.popular ? "border-primary shadow-glow" : "border-border"}`}>
-                {plan.popular && (
-                  <Badge className="absolute -top-2.5 left-4 bg-accent text-accent-foreground">Popular</Badge>
-                )}
-                <h3 className="text-lg font-bold font-display text-foreground">{plan.name}</h3>
-                <p className="text-2xl font-bold font-display text-primary mt-2">{plan.price}</p>
-                <ul className="mt-4 space-y-2">
-                  {plan.features.map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Check className="w-4 h-4 text-primary flex-shrink-0" />{f}
-                    </li>
-                  ))}
-                </ul>
-                <Button
-                  className="w-full mt-6 bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={() => setShowForm(true)}
-                >
-                  Book Now <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </div>
-            ))}
+      {plans.length > 0 && (
+        <section className="py-12 bg-secondary/30">
+          <div className="container mx-auto px-4 max-w-4xl">
+            <h2 className="text-2xl font-bold font-display text-foreground mb-6">Plans</h2>
+            <div className={`grid grid-cols-1 sm:grid-cols-${Math.min(plans.length, 3)} gap-6`}>
+              {plans.map((plan, i) => {
+                const isPopular = i === popularIndex && plans.length > 1;
+                return (
+                  <div key={plan.id} className={`relative bg-card rounded-xl border p-6 ${isPopular ? "border-primary shadow-glow" : "border-border"}`}>
+                    {isPopular && (
+                      <Badge className="absolute -top-2.5 left-4 bg-accent text-accent-foreground">Popular</Badge>
+                    )}
+                    <h3 className="text-lg font-bold font-display text-foreground">{plan.name}</h3>
+                    <p className="text-2xl font-bold font-display text-primary mt-2">
+                      ₹{plan.price.toLocaleString("en-IN")}<span className="text-sm font-normal text-muted-foreground">/mo</span>
+                    </p>
+                    {plan.description && (
+                      <p className="text-sm text-muted-foreground mt-2">{plan.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-1">{plan.duration_hours}h daily access</p>
+                    <Button
+                      className="w-full mt-6 bg-primary text-primary-foreground hover:bg-primary/90"
+                      onClick={() => setShowForm(true)}
+                    >
+                      Book Now <ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Admission Form */}
       {showForm && (
@@ -111,29 +207,36 @@ const LibraryPublicPage = () => {
                   <Label>Phone Number</Label>
                   <Input placeholder="10-digit number" className="mt-1" />
                 </div>
-                <div>
-                  <Label>Preferred Plan</Label>
-                  <Select>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="Select a plan" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="4hour">4 Hour – ₹2,000/mo</SelectItem>
-                      <SelectItem value="6hour">6 Hour – ₹3,000/mo</SelectItem>
-                      <SelectItem value="fullday">Full Day – ₹4,500/mo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Preferred Slot</Label>
-                  <Select>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="Select time slot" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="morning">Morning (6AM–10AM)</SelectItem>
-                      <SelectItem value="forenoon">Forenoon (10AM–2PM)</SelectItem>
-                      <SelectItem value="afternoon">Afternoon (2PM–6PM)</SelectItem>
-                      <SelectItem value="evening">Evening (6PM–10PM)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                {plans.length > 0 && (
+                  <div>
+                    <Label>Preferred Plan</Label>
+                    <Select>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder="Select a plan" /></SelectTrigger>
+                      <SelectContent>
+                        {plans.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name} – ₹{p.price.toLocaleString("en-IN")}/mo
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {slots.length > 0 && (
+                  <div>
+                    <Label>Preferred Slot</Label>
+                    <Select>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder="Select time slot" /></SelectTrigger>
+                      <SelectContent>
+                        {slots.map((s) => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div>
                   <Label>Start Date</Label>
                   <Input type="date" className="mt-1" />
