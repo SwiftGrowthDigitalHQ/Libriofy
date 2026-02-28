@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ArrowRight, BookOpen, Zap, Shield } from "lucide-react";
+import { ArrowRight, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 
@@ -57,7 +57,11 @@ const HeroSection = () => {
               </Button>
             </Link>
             <Link to="/library/demo">
-              <Button size="lg" variant="outline" className="border-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/10 px-8 py-6 text-base">
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-2 border-primary-foreground/40 text-primary-foreground bg-transparent hover:bg-primary hover:border-primary px-8 py-6 text-base font-semibold"
+              >
                 View Demo Library
               </Button>
             </Link>

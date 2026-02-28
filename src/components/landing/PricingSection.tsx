@@ -9,23 +9,23 @@ const plans = [
     price: "₹999",
     period: "/month",
     desc: "Perfect for single-branch libraries",
-    features: ["Up to 50 seats", "1 branch", "Seat management", "Basic analytics", "Email notifications"],
+    features: ["Up to 50 seats", "Seat management", "Basic analytics", "Notifications"],
     highlighted: false,
   },
   {
     name: "Growth",
-    price: "₹2,499",
+    price: "₹1,999",
     period: "/month",
     desc: "For growing library networks",
-    features: ["Up to 200 seats", "3 branches", "QR attendance", "Smart insights", "Priority support", "Payment tracking"],
+    features: ["Up to 150 seats", "Seat management", "Advanced analytics", "Notifications", "Export"],
     highlighted: true,
   },
   {
-    name: "Enterprise",
-    price: "Custom",
-    period: "",
+    name: "Pro",
+    price: "₹2,999",
+    period: "/month",
     desc: "For large-scale operations",
-    features: ["Unlimited seats", "Unlimited branches", "Custom integrations", "Dedicated support", "API access", "White-label"],
+    features: ["Unlimited seats", "All features", "Custom domain", "Priority support"],
     highlighted: false,
   },
 ];
@@ -43,7 +43,7 @@ const PricingSection = () => {
           <h2 className="text-3xl sm:text-4xl font-bold font-display text-foreground mb-4">
             Simple, transparent pricing
           </h2>
-          <p className="text-lg text-muted-foreground">Start free. Scale as you grow.</p>
+          <p className="text-lg text-muted-foreground">Start with a 14-day free trial. Scale as you grow.</p>
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
@@ -91,7 +91,7 @@ const PricingSection = () => {
                       : "bg-primary hover:bg-primary/90 text-primary-foreground"
                   }`}
                 >
-                  Get Started
+                  Start Free Trial
                 </Button>
               </Link>
             </motion.div>
