@@ -1,4 +1,4 @@
-import { useState, FormEvent } from "react";
+import { useState, useEffect, FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
@@ -12,7 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
-const LibraryPublicPage = () => {
+interface LibraryPublicPageProps {
+  domainLibrary?: any;
+}
+
+const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
   const { id } = useParams<{ id: string }>();
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -52,15 +56,17 @@ const LibraryPublicPage = () => {
   };
 
   const { data: library, isLoading: libLoading } = useQuery({
-    queryKey: ["public-library", id],
+    queryKey: ["public-library", domainLibrary?.id || id],
     queryFn: async () => {
+      if (domainLibrary) return domainLibrary;
       const { data, error } = await supabase
         .rpc("get_library_public", { p_identifier: id! });
       if (error) throw error;
       if (!data || (data as any[]).length === 0) return null;
       return (data as any[])[0];
     },
-    enabled: !!id,
+    enabled: !!domainLibrary || !!id,
+    initialData: domainLibrary || undefined,
   });
 
   const libraryId = library?.id;
@@ -141,6 +147,17 @@ const LibraryPublicPage = () => {
   const displaySlots = slots.length > 0 ? slots : (isDemo ? demoSlots : []);
   const displayAvailability = Object.keys(availabilityMap).length > 0 ? availabilityMap : (isDemo ? demoAvailability : {});
 
+  // Dynamic branding from library settings
+  const brandColor = library?.primary_color || "#14b8a6";
+
+  // Dynamic SEO title
+  useEffect(() => {
+    if (displayLibrary?.name) {
+      document.title = `${displayLibrary.name} | Libriofy`;
+    }
+    return () => { document.title = "Libriofy – Automate Your Library"; };
+  }, [displayLibrary?.name]);
+
   if (libLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -170,22 +187,30 @@ const LibraryPublicPage = () => {
       )}
 
       {/* Header */}
-      <header className="bg-hero-gradient text-primary-foreground py-16 sm:py-24">
+      <header style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor}dd)` }} className="text-white py-16 sm:py-24">
         <div className="container mx-auto px-4 text-center">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="w-14 h-14 rounded-2xl bg-primary/30 flex items-center justify-center mx-auto mb-6">
-              <BookOpen className="w-7 h-7 text-primary-foreground" />
-            </div>
+            {displayLibrary.logo_url ? (
+              <img src={displayLibrary.logo_url} alt={displayLibrary.name} className="w-14 h-14 rounded-2xl mx-auto mb-6 object-cover" />
+            ) : (
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{ background: `${brandColor}66` }}>
+                <BookOpen className="w-7 h-7 text-white" />
+              </div>
+            )}
             <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">{displayLibrary.name}</h1>
-            <div className="flex items-center justify-center gap-4 text-primary-foreground/60 text-sm flex-wrap">
+            <div className="flex items-center justify-center gap-4 text-white/70 text-sm flex-wrap">
               {displayLibrary.address && (
                 <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {displayLibrary.address}{displayLibrary.city ? `, ${displayLibrary.city}` : ""}</span>
               )}
-              {displaySlots.length > 0 && (
+              {displayLibrary.opening_hours ? (
+                <span className="flex items-center gap-1">
+                  <Clock className="w-4 h-4" /> {displayLibrary.opening_hours}
+                </span>
+              ) : displaySlots.length > 0 ? (
                 <span className="flex items-center gap-1">
                   <Clock className="w-4 h-4" /> {displaySlots[0].start_time.slice(0, 5)} – {displaySlots[displaySlots.length - 1].end_time.slice(0, 5)}
                 </span>
-              )}
+              ) : null}
               <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {displayLibrary.total_seats} seats</span>
             </div>
           </motion.div>

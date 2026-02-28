@@ -20,6 +20,7 @@ import RenewalsPage from "./pages/RenewalsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WaitingListPage from "./pages/WaitingListPage";
 import NotFound from "./pages/NotFound";
+import DomainRouter from "./components/DomainRouter";
 
 const queryClient = new QueryClient();
 
@@ -30,24 +31,26 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/auth" element={<AuthPage />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/dashboard/seats" element={<SeatMapPage />} />
-            <Route path="/dashboard/students" element={<StudentsPage />} />
-            <Route path="/dashboard/payments" element={<PaymentsPage />} />
-            <Route path="/dashboard/plans" element={<PlansPage />} />
-            <Route path="/dashboard/analytics" element={<AnalyticsPage />} />
-            <Route path="/dashboard/attendance" element={<AttendancePage />} />
-            <Route path="/dashboard/qr-codes" element={<QRCodesPage />} />
-            <Route path="/dashboard/renewals" element={<RenewalsPage />} />
-            <Route path="/dashboard/settings" element={<SettingsPage />} />
-            <Route path="/dashboard/waitlist" element={<WaitingListPage />} />
-            <Route path="/admin" element={<SuperAdminPage />} />
-            <Route path="/library/:id" element={<LibraryPublicPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <DomainRouter>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/auth" element={<AuthPage />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/dashboard/seats" element={<SeatMapPage />} />
+              <Route path="/dashboard/students" element={<StudentsPage />} />
+              <Route path="/dashboard/payments" element={<PaymentsPage />} />
+              <Route path="/dashboard/plans" element={<PlansPage />} />
+              <Route path="/dashboard/analytics" element={<AnalyticsPage />} />
+              <Route path="/dashboard/attendance" element={<AttendancePage />} />
+              <Route path="/dashboard/qr-codes" element={<QRCodesPage />} />
+              <Route path="/dashboard/renewals" element={<RenewalsPage />} />
+              <Route path="/dashboard/settings" element={<SettingsPage />} />
+              <Route path="/dashboard/waitlist" element={<WaitingListPage />} />
+              <Route path="/admin" element={<SuperAdminPage />} />
+              <Route path="/library/:id" element={<LibraryPublicPage />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </DomainRouter>
         </BrowserRouter>
       </TooltipProvider>
     </AuthProvider>

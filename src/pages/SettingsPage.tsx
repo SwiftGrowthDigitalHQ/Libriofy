@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid } from "lucide-react";
+import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid, Globe, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -40,7 +40,7 @@ const SettingsPage = () => {
   const activeLibrary = libraries[0]; // first library owned
 
   const updateLibMutation = useMutation({
-    mutationFn: async (updates: { name?: string; address?: string; city?: string; total_seats?: number }) => {
+    mutationFn: async (updates: { name?: string; address?: string; city?: string; total_seats?: number; custom_domain?: string; logo_url?: string; primary_color?: string; opening_hours?: string }) => {
       if (!activeLibrary) throw new Error("No library");
       const { error } = await supabase.from("libraries").update(updates).eq("id", activeLibrary.id);
       if (error) throw error;
@@ -95,16 +95,24 @@ const SettingsPage = () => {
 
 // ─── Library Info Tab ───
 const LibrarySettingsTab = ({ library, onUpdate, isPending }: { library: any; onUpdate: (u: any) => void; isPending: boolean }) => {
+  const { toast } = useToast();
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
+  const [customDomain, setCustomDomain] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [primaryColor, setPrimaryColor] = useState("#14b8a6");
+  const [openingHours, setOpeningHours] = useState("");
 
-  // Sync state when library loads
   const loaded = library?.id;
   if (loaded && !name && library.name) {
     setName(library.name);
     setAddress(library.address || "");
     setCity(library.city || "");
+    setCustomDomain(library.custom_domain || "");
+    setLogoUrl(library.logo_url || "");
+    setPrimaryColor(library.primary_color || "#14b8a6");
+    setOpeningHours(library.opening_hours || "");
   }
 
   if (!library) {
@@ -112,36 +120,83 @@ const LibrarySettingsTab = ({ library, onUpdate, isPending }: { library: any; on
       <Card>
         <CardContent className="py-12 text-center">
           <Building2 className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-          <p className="text-muted-foreground">No library found. Create one from the Super Admin panel or sign up as a library owner.</p>
+          <p className="text-muted-foreground">No library found.</p>
         </CardContent>
       </Card>
     );
   }
 
+  const publicUrl = library.slug ? `${window.location.origin}/library/${library.slug}` : "";
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg font-display">Library Information</CardTitle>
-        <CardDescription>Update your library's basic details</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4 max-w-lg">
-        <div className="space-y-2">
-          <Label>Library Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label>Address</Label>
-          <Input value={address} onChange={(e) => setAddress(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label>City</Label>
-          <Input value={city} onChange={(e) => setCity(e.target.value)} />
-        </div>
-        <Button onClick={() => onUpdate({ name, address, city })} disabled={isPending}>
-          {isPending ? "Saving..." : "Save Changes"}
-        </Button>
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-display">Library Information</CardTitle>
+          <CardDescription>Update your library's basic details</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 max-w-lg">
+          <div className="space-y-2">
+            <Label>Library Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Address</Label>
+            <Input value={address} onChange={(e) => setAddress(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>City</Label>
+            <Input value={city} onChange={(e) => setCity(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Opening Hours</Label>
+            <Input placeholder="e.g. 6:00 AM – 10:00 PM" value={openingHours} onChange={(e) => setOpeningHours(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Logo URL</Label>
+            <Input placeholder="https://example.com/logo.png" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Brand Color</Label>
+            <div className="flex items-center gap-3">
+              <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="w-10 h-10 rounded border border-border cursor-pointer" />
+              <Input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="w-32" />
+            </div>
+          </div>
+          <Button onClick={() => onUpdate({ name, address, city, logo_url: logoUrl, primary_color: primaryColor, opening_hours: openingHours })} disabled={isPending}>
+            {isPending ? "Saving..." : "Save Changes"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-display flex items-center gap-2"><Globe className="w-5 h-5" /> Domain & Public URL</CardTitle>
+          <CardDescription>Your library's public page and custom domain settings</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 max-w-lg">
+          {publicUrl && (
+            <div className="space-y-2">
+              <Label>Public Page URL</Label>
+              <div className="flex items-center gap-2">
+                <Input value={publicUrl} readOnly className="bg-secondary" />
+                <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(publicUrl); toast({ title: "Copied!" }); }}>
+                  <Copy className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label>Custom Domain</Label>
+            <Input placeholder="e.g. citystudyhub.com" value={customDomain} onChange={(e) => setCustomDomain(e.target.value)} />
+            <p className="text-xs text-muted-foreground">Point your domain's A record to our servers, then enter it here.</p>
+          </div>
+          <Button onClick={() => onUpdate({ custom_domain: customDomain.trim() || null })} disabled={isPending}>
+            {isPending ? "Saving..." : "Save Domain"}
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 };
 
