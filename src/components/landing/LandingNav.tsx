@@ -14,7 +14,7 @@ const LandingNav = () => {
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="text-lg font-bold font-display text-primary-foreground">SwiftGrowth</span>
+            <span className="text-lg font-bold font-display text-primary-foreground">Libriofy</span>
           </Link>
 
           <div className="hidden md:flex items-center gap-6">

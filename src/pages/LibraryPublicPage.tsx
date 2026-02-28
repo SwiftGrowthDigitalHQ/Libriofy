@@ -346,8 +346,9 @@ const LibraryPublicPage = () => {
       {/* Footer link */}
       <div className="py-8 text-center">
         <Link to="/" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-          Powered by <span className="font-semibold">SwiftGrowth</span>
+          Powered by <span className="font-semibold">Libriofy</span>
         </Link>
+        <p className="text-xs text-muted-foreground/50 mt-1">by Sangita Group</p>
       </div>
     </div>
   );
