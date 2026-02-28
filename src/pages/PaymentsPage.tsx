@@ -1,6 +1,9 @@
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Download } from "lucide-react";
+import { exportToCsv } from "@/lib/exportCsv";
 
 const payments = [
   { id: "PAY-001", student: "Aarav Sharma", amount: "₹4,500", plan: "Full Day", date: "Feb 25, 2026", status: "Paid" },
@@ -13,9 +16,14 @@ const payments = [
 const PaymentsPage = () => (
   <DashboardLayout>
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold font-display text-foreground">Payments</h2>
-        <p className="text-sm text-muted-foreground mt-1">Track all payment transactions</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold font-display text-foreground">Payments</h2>
+          <p className="text-sm text-muted-foreground mt-1">Track all payment transactions</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => exportToCsv("payments", payments)}>
+          <Download className="w-4 h-4 mr-1" /> Export
+        </Button>
       </div>
       <div className="bg-card rounded-xl border border-border overflow-hidden">
         <div className="overflow-x-auto">

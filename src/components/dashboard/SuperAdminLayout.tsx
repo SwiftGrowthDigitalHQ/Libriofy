@@ -2,7 +2,7 @@ import { ReactNode, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   BookOpen, LayoutDashboard, Building2, CreditCard,
-  ChevronLeft, LogOut, Settings, TrendingUp, Shield
+  ChevronLeft, LogOut, Settings, TrendingUp, Shield, Bell
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -11,6 +11,7 @@ const navItems = [
   { icon: Building2, label: "Libraries", path: "/admin/libraries" },
   { icon: TrendingUp, label: "Revenue", path: "/admin/revenue" },
   { icon: CreditCard, label: "Subscriptions", path: "/admin/subscriptions" },
+  { icon: Bell, label: "Notifications", path: "/admin/notifications" },
   { icon: Settings, label: "Settings", path: "/admin/settings" },
 ];
 

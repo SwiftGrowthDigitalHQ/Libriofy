@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Search, Download, Plus } from "lucide-react";
+import { exportToCsv } from "@/lib/exportCsv";
 
 const students = [
   { name: "Aarav Sharma", phone: "98765xxxxx", seat: "A1", plan: "Full Day", slot: "6AM–10PM", expiry: "Mar 15, 2026", status: "Active" },
@@ -30,7 +31,7 @@ const StudentsPage = () => {
             <p className="text-sm text-muted-foreground mt-1">Manage all enrolled students</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-1" /> Export</Button>
+            <Button variant="outline" size="sm" onClick={() => exportToCsv("students", students)}><Download className="w-4 h-4 mr-1" /> Export</Button>
             <Button size="sm" className="bg-primary text-primary-foreground"><Plus className="w-4 h-4 mr-1" /> Add Student</Button>
           </div>
         </div>

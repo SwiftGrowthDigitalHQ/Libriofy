@@ -116,6 +116,56 @@ export type Database = {
         }
         Relationships: []
       }
+      library_subscriptions: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          features: Json
+          id: string
+          library_id: string
+          plan_name: string
+          price: number
+          seats_limit: number
+          started_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          features?: Json
+          id?: string
+          library_id: string
+          plan_name?: string
+          price?: number
+          seats_limit?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          features?: Json
+          id?: string
+          library_id?: string
+          plan_name?: string
+          price?: number
+          seats_limit?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_subscriptions_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: true
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           created_at: string
@@ -350,6 +400,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "students_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      support_tickets: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          library_id: string
+          status: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          library_id: string
+          status?: string
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          library_id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "support_tickets_library_id_fkey"
             columns: ["library_id"]
             isOneToOne: false
             referencedRelation: "libraries"
