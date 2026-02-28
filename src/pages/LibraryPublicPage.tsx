@@ -59,25 +59,22 @@ const LibraryPublicPage = () => {
     enabled: !!id,
   });
 
-  // Count occupied students per slot to calculate availability
-  const { data: studentCounts = [] } = useQuery({
-    queryKey: ["public-student-counts", id],
+  // Get slot availability via secure function
+  const { data: slotAvailability = [] } = useQuery({
+    queryKey: ["public-slot-availability", id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("students")
-        .select("slot")
-        .eq("library_id", id!)
-        .eq("status", "active");
+      const { data, error } = await supabase.rpc("get_slot_availability", {
+        p_library_id: id!,
+      });
       if (error) throw error;
-      return data;
+      return data as { slot_name: string; available_seats: number }[];
     },
     enabled: !!id,
+    refetchInterval: 30000, // refresh every 30s
   });
 
-  const slotOccupancy = studentCounts.reduce((acc, s) => {
-    if (s.slot) {
-      acc[s.slot] = (acc[s.slot] || 0) + 1;
-    }
+  const availabilityMap = slotAvailability.reduce((acc, s) => {
+    acc[s.slot_name] = s.available_seats;
     return acc;
   }, {} as Record<string, number>);
 
@@ -132,9 +129,7 @@ const LibraryPublicPage = () => {
             <h2 className="text-2xl font-bold font-display text-foreground mb-6">Live Seat Availability</h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {slots.map((slot) => {
-                const maxSeats = slot.max_seats ?? library.total_seats;
-                const occupied = slotOccupancy[slot.name] || 0;
-                const available = Math.max(0, maxSeats - occupied);
+                const available = availabilityMap[slot.name] ?? (slot.max_seats ?? library.total_seats);
                 return (
                   <div key={slot.id} className="bg-card rounded-xl border border-border p-4 text-center">
                     <p className="text-xs text-muted-foreground mb-2">{slot.name}</p>
