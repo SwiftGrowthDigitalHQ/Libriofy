@@ -21,6 +21,7 @@ import WaitingListPage from "./pages/WaitingListPage";
 import SupportPage from "./pages/SupportPage";
 import NotFound from "./pages/NotFound";
 import DomainRouter from "./components/DomainRouter";
+import SuperAdminLoginPage from "./pages/SuperAdminLoginPage";
 
 // Super Admin pages
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
@@ -44,6 +45,7 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/auth" element={<AuthPage />} />
+              <Route path="/super-admin-login" element={<SuperAdminLoginPage />} />
 
               {/* Library Admin routes */}
               <Route path="/dashboard" element={<Dashboard />} />
