@@ -114,6 +114,33 @@ const LibraryPublicPage = () => {
     return acc;
   }, {} as Record<string, number>);
 
+  // Demo fallback data when no library exists yet
+  const demoLibrary = {
+    id: "demo",
+    name: "City Study Hub",
+    address: "Koramangala, 5th Block",
+    city: "Bangalore",
+    total_seats: 40,
+  };
+  const demoPlans = [
+    { id: "d1", name: "4 Hour", price: 2000, duration_hours: 4, description: "Any 4-hour slot with reserved seat and Wi-Fi" },
+    { id: "d2", name: "6 Hour", price: 3000, duration_hours: 6, description: "Any 6-hour slot with reserved seat, Wi-Fi and locker" },
+    { id: "d3", name: "Full Day", price: 4500, duration_hours: 16, description: "6AM–10PM access with reserved seat, Wi-Fi, locker and priority support" },
+  ];
+  const demoSlots = [
+    { id: "s1", name: "Morning", start_time: "06:00", end_time: "10:00", max_seats: 40 },
+    { id: "s2", name: "Forenoon", start_time: "10:00", end_time: "14:00", max_seats: 40 },
+    { id: "s3", name: "Afternoon", start_time: "14:00", end_time: "18:00", max_seats: 40 },
+    { id: "s4", name: "Evening", start_time: "18:00", end_time: "22:00", max_seats: 40 },
+  ];
+  const demoAvailability: Record<string, number> = { Morning: 37, Forenoon: 33, Afternoon: 28, Evening: 39 };
+
+  const isDemo = !library && id === "demo";
+  const displayLibrary = library || demoLibrary;
+  const displayPlans = plans.length > 0 ? plans : (isDemo ? demoPlans : []);
+  const displaySlots = slots.length > 0 ? slots : (isDemo ? demoSlots : []);
+  const displayAvailability = Object.keys(availabilityMap).length > 0 ? availabilityMap : (isDemo ? demoAvailability : {});
+
   if (libLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -122,7 +149,7 @@ const LibraryPublicPage = () => {
     );
   }
 
-  if (!library) {
+  if (!library && !isDemo) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <p className="text-muted-foreground">Library not found.</p>
@@ -131,10 +158,17 @@ const LibraryPublicPage = () => {
   }
 
   // Find the most popular plan (middle or highest price)
-  const popularIndex = plans.length >= 3 ? 1 : plans.length - 1;
+  const popularIndex = displayPlans.length >= 3 ? 1 : displayPlans.length - 1;
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Demo banner */}
+      {isDemo && (
+        <div className="bg-accent/20 text-accent-foreground text-center py-2 text-sm">
+          🎯 This is a demo preview. Create an account to set up your own library page.
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-hero-gradient text-primary-foreground py-16 sm:py-24">
         <div className="container mx-auto px-4 text-center">
@@ -142,30 +176,30 @@ const LibraryPublicPage = () => {
             <div className="w-14 h-14 rounded-2xl bg-primary/30 flex items-center justify-center mx-auto mb-6">
               <BookOpen className="w-7 h-7 text-primary-foreground" />
             </div>
-            <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">{library.name}</h1>
+            <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">{displayLibrary.name}</h1>
             <div className="flex items-center justify-center gap-4 text-primary-foreground/60 text-sm flex-wrap">
-              {library.address && (
-                <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {library.address}{library.city ? `, ${library.city}` : ""}</span>
+              {displayLibrary.address && (
+                <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {displayLibrary.address}{displayLibrary.city ? `, ${displayLibrary.city}` : ""}</span>
               )}
-              {slots.length > 0 && (
+              {displaySlots.length > 0 && (
                 <span className="flex items-center gap-1">
-                  <Clock className="w-4 h-4" /> {slots[0].start_time.slice(0, 5)} – {slots[slots.length - 1].end_time.slice(0, 5)}
+                  <Clock className="w-4 h-4" /> {displaySlots[0].start_time.slice(0, 5)} – {displaySlots[displaySlots.length - 1].end_time.slice(0, 5)}
                 </span>
               )}
-              <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {library.total_seats} seats</span>
+              <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {displayLibrary.total_seats} seats</span>
             </div>
           </motion.div>
         </div>
       </header>
 
       {/* Live Availability */}
-      {slots.length > 0 && (
+      {displaySlots.length > 0 && (
         <section className="py-12">
           <div className="container mx-auto px-4 max-w-4xl">
             <h2 className="text-2xl font-bold font-display text-foreground mb-6">Live Seat Availability</h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {slots.map((slot) => {
-                const available = availabilityMap[slot.name] ?? (slot.max_seats ?? library.total_seats);
+              {displaySlots.map((slot) => {
+                const available = displayAvailability[slot.name] ?? (slot.max_seats ?? displayLibrary.total_seats);
                 return (
                   <div key={slot.id} className="bg-card rounded-xl border border-border p-4 text-center">
                     <p className="text-xs text-muted-foreground mb-2">{slot.name}</p>
@@ -185,13 +219,13 @@ const LibraryPublicPage = () => {
       )}
 
       {/* Plans */}
-      {plans.length > 0 && (
+      {displayPlans.length > 0 && (
         <section className="py-12 bg-secondary/30">
           <div className="container mx-auto px-4 max-w-4xl">
             <h2 className="text-2xl font-bold font-display text-foreground mb-6">Plans</h2>
-            <div className={`grid grid-cols-1 sm:grid-cols-${Math.min(plans.length, 3)} gap-6`}>
-              {plans.map((plan, i) => {
-                const isPopular = i === popularIndex && plans.length > 1;
+            <div className={`grid grid-cols-1 sm:grid-cols-${Math.min(displayPlans.length, 3)} gap-6`}>
+              {displayPlans.map((plan, i) => {
+                const isPopular = i === popularIndex && displayPlans.length > 1;
                 return (
                   <div key={plan.id} className={`relative bg-card rounded-xl border p-6 ${isPopular ? "border-primary shadow-glow" : "border-border"}`}>
                     {isPopular && (
@@ -239,6 +273,18 @@ const LibraryPublicPage = () => {
                     You'll be notified when a seat becomes available.
                   </p>
                 </div>
+              ) : isDemo ? (
+                <div className="text-center py-8">
+                  <h2 className="text-xl font-bold font-display text-foreground mb-2">Demo Mode</h2>
+                  <p className="text-muted-foreground">
+                    Form submission is disabled in demo mode. Create an account to enable the waiting list.
+                  </p>
+                  <Link to="/auth">
+                    <Button className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90">
+                      Get Started
+                    </Button>
+                  </Link>
+                </div>
               ) : (
                 <form onSubmit={handleSubmit}>
                   <h2 className="text-xl font-bold font-display text-foreground mb-6">Join Waiting List</h2>
@@ -255,13 +301,13 @@ const LibraryPublicPage = () => {
                       <Label>Email</Label>
                       <Input type="email" placeholder="your@email.com" className="mt-1" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
                     </div>
-                    {plans.length > 0 && (
+                    {displayPlans.length > 0 && (
                       <div>
                         <Label>Preferred Plan</Label>
                         <Select value={formPlan} onValueChange={setFormPlan}>
                           <SelectTrigger className="mt-1"><SelectValue placeholder="Select a plan" /></SelectTrigger>
                           <SelectContent>
-                            {plans.map((p) => (
+                            {displayPlans.map((p) => (
                               <SelectItem key={p.id} value={p.name}>
                                 {p.name} – ₹{p.price.toLocaleString("en-IN")}/mo
                               </SelectItem>
@@ -270,13 +316,13 @@ const LibraryPublicPage = () => {
                         </Select>
                       </div>
                     )}
-                    {slots.length > 0 && (
+                    {displaySlots.length > 0 && (
                       <div>
                         <Label>Preferred Slot</Label>
                         <Select value={formSlot} onValueChange={setFormSlot}>
                           <SelectTrigger className="mt-1"><SelectValue placeholder="Select time slot" /></SelectTrigger>
                           <SelectContent>
-                            {slots.map((s) => (
+                            {displaySlots.map((s) => (
                               <SelectItem key={s.id} value={s.name}>
                                 {s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})
                               </SelectItem>
