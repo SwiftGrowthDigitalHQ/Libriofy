@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, FormEvent } from "react";
 import { useParams } from "react-router-dom";
+import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { BookOpen, MapPin, Clock, Users, Check, ChevronRight, Loader2 } from "lucide-react";
@@ -14,6 +15,41 @@ import { supabase } from "@/integrations/supabase/client";
 const LibraryPublicPage = () => {
   const { id } = useParams<{ id: string }>();
   const [showForm, setShowForm] = useState(false);
+  const [formName, setFormName] = useState("");
+  const [formPhone, setFormPhone] = useState("");
+  const [formEmail, setFormEmail] = useState("");
+  const [formPlan, setFormPlan] = useState("");
+  const [formSlot, setFormSlot] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [queuePosition, setQueuePosition] = useState<number | null>(null);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!formName.trim() || !id) return;
+    setSubmitting(true);
+    try {
+      const { data, error } = await supabase.rpc("add_to_waiting_list", {
+        p_library_id: id,
+        p_student_name: formName.trim(),
+        p_phone: formPhone.trim() || undefined,
+        p_email: formEmail.trim() || undefined,
+        p_preferred_plan: formPlan || undefined,
+        p_preferred_slot: formSlot || undefined,
+      });
+      if (error) throw error;
+      const result = data as unknown as { success: boolean; position: number };
+      if (result.success) {
+        setQueuePosition(result.position);
+        setSubmitted(true);
+        toast.success("You've been added to the waiting list!");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const { data: library, isLoading: libLoading } = useQuery({
     queryKey: ["public-library", id],
@@ -192,54 +228,70 @@ const LibraryPublicPage = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
             >
-              <h2 className="text-xl font-bold font-display text-foreground mb-6">Admission Form</h2>
-              <div className="space-y-4">
-                <div>
-                  <Label>Full Name</Label>
-                  <Input placeholder="Enter your name" className="mt-1" />
-                </div>
-                <div>
-                  <Label>Phone Number</Label>
-                  <Input placeholder="10-digit number" className="mt-1" />
-                </div>
-                {plans.length > 0 && (
-                  <div>
-                    <Label>Preferred Plan</Label>
-                    <Select>
-                      <SelectTrigger className="mt-1"><SelectValue placeholder="Select a plan" /></SelectTrigger>
-                      <SelectContent>
-                        {plans.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name} – ₹{p.price.toLocaleString("en-IN")}/mo
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+              {submitted ? (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 rounded-full bg-success/20 flex items-center justify-center mx-auto mb-4">
+                    <Check className="w-8 h-8 text-success" />
                   </div>
-                )}
-                {slots.length > 0 && (
-                  <div>
-                    <Label>Preferred Slot</Label>
-                    <Select>
-                      <SelectTrigger className="mt-1"><SelectValue placeholder="Select time slot" /></SelectTrigger>
-                      <SelectContent>
-                        {slots.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <div>
-                  <Label>Start Date</Label>
-                  <Input type="date" className="mt-1" />
+                  <h2 className="text-xl font-bold font-display text-foreground mb-2">You're on the list!</h2>
+                  <p className="text-muted-foreground">
+                    Your queue position is <span className="font-bold text-primary">#{queuePosition}</span>.
+                    You'll be notified when a seat becomes available.
+                  </p>
                 </div>
-                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 mt-2">
-                  Submit & Proceed to Payment
-                </Button>
-              </div>
+              ) : (
+                <form onSubmit={handleSubmit}>
+                  <h2 className="text-xl font-bold font-display text-foreground mb-6">Join Waiting List</h2>
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Full Name *</Label>
+                      <Input placeholder="Enter your name" className="mt-1" value={formName} onChange={(e) => setFormName(e.target.value)} required />
+                    </div>
+                    <div>
+                      <Label>Phone Number</Label>
+                      <Input placeholder="10-digit number" className="mt-1" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label>Email</Label>
+                      <Input type="email" placeholder="your@email.com" className="mt-1" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
+                    </div>
+                    {plans.length > 0 && (
+                      <div>
+                        <Label>Preferred Plan</Label>
+                        <Select value={formPlan} onValueChange={setFormPlan}>
+                          <SelectTrigger className="mt-1"><SelectValue placeholder="Select a plan" /></SelectTrigger>
+                          <SelectContent>
+                            {plans.map((p) => (
+                              <SelectItem key={p.id} value={p.name}>
+                                {p.name} – ₹{p.price.toLocaleString("en-IN")}/mo
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    {slots.length > 0 && (
+                      <div>
+                        <Label>Preferred Slot</Label>
+                        <Select value={formSlot} onValueChange={setFormSlot}>
+                          <SelectTrigger className="mt-1"><SelectValue placeholder="Select time slot" /></SelectTrigger>
+                          <SelectContent>
+                            {slots.map((s) => (
+                              <SelectItem key={s.id} value={s.name}>
+                                {s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <Button type="submit" disabled={submitting || !formName.trim()} className="w-full bg-primary text-primary-foreground hover:bg-primary/90 mt-2">
+                      {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                      {submitting ? "Submitting..." : "Join Waiting List"}
+                    </Button>
+                  </div>
+                </form>
+              )}
             </motion.div>
           </div>
         </section>
