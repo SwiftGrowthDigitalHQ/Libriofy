@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +25,22 @@ const AuthPage = () => {
     try {
       if (isLogin) {
         await signIn(email, password);
-        navigate("/dashboard");
+        // Fetch user's library slug to redirect
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        if (currentUser) {
+          const { data: lib } = await supabase
+            .from("libraries")
+            .select("slug")
+            .eq("owner_id", currentUser.id)
+            .maybeSingle();
+          if (lib?.slug) {
+            navigate(`/library/${lib.slug}`);
+          } else {
+            navigate("/dashboard");
+          }
+        } else {
+          navigate("/dashboard");
+        }
       } else {
         await signUp(email, password, fullName);
         toast({ title: "Account created!", description: "Check your email to confirm, then sign in." });
