@@ -18,8 +18,8 @@ const LandingNav = () => {
           </Link>
 
           <div className="hidden md:flex items-center gap-6">
-            <a href="#features" className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Features</a>
-            <a href="#pricing" className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Pricing</a>
+            <a href="#features" onClick={(e) => { e.preventDefault(); document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' }); }} className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Features</a>
+            <a href="#pricing" onClick={(e) => { e.preventDefault(); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Pricing</a>
             <Link to="/library/demo" className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Demo</Link>
             <Link to="/dashboard">
               <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground">
@@ -35,8 +35,8 @@ const LandingNav = () => {
 
         {open && (
           <div className="md:hidden pb-4 space-y-3">
-            <a href="#features" className="block text-sm text-primary-foreground/60 py-2">Features</a>
-            <a href="#pricing" className="block text-sm text-primary-foreground/60 py-2">Pricing</a>
+            <a href="#features" onClick={(e) => { e.preventDefault(); setOpen(false); document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' }); }} className="block text-sm text-primary-foreground/60 py-2">Features</a>
+            <a href="#pricing" onClick={(e) => { e.preventDefault(); setOpen(false); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="block text-sm text-primary-foreground/60 py-2">Pricing</a>
             <Link to="/library/demo" className="block text-sm text-primary-foreground/60 py-2">Demo</Link>
             <Link to="/dashboard">
               <Button size="sm" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">Dashboard</Button>
