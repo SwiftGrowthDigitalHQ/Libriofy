@@ -149,6 +149,60 @@ export type Database = {
           },
         ]
       }
+      payments: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          library_id: string
+          payment_method: string | null
+          period_end: string | null
+          period_start: string | null
+          plan: string | null
+          status: string
+          student_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          library_id: string
+          payment_method?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          plan?: string | null
+          status?: string
+          student_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          library_id?: string
+          payment_method?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          plan?: string | null
+          status?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -278,8 +332,13 @@ export type Database = {
         }
         Returns: boolean
       }
+      process_renewals: { Args: never; Returns: Json }
       qr_check_in: {
         Args: { p_library_id: string; p_qr_code: string }
+        Returns: Json
+      }
+      renew_student: {
+        Args: { p_amount?: number; p_months?: number; p_student_id: string }
         Returns: Json
       }
     }

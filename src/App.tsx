@@ -16,6 +16,7 @@ import AuthPage from "./pages/AuthPage";
 import SuperAdminPage from "./pages/SuperAdminPage";
 import AttendancePage from "./pages/AttendancePage";
 import QRCodesPage from "./pages/QRCodesPage";
+import RenewalsPage from "./pages/RenewalsPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,7 @@ const App = () => (
             <Route path="/dashboard/analytics" element={<AnalyticsPage />} />
             <Route path="/dashboard/attendance" element={<AttendancePage />} />
             <Route path="/dashboard/qr-codes" element={<QRCodesPage />} />
+            <Route path="/dashboard/renewals" element={<RenewalsPage />} />
             <Route path="/admin" element={<SuperAdminPage />} />
             <Route path="/library/:id" element={<LibraryPublicPage />} />
             <Route path="*" element={<NotFound />} />

@@ -2,3 +2,6 @@ project_id = "sqsnroibmbqydstrfjwx"
 
 [functions.detect-no-shows]
 verify_jwt = false
+
+[functions.process-renewals]
+verify_jwt = false
