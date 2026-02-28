@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import DashboardLayout from "@/components/dashboard/DashboardLayout";
+import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
 import StatsCard from "@/components/dashboard/StatsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,12 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Building2, Users, CreditCard, TrendingUp, Search, Plus } from "lucide-react";
+import { Building2, Users, CreditCard, TrendingUp, Search, Plus, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Link } from "react-router-dom";
 
-const SuperAdminPage = () => {
+const SuperAdminLibraries = () => {
   const [search, setSearch] = useState("");
   const [newLib, setNewLib] = useState({ name: "", address: "", city: "" });
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -45,11 +46,13 @@ const SuperAdminPage = () => {
     mutationFn: async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
+      const slug = newLib.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const { error } = await supabase.from("libraries").insert({
         name: newLib.name,
         address: newLib.address,
         city: newLib.city,
         owner_id: user.id,
+        slug,
       });
       if (error) throw error;
     },
@@ -67,18 +70,13 @@ const SuperAdminPage = () => {
     (l.city || "").toLowerCase().includes(search.toLowerCase())
   );
 
-  const totalRevenue = libraries.reduce((sum: number, l: any) => sum + Number(l.monthly_revenue || 0), 0);
-  const totalStudents = libraries.reduce((sum: number, l: any) => sum + (l.active_students || 0), 0);
-  const totalSeats = libraries.reduce((sum: number, l: any) => sum + (l.total_seats || 0), 0);
-  const activeLibraries = libraries.filter((l: any) => l.enabled).length;
-
   return (
-    <DashboardLayout>
+    <SuperAdminLayout>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold font-display text-foreground">Super Admin Panel</h2>
-            <p className="text-sm text-muted-foreground mt-1">Manage all libraries across the platform</p>
+            <h2 className="text-2xl font-bold font-display text-foreground">Libraries</h2>
+            <p className="text-sm text-muted-foreground mt-1">Manage all libraries on the platform</p>
           </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
@@ -109,15 +107,6 @@ const SuperAdminPage = () => {
           </Dialog>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatsCard icon={Building2} title="Total Libraries" value={String(libraries.length)} change={`${activeLibraries} active`} trend="up" />
-          <StatsCard icon={Users} title="Total Students" value={String(totalStudents)} trend="up" iconColor="text-info" />
-          <StatsCard icon={CreditCard} title="Platform Revenue" value={`₹${totalRevenue.toLocaleString()}`} trend="up" iconColor="text-success" />
-          <StatsCard icon={TrendingUp} title="Total Seats" value={String(totalSeats)} trend="up" iconColor="text-warning" />
-        </div>
-
-        {/* Libraries Table */}
         <Card>
           <CardHeader className="pb-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -130,9 +119,9 @@ const SuperAdminPage = () => {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">Loading libraries...</p>
+              <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>
             ) : filtered.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">No libraries found. Create one to get started.</p>
+              <p className="text-sm text-muted-foreground py-8 text-center">No libraries found.</p>
             ) : (
               <Table>
                 <TableHeader>
@@ -143,6 +132,7 @@ const SuperAdminPage = () => {
                     <TableHead className="hidden md:table-cell">Students</TableHead>
                     <TableHead className="hidden lg:table-cell">Revenue</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="hidden sm:table-cell">Public</TableHead>
                     <TableHead className="text-right">Enabled</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -152,17 +142,24 @@ const SuperAdminPage = () => {
                       <TableCell>
                         <div>
                           <p className="font-medium text-foreground">{lib.name}</p>
-                          <p className="text-xs text-muted-foreground">{lib.address}</p>
+                          <p className="text-xs text-muted-foreground">{lib.address || "—"}</p>
                         </div>
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-muted-foreground">{lib.city || "—"}</TableCell>
                       <TableCell className="hidden md:table-cell">{lib.total_seats}</TableCell>
                       <TableCell className="hidden md:table-cell">{lib.active_students}</TableCell>
-                      <TableCell className="hidden lg:table-cell font-medium">₹{Number(lib.monthly_revenue).toLocaleString()}</TableCell>
+                      <TableCell className="hidden lg:table-cell font-medium">₹{Number(lib.monthly_revenue || 0).toLocaleString()}</TableCell>
                       <TableCell>
                         <Badge variant={lib.enabled ? "default" : "secondary"}>
                           {lib.enabled ? "Active" : "Disabled"}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        {lib.slug && (
+                          <Link to={`/library/${lib.slug}`} className="text-primary hover:underline text-xs flex items-center gap-1">
+                            <ExternalLink className="w-3 h-3" /> View
+                          </Link>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <Switch
@@ -178,8 +175,8 @@ const SuperAdminPage = () => {
           </CardContent>
         </Card>
       </div>
-    </DashboardLayout>
+    </SuperAdminLayout>
   );
 };
 
-export default SuperAdminPage;
+export default SuperAdminLibraries;

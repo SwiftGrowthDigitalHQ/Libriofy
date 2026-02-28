@@ -13,7 +13,6 @@ import PlansPage from "./pages/PlansPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import LibraryPublicPage from "./pages/LibraryPublicPage";
 import AuthPage from "./pages/AuthPage";
-import SuperAdminPage from "./pages/SuperAdminPage";
 import AttendancePage from "./pages/AttendancePage";
 import QRCodesPage from "./pages/QRCodesPage";
 import RenewalsPage from "./pages/RenewalsPage";
@@ -21,6 +20,13 @@ import SettingsPage from "./pages/SettingsPage";
 import WaitingListPage from "./pages/WaitingListPage";
 import NotFound from "./pages/NotFound";
 import DomainRouter from "./components/DomainRouter";
+
+// Super Admin pages
+import SuperAdminDashboard from "./pages/SuperAdminDashboard";
+import SuperAdminLibraries from "./pages/SuperAdminLibraries";
+import SuperAdminRevenue from "./pages/SuperAdminRevenue";
+import SuperAdminSubscriptions from "./pages/SuperAdminSubscriptions";
+import SuperAdminSettings from "./pages/SuperAdminSettings";
 
 const queryClient = new QueryClient();
 
@@ -35,6 +41,8 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/auth" element={<AuthPage />} />
+
+              {/* Library Admin routes */}
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/dashboard/seats" element={<SeatMapPage />} />
               <Route path="/dashboard/students" element={<StudentsPage />} />
@@ -46,7 +54,15 @@ const App = () => (
               <Route path="/dashboard/renewals" element={<RenewalsPage />} />
               <Route path="/dashboard/settings" element={<SettingsPage />} />
               <Route path="/dashboard/waitlist" element={<WaitingListPage />} />
-              <Route path="/admin" element={<SuperAdminPage />} />
+
+              {/* Super Admin routes */}
+              <Route path="/admin" element={<SuperAdminDashboard />} />
+              <Route path="/admin/libraries" element={<SuperAdminLibraries />} />
+              <Route path="/admin/revenue" element={<SuperAdminRevenue />} />
+              <Route path="/admin/subscriptions" element={<SuperAdminSubscriptions />} />
+              <Route path="/admin/settings" element={<SuperAdminSettings />} />
+
+              {/* Public */}
               <Route path="/library/:id" element={<LibraryPublicPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
