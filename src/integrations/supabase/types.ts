@@ -203,6 +203,50 @@ export type Database = {
           },
         ]
       }
+      plans: {
+        Row: {
+          created_at: string
+          description: string | null
+          duration_hours: number
+          id: string
+          is_active: boolean
+          library_id: string
+          name: string
+          price: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          duration_hours: number
+          id?: string
+          is_active?: boolean
+          library_id: string
+          name: string
+          price: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          duration_hours?: number
+          id?: string
+          is_active?: boolean
+          library_id?: string
+          name?: string
+          price?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plans_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -291,6 +335,50 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "students_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      time_slots: {
+        Row: {
+          created_at: string
+          end_time: string
+          id: string
+          is_active: boolean
+          library_id: string
+          max_seats: number | null
+          name: string
+          start_time: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          end_time: string
+          id?: string
+          is_active?: boolean
+          library_id: string
+          max_seats?: number | null
+          name: string
+          start_time: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          end_time?: string
+          id?: string
+          is_active?: boolean
+          library_id?: string
+          max_seats?: number | null
+          name?: string
+          start_time?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "time_slots_library_id_fkey"
             columns: ["library_id"]
             isOneToOne: false
             referencedRelation: "libraries"
