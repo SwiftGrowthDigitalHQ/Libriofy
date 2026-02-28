@@ -59,6 +59,50 @@ export type Database = {
           },
         ]
       }
+      domain_requests: {
+        Row: {
+          created_at: string
+          domain: string
+          id: string
+          library_id: string
+          requested_at: string
+          review_note: string | null
+          reviewed_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          domain: string
+          id?: string
+          library_id: string
+          requested_at?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          domain?: string
+          id?: string
+          library_id?: string
+          requested_at?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "domain_requests_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       libraries: {
         Row: {
           active_students: number

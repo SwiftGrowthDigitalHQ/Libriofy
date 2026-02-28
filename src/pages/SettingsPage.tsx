@@ -12,9 +12,10 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid, Globe, Copy } from "lucide-react";
+import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid, Globe, Copy, Send, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { format } from "date-fns";
 
 // Hardcoded demo library for now — in production, pick from user's libraries
 const DEMO_LIBRARY_ID = "00000000-0000-0000-0000-000000000000";
@@ -169,34 +170,120 @@ const LibrarySettingsTab = ({ library, onUpdate, isPending }: { library: any; on
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg font-display flex items-center gap-2"><Globe className="w-5 h-5" /> Domain & Public URL</CardTitle>
-          <CardDescription>Your library's public page and custom domain settings</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 max-w-lg">
-          {publicUrl && (
-            <div className="space-y-2">
-              <Label>Public Page URL</Label>
-              <div className="flex items-center gap-2">
-                <Input value={publicUrl} readOnly className="bg-secondary" />
-                <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(publicUrl); toast({ title: "Copied!" }); }}>
-                  <Copy className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label>Custom Domain</Label>
-            <Input placeholder="e.g. citystudyhub.com" value={customDomain} onChange={(e) => setCustomDomain(e.target.value)} />
-            <p className="text-xs text-muted-foreground">Point your domain's A record to our servers, then enter it here.</p>
-          </div>
-          <Button onClick={() => onUpdate({ custom_domain: customDomain.trim() || null })} disabled={isPending}>
-            {isPending ? "Saving..." : "Save Domain"}
-          </Button>
-        </CardContent>
-      </Card>
+      <DomainRequestCard library={library} />
     </div>
+  );
+};
+
+// ─── Domain Request Card ───
+const DomainRequestCard = ({ library }: { library: any }) => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [domain, setDomain] = useState("");
+
+  const publicUrl = library?.slug ? `${window.location.origin}/library/${library.slug}` : "";
+
+  const { data: requests = [] } = useQuery({
+    queryKey: ["domain-requests", library?.id],
+    queryFn: async () => {
+      if (!library?.id) return [];
+      const { data, error } = await supabase
+        .from("domain_requests" as any)
+        .select("*")
+        .eq("library_id", library.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data as any[];
+    },
+    enabled: !!library?.id,
+  });
+
+  const submitMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from("domain_requests" as any).insert({
+        library_id: library.id,
+        domain: domain.trim().toLowerCase(),
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["domain-requests"] });
+      setDomain("");
+      toast({ title: "Domain request submitted", description: "Waiting for admin approval." });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const latestRequest = requests[0];
+  const hasPending = requests.some((r: any) => r.status === "pending");
+  const approvedDomain = library?.custom_domain;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg font-display flex items-center gap-2"><Globe className="w-5 h-5" /> Domain & Public URL</CardTitle>
+        <CardDescription>Your library's public page and custom domain settings</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 max-w-lg">
+        {publicUrl && (
+          <div className="space-y-2">
+            <Label>Public Page URL</Label>
+            <div className="flex items-center gap-2">
+              <Input value={publicUrl} readOnly className="bg-secondary" />
+              <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(publicUrl); toast({ title: "Copied!" }); }}>
+                <Copy className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {approvedDomain && (
+          <div className="p-3 rounded-lg border border-border bg-success/5">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-success" />
+              <span className="text-sm font-medium text-foreground">Active Domain: {approvedDomain}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Show request history */}
+        {requests.length > 0 && (
+          <div className="space-y-2">
+            <Label>Domain Requests</Label>
+            {requests.slice(0, 3).map((req: any) => (
+              <div key={req.id} className="flex items-center justify-between p-2 rounded-lg border border-border text-sm">
+                <span className="text-foreground">{req.domain}</span>
+                <div className="flex items-center gap-2">
+                  <Badge variant={req.status === "approved" ? "default" : req.status === "rejected" ? "destructive" : "secondary"}>
+                    {req.status === "pending" && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+                    {req.status}
+                  </Badge>
+                  {req.review_note && <span className="text-xs text-muted-foreground">{req.review_note}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Submit new request */}
+        {!hasPending && (
+          <div className="space-y-2">
+            <Label>Request Custom Domain</Label>
+            <div className="flex gap-2">
+              <Input placeholder="e.g. citystudyhub.com" value={domain} onChange={(e) => setDomain(e.target.value)} />
+              <Button onClick={() => submitMutation.mutate()} disabled={!domain.trim() || submitMutation.isPending}>
+                <Send className="w-4 h-4 mr-1" /> Request
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Submit a domain request. The Super Admin will review and approve it.</p>
+          </div>
+        )}
+
+        {hasPending && (
+          <p className="text-xs text-muted-foreground">Your domain request is pending approval. You'll be notified once reviewed.</p>
+        )}
+      </CardContent>
+    </Card>
   );
 };
 
