@@ -70,6 +70,7 @@ export type Database = {
           monthly_revenue: number
           name: string
           owner_id: string
+          slug: string | null
           total_seats: number
           updated_at: string
         }
@@ -83,6 +84,7 @@ export type Database = {
           monthly_revenue?: number
           name: string
           owner_id: string
+          slug?: string | null
           total_seats?: number
           updated_at?: string
         }
@@ -96,6 +98,7 @@ export type Database = {
           monthly_revenue?: number
           name?: string
           owner_id?: string
+          slug?: string | null
           total_seats?: number
           updated_at?: string
         }
@@ -487,6 +490,29 @@ export type Database = {
       }
       confirm_waiting_list: { Args: { p_entry_id: string }; Returns: Json }
       detect_no_shows: { Args: never; Returns: undefined }
+      get_library_public: {
+        Args: { p_identifier: string }
+        Returns: {
+          active_students: number
+          address: string | null
+          city: string | null
+          created_at: string
+          enabled: boolean
+          id: string
+          monthly_revenue: number
+          name: string
+          owner_id: string
+          slug: string | null
+          total_seats: number
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "libraries"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_slot_availability: {
         Args: { p_library_id: string }
         Returns: {

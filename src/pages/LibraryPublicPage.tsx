@@ -26,11 +26,11 @@ const LibraryPublicPage = () => {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!formName.trim() || !id) return;
+    if (!formName.trim() || !library?.id) return;
     setSubmitting(true);
     try {
       const { data, error } = await supabase.rpc("add_to_waiting_list", {
-        p_library_id: id,
+        p_library_id: library.id,
         p_student_name: formName.trim(),
         p_phone: formPhone.trim() || undefined,
         p_email: formEmail.trim() || undefined,
@@ -55,58 +55,58 @@ const LibraryPublicPage = () => {
     queryKey: ["public-library", id],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("libraries")
-        .select("*")
-        .eq("id", id!)
-        .single();
+        .rpc("get_library_public", { p_identifier: id! });
       if (error) throw error;
-      return data;
+      if (!data || (data as any[]).length === 0) return null;
+      return (data as any[])[0];
     },
     enabled: !!id,
   });
 
+  const libraryId = library?.id;
+
   const { data: plans = [] } = useQuery({
-    queryKey: ["public-plans", id],
+    queryKey: ["public-plans", libraryId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("plans")
         .select("*")
-        .eq("library_id", id!)
+        .eq("library_id", libraryId!)
         .eq("is_active", true)
         .order("price", { ascending: true });
       if (error) throw error;
       return data;
     },
-    enabled: !!id,
+    enabled: !!libraryId,
   });
 
   const { data: slots = [] } = useQuery({
-    queryKey: ["public-slots", id],
+    queryKey: ["public-slots", libraryId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("time_slots")
         .select("*")
-        .eq("library_id", id!)
+        .eq("library_id", libraryId!)
         .eq("is_active", true)
         .order("start_time", { ascending: true });
       if (error) throw error;
       return data;
     },
-    enabled: !!id,
+    enabled: !!libraryId,
   });
 
   // Get slot availability via secure function
   const { data: slotAvailability = [] } = useQuery({
-    queryKey: ["public-slot-availability", id],
+    queryKey: ["public-slot-availability", libraryId],
     queryFn: async () => {
       const { data, error } = await supabase.rpc("get_slot_availability", {
-        p_library_id: id!,
+        p_library_id: libraryId!,
       });
       if (error) throw error;
       return data as { slot_name: string; available_seats: number }[];
     },
-    enabled: !!id,
-    refetchInterval: 30000, // refresh every 30s
+    enabled: !!libraryId,
+    refetchInterval: 30000,
   });
 
   const availabilityMap = slotAvailability.reduce((acc, s) => {
