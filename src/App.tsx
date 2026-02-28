@@ -14,6 +14,8 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import LibraryPublicPage from "./pages/LibraryPublicPage";
 import AuthPage from "./pages/AuthPage";
 import SuperAdminPage from "./pages/SuperAdminPage";
+import AttendancePage from "./pages/AttendancePage";
+import QRCodesPage from "./pages/QRCodesPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -34,6 +36,8 @@ const App = () => (
             <Route path="/dashboard/payments" element={<PaymentsPage />} />
             <Route path="/dashboard/plans" element={<PlansPage />} />
             <Route path="/dashboard/analytics" element={<AnalyticsPage />} />
+            <Route path="/dashboard/attendance" element={<AttendancePage />} />
+            <Route path="/dashboard/qr-codes" element={<QRCodesPage />} />
             <Route path="/admin" element={<SuperAdminPage />} />
             <Route path="/library/:id" element={<LibraryPublicPage />} />
             <Route path="*" element={<NotFound />} />

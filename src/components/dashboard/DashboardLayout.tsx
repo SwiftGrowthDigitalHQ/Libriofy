@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { 
   BookOpen, LayoutDashboard, LayoutGrid, Users, 
   CreditCard, CalendarClock, BarChart3, Settings, 
-  ChevronLeft, Bell, Globe, Shield, LogOut
+  ChevronLeft, Bell, Globe, Shield, LogOut, ScanLine, QrCode
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsSuperAdmin } from "@/hooks/useUserRole";
@@ -12,6 +12,8 @@ const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { icon: LayoutGrid, label: "Seat Map", path: "/dashboard/seats" },
   { icon: Users, label: "Students", path: "/dashboard/students" },
+  { icon: ScanLine, label: "Attendance", path: "/dashboard/attendance" },
+  { icon: QrCode, label: "QR Passes", path: "/dashboard/qr-codes" },
   { icon: CreditCard, label: "Payments", path: "/dashboard/payments" },
   { icon: CalendarClock, label: "Plans & Slots", path: "/dashboard/plans" },
   { icon: BarChart3, label: "Analytics", path: "/dashboard/analytics" },

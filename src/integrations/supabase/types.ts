@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      attendance_logs: {
+        Row: {
+          check_in: string
+          check_out: string | null
+          created_at: string
+          date: string
+          id: string
+          library_id: string
+          student_id: string
+        }
+        Insert: {
+          check_in?: string
+          check_out?: string | null
+          created_at?: string
+          date?: string
+          id?: string
+          library_id: string
+          student_id: string
+        }
+        Update: {
+          check_in?: string
+          check_out?: string | null
+          created_at?: string
+          date?: string
+          id?: string
+          library_id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendance_logs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       libraries: {
         Row: {
           active_students: number
@@ -56,6 +101,54 @@ export type Database = {
         }
         Relationships: []
       }
+      notifications: {
+        Row: {
+          created_at: string
+          id: string
+          library_id: string
+          message: string | null
+          read: boolean
+          student_id: string | null
+          title: string
+          type: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          library_id: string
+          message?: string | null
+          read?: boolean
+          student_id?: string | null
+          title: string
+          type: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          library_id?: string
+          message?: string | null
+          read?: boolean
+          student_id?: string | null
+          title?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -83,6 +176,74 @@ export type Database = {
         }
         Relationships: []
       }
+      students: {
+        Row: {
+          created_at: string
+          email: string | null
+          expiry_date: string | null
+          full_name: string
+          id: string
+          last_check_in: string | null
+          library_id: string
+          no_show_days: number
+          phone: string | null
+          plan: string | null
+          qr_code: string
+          seat_number: string | null
+          slot: string | null
+          start_date: string
+          status: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          expiry_date?: string | null
+          full_name: string
+          id?: string
+          last_check_in?: string | null
+          library_id: string
+          no_show_days?: number
+          phone?: string | null
+          plan?: string | null
+          qr_code?: string
+          seat_number?: string | null
+          slot?: string | null
+          start_date?: string
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          expiry_date?: string | null
+          full_name?: string
+          id?: string
+          last_check_in?: string | null
+          library_id?: string
+          no_show_days?: number
+          phone?: string | null
+          plan?: string | null
+          qr_code?: string
+          seat_number?: string | null
+          slot?: string | null
+          start_date?: string
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "students_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           id: string
@@ -109,12 +270,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      detect_no_shows: { Args: never; Returns: undefined }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
         Returns: boolean
+      }
+      qr_check_in: {
+        Args: { p_library_id: string; p_qr_code: string }
+        Returns: Json
       }
     }
     Enums: {
