@@ -487,6 +487,13 @@ export type Database = {
       }
       confirm_waiting_list: { Args: { p_entry_id: string }; Returns: Json }
       detect_no_shows: { Args: never; Returns: undefined }
+      get_slot_availability: {
+        Args: { p_library_id: string }
+        Returns: {
+          available_seats: number
+          slot_name: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
