@@ -27,7 +27,7 @@ const AuthPage = () => {
         navigate("/dashboard");
       } else {
         await signUp(email, password, fullName);
-        toast({ title: "Account created!", description: "Check your email to confirm." });
+        toast({ title: "Account created!", description: "Check your email to confirm, then sign in." });
       }
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
