@@ -407,11 +407,85 @@ export type Database = {
         }
         Relationships: []
       }
+      waiting_list: {
+        Row: {
+          confirmation_deadline: string | null
+          confirmed_at: string | null
+          created_at: string
+          email: string | null
+          id: string
+          library_id: string
+          notes: string | null
+          notified_at: string | null
+          phone: string | null
+          position: number
+          preferred_plan: string | null
+          preferred_slot: string | null
+          status: string
+          student_name: string
+          updated_at: string
+        }
+        Insert: {
+          confirmation_deadline?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          library_id: string
+          notes?: string | null
+          notified_at?: string | null
+          phone?: string | null
+          position: number
+          preferred_plan?: string | null
+          preferred_slot?: string | null
+          status?: string
+          student_name: string
+          updated_at?: string
+        }
+        Update: {
+          confirmation_deadline?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          library_id?: string
+          notes?: string | null
+          notified_at?: string | null
+          phone?: string | null
+          position?: number
+          preferred_plan?: string | null
+          preferred_slot?: string | null
+          status?: string
+          student_name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "waiting_list_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      add_to_waiting_list: {
+        Args: {
+          p_email?: string
+          p_library_id: string
+          p_phone?: string
+          p_preferred_plan?: string
+          p_preferred_slot?: string
+          p_student_name: string
+        }
+        Returns: Json
+      }
+      confirm_waiting_list: { Args: { p_entry_id: string }; Returns: Json }
       detect_no_shows: { Args: never; Returns: undefined }
       has_role: {
         Args: {
@@ -420,7 +494,9 @@ export type Database = {
         }
         Returns: boolean
       }
+      notify_next_in_queue: { Args: { p_library_id: string }; Returns: Json }
       process_renewals: { Args: never; Returns: Json }
+      process_waiting_list_timeouts: { Args: never; Returns: Json }
       qr_check_in: {
         Args: { p_library_id: string; p_qr_code: string }
         Returns: Json
