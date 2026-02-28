@@ -29,6 +29,7 @@ import SuperAdminRevenue from "./pages/SuperAdminRevenue";
 import SuperAdminSubscriptions from "./pages/SuperAdminSubscriptions";
 import SuperAdminNotifications from "./pages/SuperAdminNotifications";
 import SuperAdminSettings from "./pages/SuperAdminSettings";
+import SuperAdminDomains from "./pages/SuperAdminDomains";
 
 const queryClient = new QueryClient();
 
@@ -64,6 +65,7 @@ const App = () => (
               <Route path="/admin/revenue" element={<SuperAdminRevenue />} />
               <Route path="/admin/subscriptions" element={<SuperAdminSubscriptions />} />
               <Route path="/admin/notifications" element={<SuperAdminNotifications />} />
+              <Route path="/admin/domains" element={<SuperAdminDomains />} />
               <Route path="/admin/settings" element={<SuperAdminSettings />} />
 
               {/* Public */}
