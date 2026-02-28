@@ -18,6 +18,7 @@ import QRCodesPage from "./pages/QRCodesPage";
 import RenewalsPage from "./pages/RenewalsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WaitingListPage from "./pages/WaitingListPage";
+import SupportPage from "./pages/SupportPage";
 import NotFound from "./pages/NotFound";
 import DomainRouter from "./components/DomainRouter";
 
@@ -26,6 +27,7 @@ import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import SuperAdminLibraries from "./pages/SuperAdminLibraries";
 import SuperAdminRevenue from "./pages/SuperAdminRevenue";
 import SuperAdminSubscriptions from "./pages/SuperAdminSubscriptions";
+import SuperAdminNotifications from "./pages/SuperAdminNotifications";
 import SuperAdminSettings from "./pages/SuperAdminSettings";
 
 const queryClient = new QueryClient();
@@ -54,12 +56,14 @@ const App = () => (
               <Route path="/dashboard/renewals" element={<RenewalsPage />} />
               <Route path="/dashboard/settings" element={<SettingsPage />} />
               <Route path="/dashboard/waitlist" element={<WaitingListPage />} />
+              <Route path="/dashboard/support" element={<SupportPage />} />
 
               {/* Super Admin routes */}
               <Route path="/admin" element={<SuperAdminDashboard />} />
               <Route path="/admin/libraries" element={<SuperAdminLibraries />} />
               <Route path="/admin/revenue" element={<SuperAdminRevenue />} />
               <Route path="/admin/subscriptions" element={<SuperAdminSubscriptions />} />
+              <Route path="/admin/notifications" element={<SuperAdminNotifications />} />
               <Route path="/admin/settings" element={<SuperAdminSettings />} />
 
               {/* Public */}
