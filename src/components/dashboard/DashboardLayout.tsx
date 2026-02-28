@@ -1,10 +1,12 @@
 import { ReactNode, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { 
   BookOpen, LayoutDashboard, LayoutGrid, Users, 
   CreditCard, CalendarClock, BarChart3, Settings, 
-  ChevronLeft, Bell, Globe
+  ChevronLeft, Bell, Globe, Shield, LogOut
 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { useIsSuperAdmin } from "@/hooks/useUserRole";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
@@ -19,6 +21,13 @@ const navItems = [
 
 const DashboardLayout = ({ children }: { children: ReactNode }) => {
   const [collapsed, setCollapsed] = useState(false);
+  const { user, signOut } = useAuth();
+  const { isSuperAdmin } = useIsSuperAdmin();
+  const navigate = useNavigate();
+
+  const allNavItems = isSuperAdmin
+    ? [{ icon: Shield, label: "Super Admin", path: "/admin" }, ...navItems]
+    : navItems;
   const location = useLocation();
 
   return (
@@ -33,7 +42,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
         </div>
 
         <nav className="flex-1 py-4 space-y-1 px-2">
-          {navItems.map((item) => {
+          {allNavItems.map((item) => {
             const active = location.pathname === item.path;
             return (
               <Link
@@ -52,12 +61,23 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
           })}
         </nav>
 
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="p-3 border-t border-sidebar-border text-sidebar-foreground/40 hover:text-sidebar-foreground transition-colors"
-        >
-          <ChevronLeft className={`w-4 h-4 mx-auto transition-transform ${collapsed ? "rotate-180" : ""}`} />
-        </button>
+        <div className="border-t border-sidebar-border">
+          {user && (
+            <button
+              onClick={async () => { await signOut(); navigate("/auth"); }}
+              className="flex items-center gap-3 px-5 py-3 text-sm text-sidebar-foreground/60 hover:text-sidebar-foreground transition-colors w-full"
+            >
+              <LogOut className="w-4 h-4 flex-shrink-0" />
+              {!collapsed && <span>Sign Out</span>}
+            </button>
+          )}
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="p-3 w-full text-sidebar-foreground/40 hover:text-sidebar-foreground transition-colors"
+          >
+            <ChevronLeft className={`w-4 h-4 mx-auto transition-transform ${collapsed ? "rotate-180" : ""}`} />
+          </button>
+        </div>
       </aside>
 
       {/* Main */}
@@ -86,7 +106,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
         {/* Mobile nav */}
         <div className="lg:hidden border-b border-border bg-card overflow-x-auto">
           <div className="flex px-2 py-2 gap-1">
-            {navItems.slice(0, 6).map((item) => {
+            {allNavItems.slice(0, 6).map((item) => {
               const active = location.pathname === item.path;
               return (
                 <Link
