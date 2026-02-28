@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { BookOpen, MapPin, Clock, Users, Check, ChevronRight, Loader2 } from "lucide-react";
+import { BookOpen, MapPin, Clock, Users, Check, ChevronRight, Loader2, Wifi, Zap, VolumeX, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import ImageSlider from "@/components/library-public/ImageSlider";
+import FacilitiesSection from "@/components/library-public/FacilitiesSection";
+import GallerySection from "@/components/library-public/GallerySection";
+import TestimonialsSection from "@/components/library-public/TestimonialsSection";
+import AboutSection from "@/components/library-public/AboutSection";
+import CTASection from "@/components/library-public/CTASection";
+import ContactSection from "@/components/library-public/ContactSection";
+import LibraryFooter from "@/components/library-public/LibraryFooter";
+import WhatsAppButton from "@/components/library-public/WhatsAppButton";
 
 interface LibraryPublicPageProps {
   domainLibrary?: any;
@@ -59,8 +68,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     queryKey: ["public-library", domainLibrary?.id || id],
     queryFn: async () => {
       if (domainLibrary) return domainLibrary;
-      const { data, error } = await supabase
-        .rpc("get_library_public", { p_identifier: id! });
+      const { data, error } = await supabase.rpc("get_library_public", { p_identifier: id! });
       if (error) throw error;
       if (!data || (data as any[]).length === 0) return null;
       return (data as any[])[0];
@@ -101,13 +109,10 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     enabled: !!libraryId,
   });
 
-  // Get slot availability via secure function
   const { data: slotAvailability = [] } = useQuery({
     queryKey: ["public-slot-availability", libraryId],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc("get_slot_availability", {
-        p_library_id: libraryId!,
-      });
+      const { data, error } = await supabase.rpc("get_slot_availability", { p_library_id: libraryId! });
       if (error) throw error;
       return data as { slot_name: string; available_seats: number }[];
     },
@@ -120,14 +125,8 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     return acc;
   }, {} as Record<string, number>);
 
-  // Demo fallback data when no library exists yet
-  const demoLibrary = {
-    id: "demo",
-    name: "City Study Hub",
-    address: "Koramangala, 5th Block",
-    city: "Bangalore",
-    total_seats: 40,
-  };
+  // Demo fallback
+  const demoLibrary = { id: "demo", name: "City Study Hub", address: "Koramangala, 5th Block", city: "Bangalore", total_seats: 40 };
   const demoPlans = [
     { id: "d1", name: "4 Hour", price: 2000, duration_hours: 4, description: "Any 4-hour slot with reserved seat and Wi-Fi" },
     { id: "d2", name: "6 Hour", price: 3000, duration_hours: 6, description: "Any 6-hour slot with reserved seat, Wi-Fi and locker" },
@@ -139,24 +138,27 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     { id: "s3", name: "Afternoon", start_time: "14:00", end_time: "18:00", max_seats: 40 },
     { id: "s4", name: "Evening", start_time: "18:00", end_time: "22:00", max_seats: 40 },
   ];
-  const demoAvailability: Record<string, number> = { Morning: 37, Forenoon: 33, Afternoon: 28, Evening: 39 };
+  const demoAvailability: Record<string, number> = { Morning: 37, Forenoon: 33, Afternoon: 8, Evening: 3 };
 
   const isDemo = !library && id === "demo";
   const displayLibrary = library || demoLibrary;
   const displayPlans = plans.length > 0 ? plans : (isDemo ? demoPlans : []);
   const displaySlots = slots.length > 0 ? slots : (isDemo ? demoSlots : []);
   const displayAvailability = Object.keys(availabilityMap).length > 0 ? availabilityMap : (isDemo ? demoAvailability : {});
-
-  // Dynamic branding from library settings
   const brandColor = library?.primary_color || "#14b8a6";
+  const popularIndex = displayPlans.length >= 3 ? 1 : displayPlans.length - 1;
 
-  // Dynamic SEO title
+  const planFeatures = ["High Speed WiFi", "Power Backup", "Silent Zone", "CCTV Security"];
+
   useEffect(() => {
-    if (displayLibrary?.name) {
-      document.title = `${displayLibrary.name} | Libriofy`;
-    }
+    if (displayLibrary?.name) document.title = `${displayLibrary.name} | Libriofy`;
     return () => { document.title = "Libriofy – Automate Your Library"; };
   }, [displayLibrary?.name]);
+
+  const scrollToForm = () => {
+    setShowForm(true);
+    setTimeout(() => document.getElementById("admission")?.scrollIntoView({ behavior: "smooth" }), 100);
+  };
 
   if (libLoading) {
     return (
@@ -174,68 +176,91 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     );
   }
 
-  // Find the most popular plan (middle or highest price)
-  const popularIndex = displayPlans.length >= 3 ? 1 : displayPlans.length - 1;
-
   return (
     <div className="min-h-screen bg-background">
-      {/* Demo banner */}
       {isDemo && (
         <div className="bg-accent/20 text-accent-foreground text-center py-2 text-sm">
           🎯 This is a demo preview. Create an account to set up your own library page.
         </div>
       )}
 
-      {/* Header */}
-      <header style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor}dd)` }} className="text-white py-16 sm:py-24">
-        <div className="container mx-auto px-4 text-center">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+      {/* Hero */}
+      <header
+        className="relative text-primary-foreground py-20 sm:py-32 overflow-hidden"
+        style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor}bb, ${brandColor}dd)` }}
+      >
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 20% 50%, white 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
+        <div className="container mx-auto px-4 text-center relative z-10">
+          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
             {displayLibrary.logo_url ? (
-              <img src={displayLibrary.logo_url} alt={displayLibrary.name} className="w-14 h-14 rounded-2xl mx-auto mb-6 object-cover" />
+              <img src={displayLibrary.logo_url} alt={displayLibrary.name} className="w-16 h-16 rounded-2xl mx-auto mb-6 object-cover shadow-lg" />
             ) : (
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{ background: `${brandColor}66` }}>
-                <BookOpen className="w-7 h-7 text-white" />
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 bg-primary-foreground/20 backdrop-blur-sm">
+                <BookOpen className="w-8 h-8" />
               </div>
             )}
-            <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">{displayLibrary.name}</h1>
-            <div className="flex items-center justify-center gap-4 text-white/70 text-sm flex-wrap">
+            <h1 className="text-4xl sm:text-6xl font-bold font-display mb-4">{displayLibrary.name}</h1>
+            <p className="text-lg sm:text-xl text-primary-foreground/80 mb-6 max-w-lg mx-auto">
+              Premium Study Space for Focused Learning
+            </p>
+            <div className="flex items-center justify-center gap-4 text-primary-foreground/70 text-sm flex-wrap mb-8">
               {displayLibrary.address && (
                 <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {displayLibrary.address}{displayLibrary.city ? `, ${displayLibrary.city}` : ""}</span>
               )}
               {displayLibrary.opening_hours ? (
-                <span className="flex items-center gap-1">
-                  <Clock className="w-4 h-4" /> {displayLibrary.opening_hours}
-                </span>
+                <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {displayLibrary.opening_hours}</span>
               ) : displaySlots.length > 0 ? (
-                <span className="flex items-center gap-1">
-                  <Clock className="w-4 h-4" /> {displaySlots[0].start_time.slice(0, 5)} – {displaySlots[displaySlots.length - 1].end_time.slice(0, 5)}
-                </span>
+                <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {displaySlots[0].start_time.slice(0, 5)} – {displaySlots[displaySlots.length - 1].end_time.slice(0, 5)}</span>
               ) : null}
               <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {displayLibrary.total_seats} seats</span>
+            </div>
+            <div className="flex gap-3 justify-center flex-wrap">
+              <Button size="lg" onClick={scrollToForm} className="bg-background text-foreground hover:bg-background/90 font-semibold text-base px-8">
+                Book Seat <ChevronRight className="w-5 h-5 ml-1" />
+              </Button>
+              <Button size="lg" variant="outline" className="border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 font-semibold text-base px-8" onClick={() => document.getElementById("plans")?.scrollIntoView({ behavior: "smooth" })}>
+                View Plans
+              </Button>
             </div>
           </motion.div>
         </div>
       </header>
 
-      {/* Live Availability */}
+      {/* Image Slider */}
+      <ImageSlider />
+
+      {/* Live Seat Availability */}
       {displaySlots.length > 0 && (
-        <section className="py-12">
-          <div className="container mx-auto px-4 max-w-4xl">
-            <h2 className="text-2xl font-bold font-display text-foreground mb-6">Live Seat Availability</h2>
+        <section className="py-16">
+          <div className="container mx-auto px-4 max-w-5xl">
+            <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">Live Seat Availability</h2>
+            <p className="text-muted-foreground text-center mb-8">Real-time updates every 30 seconds</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {displaySlots.map((slot) => {
-                const available = displayAvailability[slot.name] ?? (slot.max_seats ?? displayLibrary.total_seats);
+                const max = slot.max_seats ?? displayLibrary.total_seats;
+                const available = displayAvailability[slot.name] ?? max;
+                const pct = max > 0 ? available / max : 1;
+                const colorClass = pct <= 0.1 ? "text-destructive" : pct <= 0.3 ? "text-accent" : "text-success";
+                const borderClass = pct <= 0.1 ? "border-destructive/30" : pct <= 0.3 ? "border-accent/30" : "border-border";
                 return (
-                  <div key={slot.id} className="bg-card rounded-xl border border-border p-4 text-center">
-                    <p className="text-xs text-muted-foreground mb-2">{slot.name}</p>
-                    <p className="text-[10px] text-muted-foreground/60 mb-1">
-                      {slot.start_time.slice(0, 5)} – {slot.end_time.slice(0, 5)}
-                    </p>
-                    <p className={`text-2xl font-bold font-display ${available <= 3 ? "text-destructive" : "text-success"}`}>
-                      {available}
-                    </p>
-                    <p className="text-xs text-muted-foreground">seats left</p>
-                  </div>
+                  <motion.div
+                    key={slot.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    className={`bg-card rounded-xl border ${borderClass} p-5 text-center`}
+                  >
+                    <p className="text-sm font-semibold text-foreground mb-1">{slot.name}</p>
+                    <p className="text-xs text-muted-foreground mb-3">{slot.start_time.slice(0, 5)} – {slot.end_time.slice(0, 5)}</p>
+                    <p className={`text-4xl font-bold font-display ${colorClass}`}>{available}</p>
+                    <p className="text-xs text-muted-foreground mt-1">seats left</p>
+                    <div className="w-full h-1.5 bg-secondary rounded-full mt-3 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${pct <= 0.1 ? "bg-destructive" : pct <= 0.3 ? "bg-accent" : "bg-success"}`}
+                        style={{ width: `${Math.max(pct * 100, 5)}%` }}
+                      />
+                    </div>
+                  </motion.div>
                 );
               })}
             </div>
@@ -245,32 +270,42 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
 
       {/* Plans */}
       {displayPlans.length > 0 && (
-        <section className="py-12 bg-secondary/30">
-          <div className="container mx-auto px-4 max-w-4xl">
-            <h2 className="text-2xl font-bold font-display text-foreground mb-6">Plans</h2>
+        <section className="py-16 bg-secondary/30" id="plans">
+          <div className="container mx-auto px-4 max-w-5xl">
+            <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">Choose Your Plan</h2>
+            <p className="text-muted-foreground text-center mb-10">Flexible plans to suit your study schedule</p>
             <div className={`grid grid-cols-1 sm:grid-cols-${Math.min(displayPlans.length, 3)} gap-6`}>
               {displayPlans.map((plan, i) => {
                 const isPopular = i === popularIndex && displayPlans.length > 1;
                 return (
-                  <div key={plan.id} className={`relative bg-card rounded-xl border p-6 ${isPopular ? "border-primary shadow-glow" : "border-border"}`}>
+                  <motion.div
+                    key={plan.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: i * 0.1 }}
+                    className={`relative bg-card rounded-2xl border p-6 sm:p-8 ${isPopular ? "border-primary shadow-glow scale-[1.02]" : "border-border"}`}
+                  >
                     {isPopular && (
-                      <Badge className="absolute -top-2.5 left-4 bg-accent text-accent-foreground">Popular</Badge>
+                      <Badge className="absolute -top-3 left-4 bg-accent text-accent-foreground px-3 py-1">Best Value</Badge>
                     )}
                     <h3 className="text-lg font-bold font-display text-foreground">{plan.name}</h3>
-                    <p className="text-2xl font-bold font-display text-primary mt-2">
+                    <p className="text-3xl font-bold font-display text-primary mt-3">
                       ₹{plan.price.toLocaleString("en-IN")}<span className="text-sm font-normal text-muted-foreground">/mo</span>
                     </p>
-                    {plan.description && (
-                      <p className="text-sm text-muted-foreground mt-2">{plan.description}</p>
-                    )}
+                    {plan.description && <p className="text-sm text-muted-foreground mt-3">{plan.description}</p>}
                     <p className="text-xs text-muted-foreground mt-1">{plan.duration_hours}h daily access</p>
-                    <Button
-                      className="w-full mt-6 bg-primary text-primary-foreground hover:bg-primary/90"
-                      onClick={() => setShowForm(true)}
-                    >
+                    <ul className="mt-5 space-y-2">
+                      {planFeatures.map((f) => (
+                        <li key={f} className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Check className="w-4 h-4 text-success shrink-0" /> {f}
+                        </li>
+                      ))}
+                    </ul>
+                    <Button className="w-full mt-6" onClick={scrollToForm}>
                       Book Now <ChevronRight className="w-4 h-4 ml-1" />
                     </Button>
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
@@ -278,12 +313,32 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
         </section>
       )}
 
+      {/* Facilities */}
+      <FacilitiesSection />
+
+      {/* Gallery */}
+      <GallerySection />
+
+      {/* About */}
+      <AboutSection libraryName={displayLibrary.name} />
+
+      {/* Testimonials */}
+      <TestimonialsSection />
+
+      {/* CTA */}
+      <CTASection brandColor={brandColor} onBookSeat={scrollToForm} />
+
+      {/* Contact */}
+      <div id="contact">
+        <ContactSection library={displayLibrary} />
+      </div>
+
       {/* Admission Form */}
       {showForm && (
-        <section className="py-12" id="admission">
+        <section className="py-16 bg-secondary/30" id="admission">
           <div className="container mx-auto px-4 max-w-lg">
             <motion.div
-              className="bg-card rounded-2xl border border-border p-6 sm:p-8"
+              className="bg-card rounded-2xl border border-border p-6 sm:p-8 shadow-lg"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
             >
@@ -301,14 +356,8 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
               ) : isDemo ? (
                 <div className="text-center py-8">
                   <h2 className="text-xl font-bold font-display text-foreground mb-2">Demo Mode</h2>
-                  <p className="text-muted-foreground">
-                    Form submission is disabled in demo mode. Create an account to enable the waiting list.
-                  </p>
-                  <Link to="/auth">
-                    <Button className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90">
-                      Get Started
-                    </Button>
-                  </Link>
+                  <p className="text-muted-foreground">Form submission is disabled in demo mode. Create an account to enable the waiting list.</p>
+                  <Link to="/auth"><Button className="mt-4">Get Started</Button></Link>
                 </div>
               ) : (
                 <form onSubmit={handleSubmit}>
@@ -333,9 +382,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                           <SelectTrigger className="mt-1"><SelectValue placeholder="Select a plan" /></SelectTrigger>
                           <SelectContent>
                             {displayPlans.map((p) => (
-                              <SelectItem key={p.id} value={p.name}>
-                                {p.name} – ₹{p.price.toLocaleString("en-IN")}/mo
-                              </SelectItem>
+                              <SelectItem key={p.id} value={p.name}>{p.name} – ₹{p.price.toLocaleString("en-IN")}/mo</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -348,15 +395,13 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                           <SelectTrigger className="mt-1"><SelectValue placeholder="Select time slot" /></SelectTrigger>
                           <SelectContent>
                             {displaySlots.map((s) => (
-                              <SelectItem key={s.id} value={s.name}>
-                                {s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})
-                              </SelectItem>
+                              <SelectItem key={s.id} value={s.name}>{s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
                     )}
-                    <Button type="submit" disabled={submitting || !formName.trim()} className="w-full bg-primary text-primary-foreground hover:bg-primary/90 mt-2">
+                    <Button type="submit" disabled={submitting || !formName.trim()} className="w-full mt-2">
                       {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                       {submitting ? "Submitting..." : "Join Waiting List"}
                     </Button>
@@ -368,13 +413,11 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
         </section>
       )}
 
-      {/* Footer link */}
-      <div className="py-8 text-center">
-        <Link to="/" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-          Powered by <span className="font-semibold">Libriofy</span>
-        </Link>
-        <p className="text-xs text-muted-foreground/50 mt-1">by Sangita Group</p>
-      </div>
+      {/* Footer */}
+      <LibraryFooter library={displayLibrary} />
+
+      {/* WhatsApp */}
+      <WhatsAppButton />
     </div>
   );
 };
