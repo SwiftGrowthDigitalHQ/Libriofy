@@ -19,10 +19,13 @@ const Index = () => {
             <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-sidebar-primary-foreground" />
             </div>
-            <span className="text-lg font-bold font-display text-sidebar-foreground">SwiftGrowth</span>
+            <span className="text-lg font-bold font-display text-sidebar-foreground">Libriofy</span>
           </div>
           <p className="text-sm text-sidebar-foreground/50">
-            © 2026 SwiftGrowth Library Automation. All rights reserved.
+            © 2026 Libriofy. All rights reserved.
+          </p>
+          <p className="text-xs text-sidebar-foreground/30 mt-2">
+            by Sangita Group
           </p>
         </div>
       </footer>

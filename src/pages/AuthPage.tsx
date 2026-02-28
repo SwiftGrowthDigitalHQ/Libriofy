@@ -60,7 +60,7 @@ const AuthPage = () => {
             <BookOpen className="w-6 h-6 text-primary-foreground" />
           </div>
           <CardTitle className="font-display text-2xl">{isLogin ? "Welcome back" : "Create account"}</CardTitle>
-          <CardDescription>{isLogin ? "Sign in to your SwiftGrowth account" : "Get started with SwiftGrowth"}</CardDescription>
+          <CardDescription>{isLogin ? "Sign in to your Libriofy account" : "Get started with Libriofy"}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

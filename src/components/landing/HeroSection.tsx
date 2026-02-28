@@ -30,11 +30,9 @@ const HeroSection = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.1 }}
           >
-            Study Library
+            Automate Your Library.
             <br />
-            <span className="text-gradient-primary">Management</span>
-            <br />
-            on Autopilot
+            <span className="text-gradient-primary">Maximize Every Seat.</span>
           </motion.h1>
 
           <motion.p

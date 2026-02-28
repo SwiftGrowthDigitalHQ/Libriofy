@@ -42,7 +42,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
           <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center flex-shrink-0">
             <BookOpen className="w-4 h-4 text-sidebar-primary-foreground" />
           </div>
-          {!collapsed && <span className="text-base font-bold font-display text-sidebar-foreground">SwiftGrowth</span>}
+          {!collapsed && <span className="text-base font-bold font-display text-sidebar-foreground">Libriofy</span>}
         </div>
 
         <nav className="flex-1 py-4 space-y-1 px-2">
@@ -91,10 +91,10 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="font-bold font-display text-foreground">SwiftGrowth</span>
+            <span className="font-bold font-display text-foreground">Libriofy</span>
           </div>
           <div className="hidden lg:block">
-            <h1 className="text-lg font-semibold font-display text-foreground">City Study Hub</h1>
+            <h1 className="text-lg font-semibold font-display text-foreground">Libriofy</h1>
           </div>
           <div className="flex items-center gap-3">
             <button className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors relative">
