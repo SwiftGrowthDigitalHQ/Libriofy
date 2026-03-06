@@ -3,6 +3,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 
 export type AppRole = "super_admin" | "library_owner" | "staff" | "student";
+export type UserRoleRecord = { role: AppRole; library_id: string | null };
+
+export const isUserRolesSchemaError = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; status?: number; message?: string };
+  if (maybeError.code === "PGRST205" || maybeError.status === 404) return true;
+  return (maybeError.message ?? "").toLowerCase().includes("user_roles");
+};
 
 export const useUserRole = () => {
   const { user } = useAuth();
@@ -16,9 +24,13 @@ export const useUserRole = () => {
         .select("role, library_id")
         .eq("user_id", user.id);
       if (error) throw error;
-      return data as { role: AppRole; library_id: string | null }[];
+      return data as UserRoleRecord[];
     },
     enabled: !!user,
+    retry: (failureCount, error) => {
+      if (isUserRolesSchemaError(error)) return false;
+      return failureCount < 2;
+    },
   });
 };
 
@@ -28,4 +40,20 @@ export const useIsSuperAdmin = () => {
     isSuperAdmin: roles?.some((r) => r.role === "super_admin") ?? false,
     isLoading,
   };
+};
+
+export const getPrimaryRole = (roles: UserRoleRecord[] | null | undefined): AppRole | null => {
+  if (!roles?.length) return null;
+  if (roles.some((r) => r.role === "super_admin")) return "super_admin";
+  if (roles.some((r) => r.role === "library_owner")) return "library_owner";
+  if (roles.some((r) => r.role === "staff")) return "staff";
+  if (roles.some((r) => r.role === "student")) return "student";
+  return null;
+};
+
+export const getRoleHomeRoute = (roles: UserRoleRecord[] | null | undefined): string => {
+  const primary = getPrimaryRole(roles);
+  if (primary === "super_admin") return "/admin";
+  if (primary === "library_owner" || primary === "staff") return "/dashboard";
+  return "/auth";
 };
