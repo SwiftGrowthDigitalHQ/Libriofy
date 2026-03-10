@@ -1,7 +1,7 @@
 import { ReactNode, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  BookOpen, LayoutDashboard, Building2, CreditCard,
+  LayoutDashboard, Building2, CreditCard,
   ChevronLeft, LogOut, Settings, TrendingUp, Shield, Bell, Globe
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -59,13 +59,6 @@ const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
         </nav>
 
         <div className="border-t border-sidebar-border">
-          <Link
-            to="/dashboard"
-            className="flex items-center gap-3 px-5 py-3 text-sm text-sidebar-foreground/60 hover:text-sidebar-foreground transition-colors w-full"
-          >
-            <BookOpen className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span>Library Panel</span>}
-          </Link>
           {user && (
             <button
               onClick={async () => { await signOut(); navigate("/auth"); }}

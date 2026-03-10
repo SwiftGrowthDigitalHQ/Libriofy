@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -122,8 +121,11 @@ const AuthPage = () => {
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
-      const { error } = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: window.location.origin,
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: "http://localhost:8080",
+        },
       });
       if (error) throw error;
     } catch (err: any) {
@@ -175,19 +177,16 @@ const AuthPage = () => {
   // --- Signup: Create account ---
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phoneVerified) {
-      setMode("verify-phone");
-      return;
-    }
     setLoading(true);
     try {
-      await signUp(signupEmail, signupPassword, signupName);
-      // Update profile with phone after signup
+      const normalizedPhone = signupPhone.trim();
+      await signUp(signupEmail, signupPassword, signupName, normalizedPhone || undefined);
+      // Update profile with phone only when provided
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
+      if (user && normalizedPhone) {
         await supabase.from("profiles").update({
-          phone_number: signupPhone,
-          is_phone_verified: true,
+          phone_number: normalizedPhone,
+          is_phone_verified: phoneVerified,
         }).eq("user_id", user.id);
       }
       toast({ title: "Account created!", description: "Check your email to confirm, then sign in." });
@@ -209,7 +208,7 @@ const AuthPage = () => {
               <Smartphone className="w-6 h-6 text-primary-foreground" />
             </div>
             <CardTitle className="text-2xl">Verify Your Phone</CardTitle>
-            <CardDescription>We need to verify your mobile number before creating your account</CardDescription>
+            <CardDescription>Mobile verification is optional for now. You can skip this and continue signup.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {!signupOtpSent ? (
@@ -298,19 +297,18 @@ const AuthPage = () => {
                 <Input type="password" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} required minLength={6} />
               </div>
               <div className="space-y-2">
-                <Label>Mobile Number</Label>
+                <Label>Mobile Number (Optional)</Label>
                 <div className="flex gap-2">
                   <Input
                     type="tel"
                     placeholder="+91XXXXXXXXXX"
                     value={signupPhone}
                     onChange={(e) => setSignupPhone(e.target.value)}
-                    required
                     className="flex-1"
                   />
                   {phoneVerified ? (
                     <span className="inline-flex items-center text-xs font-medium text-green-600 bg-green-50 px-2.5 rounded-md border border-green-200">
-                      Verified ✓
+                      Verified
                     </span>
                   ) : (
                     <Button type="button" variant="outline" size="sm" onClick={() => setMode("verify-phone")} disabled={!signupPhone}>
@@ -319,14 +317,9 @@ const AuthPage = () => {
                   )}
                 </div>
               </div>
-              <Button type="submit" className="w-full" disabled={loading || !phoneVerified}>
+              <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? "Creating..." : "Create Account"}
               </Button>
-              {!phoneVerified && (
-                <p className="text-xs text-muted-foreground text-center">
-                  Please verify your mobile number to continue
-                </p>
-              )}
             </form>
             <p className="text-center text-sm text-muted-foreground">
               Already have an account?{" "}

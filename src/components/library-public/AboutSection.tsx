@@ -3,22 +3,23 @@ import { motion } from "framer-motion";
 
 interface AboutSectionProps {
   libraryName: string;
+  aboutText?: string | null;
 }
 
-const AboutSection = ({ libraryName }: AboutSectionProps) => (
+const AboutSection = ({ libraryName, aboutText }: AboutSectionProps) => (
   <section className="py-16 bg-secondary/30">
     <div className="container mx-auto px-4 max-w-4xl">
       <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">
         About {libraryName}
       </h2>
       <p className="text-muted-foreground text-center mb-10 max-w-2xl mx-auto">
-        A premium, distraction-free study space designed for serious learners who value discipline, focus, and results.
+        {aboutText || "A premium, distraction-free study space designed for serious learners who value discipline, focus, and results."}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
         {[
           { icon: Target, title: "Focused Environment", desc: "Strict no-phone policy and silent zones ensure maximum productivity during your study hours." },
           { icon: BookOpen, title: "Quality Infrastructure", desc: "Ergonomic furniture, individual desk lights, and locker facilities for a comfortable experience." },
-          { icon: Clock, title: "Flexible Timings", desc: "Multiple time slots to fit your schedule — morning, afternoon, evening, or full-day access." },
+          { icon: Clock, title: "Flexible Timings", desc: "Multiple time slots to fit your schedule - morning, afternoon, evening, or full-day access." },
         ].map((item, i) => (
           <motion.div
             key={item.title}

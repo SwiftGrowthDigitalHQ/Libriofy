@@ -41,7 +41,7 @@ const HeroSection = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.3 }}
           >
-            Replace your receptionist with intelligent automation. Seats, payments, attendance, and renewals — all managed effortlessly.
+            Manage seats, students, payments and attendance automatically.
           </motion.p>
 
           <motion.div
@@ -95,3 +95,5 @@ const HeroSection = () => {
 };
 
 export default HeroSection;
+
+

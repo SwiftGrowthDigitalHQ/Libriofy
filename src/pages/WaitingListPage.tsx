@@ -1,9 +1,21 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { format, formatDistanceToNow, isPast } from "date-fns";
+import {
+  ListOrdered,
+  UserPlus,
+  Bell,
+  CheckCircle,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  Trash2,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import StatsCard from "@/components/dashboard/StatsCard";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,52 +23,111 @@ import { Label } from "@/components/ui/label";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  ListOrdered, UserPlus, Bell, CheckCircle, XCircle, Clock, AlertTriangle, Trash2
-} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { format, formatDistanceToNow, isPast } from "date-fns";
+import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { useAuth } from "@/hooks/useAuth";
+
+type WaitingEntry = Database["public"]["Tables"]["waiting_list"]["Row"];
+type TimeSlotOption = Pick<Database["public"]["Tables"]["time_slots"]["Row"], "id" | "name">;
+type PlanOption = Pick<Database["public"]["Tables"]["plans"]["Row"], "id" | "name">;
+
+type QueueResult = {
+  success?: boolean;
+  error?: string;
+  position?: number;
+  student_name?: string;
+};
+
+const getErrorMessage = (error: unknown): string => {
+  if (!error || typeof error !== "object") return "Unknown error";
+  return (error as { message?: string }).message || "Unknown error";
+};
 
 const WaitingListPage = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ student_name: "", phone: "", email: "", preferred_slot: "", preferred_plan: "" });
 
-  // Get first library
-  const { data: libraries = [] } = useQuery({
-    queryKey: ["my-libraries"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("libraries").select("*").order("created_at");
+  const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
+    queryKey: ["my-libraries-fallback", user?.id],
+    queryFn: async (): Promise<Array<{ id: string }>> => {
+      if (!user?.id) return [];
+      const { data, error } = await supabase
+        .from("libraries")
+        .select("id")
+        .eq("owner_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
       if (error) throw error;
       return data;
     },
+    enabled: !!user?.id && !libraryId,
   });
-  const libraryId = libraries[0]?.id;
 
-  // Waiting list
-  const { data: entries = [], isLoading } = useQuery({
-    queryKey: ["waiting-list", libraryId],
-    queryFn: async () => {
-      if (!libraryId) return [];
+  const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
+
+  const {
+    data: entries = [],
+    isLoading: entriesLoading,
+    isError: entriesError,
+    error: entriesQueryError,
+  } = useQuery({
+    queryKey: ["waiting-list", resolvedLibraryId],
+    queryFn: async (): Promise<WaitingEntry[]> => {
+      if (!resolvedLibraryId) return [];
       const { data, error } = await supabase
-        .from("waiting_list" as any)
+        .from("waiting_list")
         .select("*")
-        .eq("library_id", libraryId)
-        .order("position");
+        .eq("library_id", resolvedLibraryId)
+        .order("position", { ascending: true });
       if (error) throw error;
-      return data as any[];
+      return data;
     },
-    enabled: !!libraryId,
-    refetchInterval: 15000, // Refresh for countdown timers
+    enabled: !!resolvedLibraryId,
+    refetchInterval: 15000,
   });
 
-  // Add to queue
+  const { data: slots = [] } = useQuery({
+    queryKey: ["waiting-list-slots", resolvedLibraryId],
+    queryFn: async (): Promise<TimeSlotOption[]> => {
+      if (!resolvedLibraryId) return [];
+      const { data, error } = await supabase
+        .from("time_slots")
+        .select("id, name")
+        .eq("library_id", resolvedLibraryId)
+        .eq("is_active", true)
+        .order("start_time", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!resolvedLibraryId,
+  });
+
+  const { data: plans = [] } = useQuery({
+    queryKey: ["waiting-list-plans", resolvedLibraryId],
+    queryFn: async (): Promise<PlanOption[]> => {
+      if (!resolvedLibraryId) return [];
+      const { data, error } = await supabase
+        .from("plans")
+        .select("id, name")
+        .eq("library_id", resolvedLibraryId)
+        .eq("is_active", true)
+        .order("name", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!resolvedLibraryId,
+  });
+
   const addMutation = useMutation({
     mutationFn: async () => {
-      if (!libraryId) throw new Error("No library");
-      const { data, error } = await supabase.rpc("add_to_waiting_list" as any, {
-        p_library_id: libraryId,
+      if (!resolvedLibraryId) throw new Error("Library not linked for this account.");
+      const { data, error } = await supabase.rpc("add_to_waiting_list", {
+        p_library_id: resolvedLibraryId,
         p_student_name: form.student_name,
         p_phone: form.phone || null,
         p_email: form.email || null,
@@ -64,108 +135,134 @@ const WaitingListPage = () => {
         p_preferred_plan: form.preferred_plan || null,
       });
       if (error) throw error;
-      return data as any;
+      return data as QueueResult;
     },
     onSuccess: (result) => {
       if (result?.success) {
         toast({ title: "Added to queue", description: `Position #${result.position}` });
         setDialogOpen(false);
         setForm({ student_name: "", phone: "", email: "", preferred_slot: "", preferred_plan: "" });
-        queryClient.invalidateQueries({ queryKey: ["waiting-list"] });
+        queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
+      } else {
+        toast({ title: "Failed", description: result?.error || "Unknown error", variant: "destructive" });
       }
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
   });
 
-  // Notify next
   const notifyMutation = useMutation({
     mutationFn: async () => {
-      if (!libraryId) throw new Error("No library");
-      const { data, error } = await supabase.rpc("notify_next_in_queue" as any, { p_library_id: libraryId });
+      if (!resolvedLibraryId) throw new Error("Library not linked for this account.");
+      const { data, error } = await supabase.rpc("notify_next_in_queue", { p_library_id: resolvedLibraryId });
       if (error) throw error;
-      return data as any;
+      return data as QueueResult;
     },
     onSuccess: (result) => {
       if (result?.success) {
-        toast({ title: "Notified!", description: `${result.student_name} has 10 minutes to confirm` });
+        toast({ title: "Notified", description: `${result.student_name} has 10 minutes to confirm` });
       } else {
         toast({ title: "Queue empty", description: result?.error, variant: "destructive" });
       }
-      queryClient.invalidateQueries({ queryKey: ["waiting-list"] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
   });
 
-  // Confirm entry
   const confirmMutation = useMutation({
     mutationFn: async (entryId: string) => {
-      const { data, error } = await supabase.rpc("confirm_waiting_list" as any, { p_entry_id: entryId });
+      const { data, error } = await supabase.rpc("confirm_waiting_list", { p_entry_id: entryId });
       if (error) throw error;
-      return data as any;
+      return data as QueueResult;
     },
     onSuccess: (result) => {
       if (result?.success) {
-        toast({ title: "Confirmed!", description: `${result.student_name} is confirmed` });
+        toast({ title: "Confirmed", description: `${result.student_name} is confirmed` });
       } else {
         toast({ title: "Failed", description: result?.error, variant: "destructive" });
       }
-      queryClient.invalidateQueries({ queryKey: ["waiting-list"] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
   });
 
-  // Cancel entry
   const cancelMutation = useMutation({
     mutationFn: async (entryId: string) => {
-      const { error } = await supabase
-        .from("waiting_list" as any)
-        .update({ status: "cancelled" })
-        .eq("id", entryId);
+      const { error } = await supabase.from("waiting_list").update({ status: "cancelled" }).eq("id", entryId);
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["waiting-list"] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
       toast({ title: "Removed from queue" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
-  const waiting = entries.filter((e: any) => e.status === "waiting");
-  const notified = entries.filter((e: any) => e.status === "notified");
-  const confirmed = entries.filter((e: any) => e.status === "confirmed");
-  const expired = entries.filter((e: any) => e.status === "expired");
+  const waiting = useMemo(() => entries.filter((entry) => entry.status === "waiting"), [entries]);
+  const notified = useMemo(() => entries.filter((entry) => entry.status === "notified"), [entries]);
+  const confirmed = useMemo(() => entries.filter((entry) => entry.status === "confirmed"), [entries]);
+  const expired = useMemo(() => entries.filter((entry) => entry.status === "expired"), [entries]);
 
-  const getStatusBadge = (entry: any) => {
-    switch (entry.status) {
-      case "waiting":
-        return <Badge variant="secondary"><Clock className="w-3 h-3 mr-1" /> #{entry.position} Waiting</Badge>;
-      case "notified":
-        const isExpired = entry.confirmation_deadline && isPast(new Date(entry.confirmation_deadline));
-        return isExpired ? (
-          <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Timed out</Badge>
-        ) : (
-          <Badge className="bg-warning text-warning-foreground"><Bell className="w-3 h-3 mr-1" /> Notified</Badge>
-        );
-      case "confirmed":
-        return <Badge className="bg-success text-success-foreground"><CheckCircle className="w-3 h-3 mr-1" /> Confirmed</Badge>;
-      case "expired":
-        return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Expired</Badge>;
-      case "cancelled":
-        return <Badge variant="outline">Cancelled</Badge>;
-      default:
-        return <Badge variant="outline">{entry.status}</Badge>;
+  const getStatusBadge = (entry: WaitingEntry) => {
+    if (entry.status === "waiting") {
+      return (
+        <Badge variant="secondary">
+          <Clock className="w-3 h-3 mr-1" /> #{entry.position} Waiting
+        </Badge>
+      );
     }
+
+    if (entry.status === "notified") {
+      const timedOut = entry.confirmation_deadline ? isPast(new Date(entry.confirmation_deadline)) : false;
+      return timedOut ? (
+        <Badge variant="destructive">
+          <XCircle className="w-3 h-3 mr-1" /> Timed out
+        </Badge>
+      ) : (
+        <Badge className="bg-warning text-warning-foreground">
+          <Bell className="w-3 h-3 mr-1" /> Notified
+        </Badge>
+      );
+    }
+
+    if (entry.status === "confirmed") {
+      return (
+        <Badge className="bg-success text-success-foreground">
+          <CheckCircle className="w-3 h-3 mr-1" /> Confirmed
+        </Badge>
+      );
+    }
+
+    if (entry.status === "expired") {
+      return (
+        <Badge variant="destructive">
+          <XCircle className="w-3 h-3 mr-1" /> Expired
+        </Badge>
+      );
+    }
+
+    if (entry.status === "cancelled") {
+      return <Badge variant="outline">Cancelled</Badge>;
+    }
+
+    return <Badge variant="outline">{entry.status}</Badge>;
   };
 
-  const getCountdown = (deadline: string) => {
+  const getCountdown = (deadline: string | null) => {
     if (!deadline) return null;
-    const d = new Date(deadline);
-    if (isPast(d)) return <span className="text-xs text-destructive font-medium">Expired</span>;
-    return (
-      <span className="text-xs text-warning font-medium">
-        {formatDistanceToNow(d, { addSuffix: false })} left
-      </span>
-    );
+    const deadlineDate = new Date(deadline);
+    if (isPast(deadlineDate)) return <span className="text-xs text-destructive font-medium">Expired</span>;
+    return <span className="text-xs text-warning font-medium">{formatDistanceToNow(deadlineDate, { addSuffix: false })} left</span>;
   };
+
+  const loading = roleLibraryLoading || fallbackLoading || entriesLoading;
 
   return (
     <DashboardLayout>
@@ -176,13 +273,19 @@ const WaitingListPage = () => {
             <p className="text-sm text-muted-foreground mt-1">FIFO queue with 10-minute confirmation window</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => notifyMutation.mutate()} disabled={notifyMutation.isPending || waiting.length === 0}>
+            <Button
+              variant="outline"
+              onClick={() => notifyMutation.mutate()}
+              disabled={notifyMutation.isPending || waiting.length === 0 || !resolvedLibraryId}
+            >
               <Bell className="w-4 h-4 mr-1.5" />
               {notifyMutation.isPending ? "Notifying..." : "Notify Next"}
             </Button>
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
-                <Button><UserPlus className="w-4 h-4 mr-1.5" /> Add to Queue</Button>
+                <Button disabled={!resolvedLibraryId}>
+                  <UserPlus className="w-4 h-4 mr-1.5" /> Add to Queue
+                </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
@@ -206,11 +309,41 @@ const WaitingListPage = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Preferred Slot</Label>
-                      <Input value={form.preferred_slot} onChange={(e) => setForm({ ...form, preferred_slot: e.target.value })} placeholder="e.g. Morning" />
+                      <Select
+                        value={form.preferred_slot || "none"}
+                        onValueChange={(value) => setForm({ ...form, preferred_slot: value === "none" ? "" : value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select slot" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No preference</SelectItem>
+                          {slots.map((slot) => (
+                            <SelectItem key={slot.id} value={slot.name}>
+                              {slot.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
                       <Label>Preferred Plan</Label>
-                      <Input value={form.preferred_plan} onChange={(e) => setForm({ ...form, preferred_plan: e.target.value })} placeholder="e.g. Full Day" />
+                      <Select
+                        value={form.preferred_plan || "none"}
+                        onValueChange={(value) => setForm({ ...form, preferred_plan: value === "none" ? "" : value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select plan" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No preference</SelectItem>
+                          {plans.map((plan) => (
+                            <SelectItem key={plan.id} value={plan.name}>
+                              {plan.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                   <Button className="w-full" disabled={!form.student_name || addMutation.isPending} onClick={() => addMutation.mutate()}>
@@ -222,7 +355,6 @@ const WaitingListPage = () => {
           </div>
         </div>
 
-        {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatsCard icon={ListOrdered} title="In Queue" value={String(waiting.length)} trend="up" />
           <StatsCard icon={Bell} title="Notified" value={String(notified.length)} trend="up" iconColor="text-warning" />
@@ -230,7 +362,6 @@ const WaitingListPage = () => {
           <StatsCard icon={XCircle} title="Expired" value={String(expired.length)} trend="down" iconColor="text-destructive" />
         </div>
 
-        {/* Active notifications banner */}
         {notified.length > 0 && (
           <Card className="border-warning/30 bg-warning/5">
             <CardContent className="py-4">
@@ -239,20 +370,24 @@ const WaitingListPage = () => {
                 <span className="font-semibold font-display text-foreground">Awaiting Confirmation</span>
               </div>
               <div className="space-y-2">
-                {notified.map((entry: any) => (
+                {notified.map((entry) => (
                   <div key={entry.id} className="flex items-center justify-between bg-card rounded-lg p-3 border">
                     <div>
                       <p className="font-medium text-foreground">{entry.student_name}</p>
                       <div className="flex items-center gap-2 mt-1">
                         {getCountdown(entry.confirmation_deadline)}
-                        {entry.preferred_slot && <Badge variant="outline" className="text-xs">{entry.preferred_slot}</Badge>}
+                        {entry.preferred_slot && (
+                          <Badge variant="outline" className="text-xs">
+                            {entry.preferred_slot}
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-2">
                       <Button size="sm" onClick={() => confirmMutation.mutate(entry.id)} disabled={confirmMutation.isPending}>
                         <CheckCircle className="w-3.5 h-3.5 mr-1" /> Confirm
                       </Button>
-                      <Button size="sm" variant="outline" onClick={() => cancelMutation.mutate(entry.id)}>
+                      <Button size="sm" variant="outline" onClick={() => cancelMutation.mutate(entry.id)} disabled={cancelMutation.isPending}>
                         <XCircle className="w-3.5 h-3.5" />
                       </Button>
                     </div>
@@ -263,14 +398,17 @@ const WaitingListPage = () => {
           </Card>
         )}
 
-        {/* Queue Table */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg font-display">Full Queue</CardTitle>
           </CardHeader>
           <CardContent>
-            {isLoading ? (
+            {!resolvedLibraryId && !loading ? (
+              <p className="text-sm text-destructive py-8 text-center">Library not linked to your account. Please check user role setup.</p>
+            ) : loading ? (
               <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>
+            ) : entriesError ? (
+              <p className="text-sm text-destructive py-8 text-center">Unable to load waiting list: {getErrorMessage(entriesQueryError)}</p>
             ) : entries.length === 0 ? (
               <div className="py-12 text-center">
                 <ListOrdered className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
@@ -290,7 +428,7 @@ const WaitingListPage = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {entries.map((entry: any) => (
+                  {entries.map((entry) => (
                     <TableRow key={entry.id} className={entry.status === "notified" ? "bg-warning/5" : ""}>
                       <TableCell className="font-mono text-muted-foreground">{entry.position}</TableCell>
                       <TableCell>
@@ -303,8 +441,16 @@ const WaitingListPage = () => {
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
                         <div className="flex gap-1">
-                          {entry.preferred_slot && <Badge variant="outline" className="text-xs">{entry.preferred_slot}</Badge>}
-                          {entry.preferred_plan && <Badge variant="secondary" className="text-xs">{entry.preferred_plan}</Badge>}
+                          {entry.preferred_slot && (
+                            <Badge variant="outline" className="text-xs">
+                              {entry.preferred_slot}
+                            </Badge>
+                          )}
+                          {entry.preferred_plan && (
+                            <Badge variant="secondary" className="text-xs">
+                              {entry.preferred_plan}
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>{getStatusBadge(entry)}</TableCell>
@@ -313,8 +459,7 @@ const WaitingListPage = () => {
                           ? getCountdown(entry.confirmation_deadline)
                           : entry.confirmed_at
                             ? <span className="text-xs text-muted-foreground">{format(new Date(entry.confirmed_at), "dd MMM, hh:mm a")}</span>
-                            : "—"
-                        }
+                            : "-"}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">

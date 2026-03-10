@@ -1,37 +1,76 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { Search, QrCode, AlertTriangle } from "lucide-react";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import StudentQRCard from "@/components/dashboard/StudentQRCard";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { useState } from "react";
-import { Search, QrCode, AlertTriangle } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import StatsCard from "@/components/dashboard/StatsCard";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
+
+type StudentQrRow = Pick<
+  Database["public"]["Tables"]["students"]["Row"],
+  "id" | "full_name" | "qr_code" | "seat_number" | "plan" | "status" | "no_show_days"
+>;
 
 const QRCodesPage = () => {
   const [search, setSearch] = useState("");
+  const { user } = useAuth();
+  const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
 
-  const { data: students = [], isLoading } = useQuery({
-    queryKey: ["students-qr"],
-    queryFn: async () => {
+  const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
+    queryKey: ["my-libraries-fallback", user?.id],
+    queryFn: async (): Promise<Array<{ id: string }>> => {
+      if (!user?.id) return [];
       const { data, error } = await supabase
-        .from("students" as any)
-        .select("*")
-        .order("full_name");
+        .from("libraries")
+        .select("id")
+        .eq("owner_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
       if (error) throw error;
-      return data as any[];
+      return data;
     },
+    enabled: !!user?.id && !libraryId,
   });
 
-  const filtered = students.filter((s: any) =>
-    s.full_name.toLowerCase().includes(search.toLowerCase()) ||
-    s.qr_code.toLowerCase().includes(search.toLowerCase())
-  );
+  const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
 
-  const activeCount = students.filter((s: any) => s.status === "active").length;
-  const inactiveCount = students.filter((s: any) => s.status === "inactive").length;
-  const noShowCount = students.filter((s: any) => s.no_show_days >= 2).length;
+  const {
+    data: students = [],
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: ["students-qr", resolvedLibraryId],
+    queryFn: async (): Promise<StudentQrRow[]> => {
+      if (!resolvedLibraryId) return [];
+      const { data, error: queryError } = await supabase
+        .from("students")
+        .select("id, full_name, qr_code, seat_number, plan, status, no_show_days")
+        .eq("library_id", resolvedLibraryId)
+        .order("full_name", { ascending: true });
+      if (queryError) throw queryError;
+      return data;
+    },
+    enabled: !!resolvedLibraryId,
+    refetchInterval: 10000,
+  });
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return students;
+    return students.filter((student) =>
+      [student.full_name, student.qr_code, student.seat_number || ""].some((value) => value.toLowerCase().includes(q)),
+    );
+  }, [search, students]);
+
+  const activeCount = students.filter((student) => student.status === "active").length;
+  const noShowCount = students.filter((student) => (student.no_show_days || 0) >= 2).length;
+  const loading = roleLibraryLoading || fallbackLoading || isLoading;
 
   return (
     <DashboardLayout>
@@ -52,8 +91,22 @@ const QRCodesPage = () => {
           <Input className="pl-9" placeholder="Search students..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
 
-        {isLoading ? (
+        {!resolvedLibraryId && !loading ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <QrCode className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
+              <p className="text-destructive">Library not linked to your account. Please check user role setup.</p>
+            </CardContent>
+          </Card>
+        ) : loading ? (
           <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>
+        ) : isError ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <QrCode className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
+              <p className="text-destructive">Unable to load QR passes: {error.message}</p>
+            </CardContent>
+          </Card>
         ) : filtered.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
@@ -63,13 +116,13 @@ const QRCodesPage = () => {
           </Card>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filtered.map((student: any) => (
+            {filtered.map((student) => (
               <StudentQRCard
                 key={student.id}
                 studentName={student.full_name}
                 qrCode={student.qr_code}
-                seatNumber={student.seat_number}
-                plan={student.plan}
+                seatNumber={student.seat_number || undefined}
+                plan={student.plan || undefined}
                 status={student.status}
               />
             ))}

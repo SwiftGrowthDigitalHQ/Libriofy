@@ -1,123 +1,154 @@
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
-import StatsCard from "@/components/dashboard/StatsCard";
-import RevenueChart from "@/components/dashboard/RevenueChart";
-import { Building2, Users, CreditCard, TrendingUp, CheckCircle, AlertTriangle, Zap, XCircle } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle, CreditCard, TrendingUp, Users, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import RevenueChart from "@/components/dashboard/RevenueChart";
+import StatsCard from "@/components/dashboard/StatsCard";
+import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
+import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
+
+type AdminLibraryRow = Pick<
+  Database["public"]["Tables"]["libraries"]["Row"],
+  "id" | "name" | "city" | "enabled" | "monthly_revenue" | "active_students" | "total_seats"
+>;
+
+type AdminSubscriptionStatRow = Pick<
+  Database["public"]["Tables"]["library_subscriptions"]["Row"],
+  "status" | "price"
+>;
+
+const formatInr = (value: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(value);
 
 const SuperAdminDashboard = () => {
   const { data: libraries = [] } = useQuery({
     queryKey: ["admin-libraries"],
-    queryFn: async () => {
+    queryFn: async (): Promise<AdminLibraryRow[]> => {
       const { data, error } = await supabase.from("libraries").select("*").order("created_at", { ascending: false });
       if (error) throw error;
-      return data;
+      return data as AdminLibraryRow[];
     },
   });
 
-  const { data: subs = [] } = useQuery({
+  const { data: subscriptions = [] } = useQuery({
     queryKey: ["admin-subscriptions-stats"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("library_subscriptions" as any).select("*");
+    queryFn: async (): Promise<AdminSubscriptionStatRow[]> => {
+      const { data, error } = await supabase.from("library_subscriptions").select("status, price");
       if (error) throw error;
-      return data as any[];
+      return data as AdminSubscriptionStatRow[];
     },
   });
 
-  const totalRevenue = libraries.reduce((sum, l: any) => sum + Number(l.monthly_revenue || 0), 0);
-  const totalStudents = libraries.reduce((sum, l: any) => sum + (l.active_students || 0), 0);
-  const activeLibraries = libraries.filter((l: any) => l.enabled).length;
-  const expiredSubs = subs.filter((s: any) => s.status === "expired").length;
-  const activeSubs = subs.filter((s: any) => s.status === "active" || s.status === "trial").length;
-  const subRevenue = subs.reduce((sum: number, s: any) => sum + Number(s.price || 0), 0);
+  const totalStudents = libraries.reduce((sum, library) => sum + (library.active_students || 0), 0);
+  const activeLibraries = libraries.filter((library) => library.enabled).length;
+  const expiredSubscriptions = subscriptions.filter((subscription) => subscription.status === "expired").length;
+  const activeSubscriptions = subscriptions.filter((subscription) => subscription.status === "active" || subscription.status === "trial").length;
+  const subscriptionRevenue = subscriptions.reduce((sum, subscription) => sum + Number(subscription.price || 0), 0);
 
   const insights = [
-    totalStudents > 100 && { text: "Platform growing steadily — " + totalStudents + " students across all libraries", type: "success" },
-    expiredSubs > 0 && { text: expiredSubs + " library subscriptions expired — follow up for renewal", type: "warning" },
-    activeLibraries < libraries.length && { text: (libraries.length - activeLibraries) + " libraries currently disabled", type: "warning" },
-  ].filter(Boolean) as { text: string; type: string }[];
+    totalStudents > 100 && { text: `Platform growing steadily - ${totalStudents} students across all libraries`, type: "success" },
+    expiredSubscriptions > 0 && { text: `${expiredSubscriptions} library subscriptions expired - follow up for renewal`, type: "warning" },
+    activeLibraries < libraries.length && { text: `${libraries.length - activeLibraries} libraries currently disabled`, type: "warning" },
+  ].filter(Boolean) as Array<{ text: string; type: string }>;
+
+  const topRevenueLibraries = [...libraries]
+    .sort((left, right) => Number(right.monthly_revenue || 0) - Number(left.monthly_revenue || 0))
+    .slice(0, 5);
+
+  const occupancyLibraries = libraries
+    .map((library) => ({
+      ...library,
+      occupancy: library.total_seats > 0 ? Math.round((library.active_students / library.total_seats) * 100) : 0,
+    }))
+    .sort((left, right) => right.occupancy - left.occupancy)
+    .slice(0, 5);
 
   return (
     <SuperAdminLayout>
       <div className="space-y-6">
         <div>
           <h2 className="text-2xl font-bold font-display text-foreground">Platform Overview</h2>
-          <p className="text-sm text-muted-foreground mt-1">Monitor all libraries and platform metrics</p>
+          <p className="mt-1 text-sm text-muted-foreground">Monitor all libraries and platform metrics.</p>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatsCard icon={Building2} title="Total Libraries" value={String(libraries.length)} change={`${activeLibraries} active`} trend="up" />
           <StatsCard icon={Users} title="Total Students" value={String(totalStudents)} trend="up" iconColor="text-info" />
-          <StatsCard icon={CreditCard} title="Subscription MRR" value={`₹${subRevenue.toLocaleString()}`} trend="up" iconColor="text-success" />
-          <StatsCard icon={TrendingUp} title="Active Plans" value={String(activeSubs)} change={`${expiredSubs} expired`} trend={expiredSubs > 0 ? "down" : "up"} iconColor="text-warning" />
+          <StatsCard icon={CreditCard} title="Subscription MRR" value={formatInr(subscriptionRevenue)} trend="up" iconColor="text-success" />
+          <StatsCard
+            icon={TrendingUp}
+            title="Active Plans"
+            value={String(activeSubscriptions)}
+            change={`${expiredSubscriptions} expired`}
+            trend={expiredSubscriptions > 0 ? "down" : "up"}
+            iconColor="text-warning"
+          />
         </div>
 
-        {/* Smart Insights */}
-        {insights.length > 0 && (
-          <div className="bg-card rounded-xl border border-border p-5">
-            <h3 className="text-sm font-semibold font-display text-foreground mb-3 flex items-center gap-2">
-              <Zap className="w-4 h-4 text-primary" /> Smart Insights
+        {insights.length > 0 ? (
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold font-display text-foreground">
+              <Zap className="h-4 w-4 text-primary" />
+              Smart Insights
             </h3>
             <div className="space-y-2">
-              {insights.map((ins, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
-                  {ins.type === "success" ? <CheckCircle className="w-4 h-4 text-success flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0" />}
-                  <span className="text-muted-foreground">{ins.text}</span>
+              {insights.map((insight, index) => (
+                <div key={index} className="flex items-center gap-2 text-sm">
+                  {insight.type === "success" ? (
+                    <CheckCircle className="h-4 w-4 flex-shrink-0 text-success" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0 text-warning" />
+                  )}
+                  <span className="text-muted-foreground">{insight.text}</span>
                 </div>
               ))}
             </div>
           </div>
-        )}
+        ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <RevenueChart />
           </div>
-          <div className="bg-card rounded-xl border border-border p-5">
-            <h3 className="text-sm font-semibold font-display text-foreground mb-4">Top Libraries by Revenue</h3>
+
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-4 text-sm font-semibold font-display text-foreground">Top Libraries by Revenue</h3>
             <div className="space-y-3">
-              {libraries
-                .sort((a: any, b: any) => Number(b.monthly_revenue || 0) - Number(a.monthly_revenue || 0))
-                .slice(0, 5)
-                .map((lib: any, i) => (
-                  <div key={lib.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-muted-foreground w-5">#{i + 1}</span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{lib.name}</p>
-                        <p className="text-xs text-muted-foreground">{lib.city || "—"} · {lib.active_students} students</p>
-                      </div>
+              {topRevenueLibraries.map((library, index) => (
+                <div key={library.id} className="flex items-center justify-between border-b border-border py-2 last:border-0">
+                  <div className="flex items-center gap-3">
+                    <span className="w-5 text-xs text-muted-foreground">#{index + 1}</span>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{library.name}</p>
+                      <p className="text-xs text-muted-foreground">{library.city || "-"} - {library.active_students} students</p>
                     </div>
-                    <span className="text-sm font-semibold text-foreground">₹{Number(lib.monthly_revenue || 0).toLocaleString()}</span>
                   </div>
-                ))}
-              {libraries.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">No libraries yet</p>
-              )}
+                  <span className="text-sm font-semibold text-foreground">{formatInr(Number(library.monthly_revenue || 0))}</span>
+                </div>
+              ))}
+              {libraries.length === 0 ? <p className="py-4 text-center text-sm text-muted-foreground">No libraries yet.</p> : null}
             </div>
           </div>
         </div>
 
-        {/* Top by occupancy */}
-        <div className="bg-card rounded-xl border border-border p-5">
-          <h3 className="text-sm font-semibold font-display text-foreground mb-4">Top Libraries by Seat Occupancy</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            {libraries
-              .map((l: any) => ({ ...l, occupancy: l.total_seats > 0 ? Math.round((l.active_students / l.total_seats) * 100) : 0 }))
-              .sort((a: any, b: any) => b.occupancy - a.occupancy)
-              .slice(0, 5)
-              .map((lib: any) => (
-                <div key={lib.id} className="p-3 rounded-lg border border-border">
-                  <p className="text-sm font-medium text-foreground truncate">{lib.name}</p>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-xs text-muted-foreground">{lib.active_students}/{lib.total_seats} seats</span>
-                    <Badge variant={lib.occupancy >= 90 ? "destructive" : lib.occupancy >= 70 ? "default" : "secondary"}>
-                      {lib.occupancy}%
-                    </Badge>
-                  </div>
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h3 className="mb-4 text-sm font-semibold font-display text-foreground">Top Libraries by Seat Occupancy</h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {occupancyLibraries.map((library) => (
+              <div key={library.id} className="rounded-lg border border-border p-3">
+                <p className="truncate text-sm font-medium text-foreground">{library.name}</p>
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">{library.active_students}/{library.total_seats} seats</span>
+                  <Badge variant={library.occupancy >= 90 ? "destructive" : library.occupancy >= 70 ? "default" : "secondary"}>
+                    {library.occupancy}%
+                  </Badge>
                 </div>
-              ))}
+              </div>
+            ))}
           </div>
         </div>
       </div>

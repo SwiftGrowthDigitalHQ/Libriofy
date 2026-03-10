@@ -14,8 +14,6 @@ const DomainRouter = ({ children }: { children: ReactNode }) => {
   const hostname = window.location.hostname;
   const isAppDomain =
     hostname === "localhost" ||
-    hostname.endsWith(".lovable.app") ||
-    hostname.endsWith(".lovable.dev") ||
     hostname === "libriofy.com" ||
     hostname === "www.libriofy.com";
 

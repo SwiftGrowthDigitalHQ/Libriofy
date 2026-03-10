@@ -7,6 +7,15 @@ import lib3 from "@/assets/library-3.jpg";
 import lib4 from "@/assets/library-4.jpg";
 import lib5 from "@/assets/library-5.jpg";
 
+interface SliderImage {
+  src: string;
+  alt?: string | null;
+}
+
+interface ImageSliderProps {
+  images?: SliderImage[];
+}
+
 const defaultImages = [
   { src: lib1, alt: "Premium study desks with warm lighting" },
   { src: lib2, alt: "Air conditioned study room" },
@@ -15,12 +24,16 @@ const defaultImages = [
   { src: lib5, alt: "Cozy reading area with bookshelves" },
 ];
 
-const ImageSlider = () => {
+const ImageSlider = ({ images }: ImageSliderProps) => {
   const [current, setCurrent] = useState(0);
-  const images = defaultImages;
+  const sliderImages = images && images.length > 0 ? images : defaultImages;
 
-  const next = useCallback(() => setCurrent((c) => (c + 1) % images.length), [images.length]);
-  const prev = () => setCurrent((c) => (c - 1 + images.length) % images.length);
+  const next = useCallback(() => setCurrent((c) => (c + 1) % sliderImages.length), [sliderImages.length]);
+  const prev = () => setCurrent((c) => (c - 1 + sliderImages.length) % sliderImages.length);
+
+  useEffect(() => {
+    setCurrent(0);
+  }, [sliderImages.length]);
 
   useEffect(() => {
     const timer = setInterval(next, 3000);
@@ -37,8 +50,8 @@ const ImageSlider = () => {
           <AnimatePresence mode="wait">
             <motion.img
               key={current}
-              src={images[current].src}
-              alt={images[current].alt}
+              src={sliderImages[current].src}
+              alt={sliderImages[current].alt || "Library image"}
               className="w-full h-full object-cover absolute inset-0"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -61,7 +74,7 @@ const ImageSlider = () => {
             <ChevronRight className="w-5 h-5 text-foreground" />
           </button>
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
-            {images.map((_, i) => (
+            {sliderImages.map((_, i) => (
               <button
                 key={i}
                 onClick={() => setCurrent(i)}

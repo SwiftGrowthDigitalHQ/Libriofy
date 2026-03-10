@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
@@ -19,11 +19,14 @@ import RenewalsPage from "./pages/RenewalsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WaitingListPage from "./pages/WaitingListPage";
 import SupportPage from "./pages/SupportPage";
+import StudentRenewalPage from "./pages/StudentRenewalPage";
+import BillingPage from "./pages/BillingPage";
 import NotFound from "./pages/NotFound";
 import DomainRouter from "./components/DomainRouter";
 import SuperAdminLoginPage from "./pages/SuperAdminLoginPage";
+import ProtectedRoute from "./components/auth/ProtectedRoute";
+import AuthRoute from "./components/auth/AuthRoute";
 
-// Super Admin pages
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import SuperAdminLibraries from "./pages/SuperAdminLibraries";
 import SuperAdminRevenue from "./pages/SuperAdminRevenue";
@@ -44,34 +47,187 @@ const App = () => (
           <DomainRouter>
             <Routes>
               <Route path="/" element={<Index />} />
-              <Route path="/auth" element={<AuthPage />} />
-              <Route path="/super-admin-login" element={<SuperAdminLoginPage />} />
+              <Route
+                path="/auth"
+                element={
+                  <AuthRoute>
+                    <AuthPage />
+                  </AuthRoute>
+                }
+              />
+              <Route
+                path="/super-admin-login"
+                element={
+                  <AuthRoute>
+                    <SuperAdminLoginPage />
+                  </AuthRoute>
+                }
+              />
 
-              {/* Library Admin routes */}
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/dashboard/seats" element={<SeatMapPage />} />
-              <Route path="/dashboard/students" element={<StudentsPage />} />
-              <Route path="/dashboard/payments" element={<PaymentsPage />} />
-              <Route path="/dashboard/plans" element={<PlansPage />} />
-              <Route path="/dashboard/analytics" element={<AnalyticsPage />} />
-              <Route path="/dashboard/attendance" element={<AttendancePage />} />
-              <Route path="/dashboard/qr-codes" element={<QRCodesPage />} />
-              <Route path="/dashboard/renewals" element={<RenewalsPage />} />
-              <Route path="/dashboard/settings" element={<SettingsPage />} />
-              <Route path="/dashboard/waitlist" element={<WaitingListPage />} />
-              <Route path="/dashboard/support" element={<SupportPage />} />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner", "staff"]}>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/seats"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner", "staff"]}>
+                    <SeatMapPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/students"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner", "staff"]}>
+                    <StudentsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/billing"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner", "staff"]}>
+                    <BillingPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/payments"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner", "staff"]}>
+                    <PaymentsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/plans"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner"]}>
+                    <PlansPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/analytics"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner"]}>
+                    <AnalyticsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/attendance"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner", "staff"]}>
+                    <AttendancePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/qr-codes"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner"]}>
+                    <QRCodesPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/renewals"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner"]}>
+                    <RenewalsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/settings"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner"]}>
+                    <SettingsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/waitlist"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner"]}>
+                    <WaitingListPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/support"
+                element={
+                  <ProtectedRoute allowRoles={["library_owner", "staff"]}>
+                    <SupportPage />
+                  </ProtectedRoute>
+                }
+              />
 
-              {/* Super Admin routes */}
-              <Route path="/admin" element={<SuperAdminDashboard />} />
-              <Route path="/admin/libraries" element={<SuperAdminLibraries />} />
-              <Route path="/admin/revenue" element={<SuperAdminRevenue />} />
-              <Route path="/admin/subscriptions" element={<SuperAdminSubscriptions />} />
-              <Route path="/admin/notifications" element={<SuperAdminNotifications />} />
-              <Route path="/admin/domains" element={<SuperAdminDomains />} />
-              <Route path="/admin/settings" element={<SuperAdminSettings />} />
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute allowRoles={["super_admin"]}>
+                    <SuperAdminDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/libraries"
+                element={
+                  <ProtectedRoute allowRoles={["super_admin"]}>
+                    <SuperAdminLibraries />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/revenue"
+                element={
+                  <ProtectedRoute allowRoles={["super_admin"]}>
+                    <SuperAdminRevenue />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/subscriptions"
+                element={
+                  <ProtectedRoute allowRoles={["super_admin"]}>
+                    <SuperAdminSubscriptions />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/notifications"
+                element={
+                  <ProtectedRoute allowRoles={["super_admin"]}>
+                    <SuperAdminNotifications />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/domains"
+                element={
+                  <ProtectedRoute allowRoles={["super_admin"]}>
+                    <SuperAdminDomains />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/settings"
+                element={
+                  <ProtectedRoute allowRoles={["super_admin"]}>
+                    <SuperAdminSettings />
+                  </ProtectedRoute>
+                }
+              />
 
-              {/* Public */}
               <Route path="/library/:id" element={<LibraryPublicPage />} />
+              <Route path="/renew/:token" element={<StudentRenewalPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </DomainRouter>

@@ -41,7 +41,7 @@ const LibraryFooter = ({ library }: LibraryFooterProps) => (
           <h4 className="font-semibold font-display text-foreground mb-3 text-sm">Contact Info</h4>
           <div className="space-y-2 text-sm text-muted-foreground">
             <p>{library.address || "Koramangala, 5th Block"}{library.city ? `, ${library.city}` : ", Bangalore"}</p>
-            <p>+91 98765 43210</p>
+            <p>{library.phone || "+91 98765 43210"}</p>
           </div>
         </div>
       </div>

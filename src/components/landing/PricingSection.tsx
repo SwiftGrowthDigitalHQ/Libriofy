@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 const plans = [
   {
     name: "Starter",
-    price: "₹999",
+    price: "₹2999",
     period: "/month",
     desc: "Perfect for single-branch libraries",
     features: ["Up to 50 seats", "Seat management", "Basic analytics", "Notifications"],
@@ -14,7 +14,7 @@ const plans = [
   },
   {
     name: "Growth",
-    price: "₹1,999",
+    price: "₹6999",
     period: "/month",
     desc: "For growing library networks",
     features: ["Up to 150 seats", "Seat management", "Advanced analytics", "Notifications", "Export"],
@@ -22,7 +22,7 @@ const plans = [
   },
   {
     name: "Pro",
-    price: "₹2,999",
+    price: "₹9999",
     period: "/month",
     desc: "For large-scale operations",
     features: ["Unlimited seats", "All features", "Custom domain", "Priority support"],
@@ -43,7 +43,7 @@ const PricingSection = () => {
           <h2 className="text-3xl sm:text-4xl font-bold font-display text-foreground mb-4">
             Simple, transparent pricing
           </h2>
-          <p className="text-lg text-muted-foreground">Start with a 14-day free trial. Scale as you grow.</p>
+          <p className="text-lg text-muted-foreground">Start with a 7-day free trial. Scale as you grow.</p>
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">

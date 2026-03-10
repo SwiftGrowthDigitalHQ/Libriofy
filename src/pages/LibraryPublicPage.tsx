@@ -1,9 +1,9 @@
-import { useState, useEffect, FormEvent } from "react";
+﻿import { useState, useEffect, FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { BookOpen, MapPin, Clock, Users, Check, ChevronRight, Loader2, Wifi, Zap, VolumeX, Shield } from "lucide-react";
+import { BookOpen, MapPin, Clock, Users, Check, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,13 @@ import WhatsAppButton from "@/components/library-public/WhatsAppButton";
 interface LibraryPublicPageProps {
   domainLibrary?: any;
 }
+
+const normalizeWhatsAppNumber = (raw?: string | null): string => {
+  const digits = (raw || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length === 10) return `91${digits}`;
+  return digits;
+};
 
 const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
   const { id } = useParams<{ id: string }>();
@@ -109,6 +116,37 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     enabled: !!libraryId,
   });
 
+  const { data: galleryImages = [] } = useQuery({
+    queryKey: ["public-gallery", libraryId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("library_gallery_images" as any)
+        .select("id, image_url, caption, sort_order")
+        .eq("library_id", libraryId!)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return data as Array<{ id: string; image_url: string; caption: string | null; sort_order: number }>;
+    },
+    enabled: !!libraryId,
+  });
+
+  const { data: publishedReviews = [] } = useQuery({
+    queryKey: ["public-reviews", libraryId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("library_reviews" as any)
+        .select("id, reviewer_name, review_text, rating, sort_order")
+        .eq("library_id", libraryId!)
+        .eq("is_published", true)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data as Array<{ id: string; reviewer_name: string; review_text: string; rating: number; sort_order: number }>;
+    },
+    enabled: !!libraryId,
+  });
+
   const { data: slotAvailability = [] } = useQuery({
     queryKey: ["public-slot-availability", libraryId],
     queryFn: async () => {
@@ -126,11 +164,24 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
   }, {} as Record<string, number>);
 
   // Demo fallback
-  const demoLibrary = { id: "demo", name: "City Study Hub", address: "Koramangala, 5th Block", city: "Bangalore", total_seats: 40 };
+  const demoLibrary = {
+    id: "demo",
+    name: "City Study Hub",
+    address: "Koramangala, 5th Block",
+    city: "Bangalore",
+    total_seats: 40,
+    phone: "+91 98765 43210",
+    whatsapp_number: "919876543210",
+    hero_title: "City Study Hub",
+    hero_subtitle: "Premium Study Space for Focused Learning",
+    about_text: "A premium, distraction-free study space designed for serious learners who value discipline, focus, and results.",
+    cta_title: "Book Your Seat Today",
+    cta_subtitle: "Join hundreds of focused students. Limited seats available - reserve yours now.",
+  };
   const demoPlans = [
     { id: "d1", name: "4 Hour", price: 2000, duration_hours: 4, description: "Any 4-hour slot with reserved seat and Wi-Fi" },
     { id: "d2", name: "6 Hour", price: 3000, duration_hours: 6, description: "Any 6-hour slot with reserved seat, Wi-Fi and locker" },
-    { id: "d3", name: "Full Day", price: 4500, duration_hours: 16, description: "6AM–10PM access with reserved seat, Wi-Fi, locker and priority support" },
+    { id: "d3", name: "Full Day", price: 4500, duration_hours: 16, description: "6AM-10PM access with reserved seat, Wi-Fi, locker and priority support" },
   ];
   const demoSlots = [
     { id: "s1", name: "Morning", start_time: "06:00", end_time: "10:00", max_seats: 40 },
@@ -139,20 +190,53 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     { id: "s4", name: "Evening", start_time: "18:00", end_time: "22:00", max_seats: 40 },
   ];
   const demoAvailability: Record<string, number> = { Morning: 37, Forenoon: 33, Afternoon: 8, Evening: 3 };
+  const demoGalleryImages = [
+    { src: "https://images.unsplash.com/photo-1481627834876-b7833e8f5570?auto=format&fit=crop&w=1200&q=80", alt: "Library desks" },
+    { src: "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?auto=format&fit=crop&w=1200&q=80", alt: "Reading hall" },
+    { src: "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?auto=format&fit=crop&w=1200&q=80", alt: "Bookshelves" },
+  ];
+  const demoTestimonials = [
+    { name: "Priya Sharma", text: "Best library for deep focus. The silent zone is incredible.", rating: 5 },
+    { name: "Rahul Verma", text: "Very silent environment with excellent facilities and support.", rating: 5 },
+    { name: "Sneha Patel", text: "Comfortable seating and convenient location.", rating: 5 },
+  ];
 
   const isDemo = !library && id === "demo";
   const displayLibrary = library || demoLibrary;
   const displayPlans = plans.length > 0 ? plans : (isDemo ? demoPlans : []);
   const displaySlots = slots.length > 0 ? slots : (isDemo ? demoSlots : []);
   const displayAvailability = Object.keys(availabilityMap).length > 0 ? availabilityMap : (isDemo ? demoAvailability : {});
-  const brandColor = library?.primary_color || "#14b8a6";
+  const galleryForSections =
+    galleryImages.length > 0
+      ? galleryImages.map((image) => ({ src: image.image_url, alt: image.caption || displayLibrary.name }))
+      : (isDemo ? demoGalleryImages : []);
+  const testimonialsForSection =
+    publishedReviews.length > 0
+      ? publishedReviews.map((review) => ({ name: review.reviewer_name, text: review.review_text, rating: review.rating }))
+      : (isDemo ? demoTestimonials : []);
+  const brandColor = displayLibrary?.primary_color || "#14b8a6";
+  const heroTitle = displayLibrary.hero_title || displayLibrary.name;
+  const heroSubtitle = displayLibrary.hero_subtitle || "Premium Study Space for Focused Learning";
+  const aboutText = displayLibrary.about_text || "";
+  const ctaTitle = displayLibrary.cta_title || "Book Your Seat Today";
+  const ctaSubtitle = displayLibrary.cta_subtitle || "Join hundreds of focused students. Limited seats available - reserve yours now.";
+  const whatsappNumber = normalizeWhatsAppNumber(displayLibrary.whatsapp_number || displayLibrary.phone);
+  const heroBackgroundStyle = displayLibrary.hero_background_url
+    ? {
+        backgroundImage: `linear-gradient(135deg, ${brandColor}d9, ${brandColor}b3, ${brandColor}bf), url(${displayLibrary.hero_background_url})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }
+    : {
+        background: `linear-gradient(135deg, ${brandColor}, ${brandColor}bb, ${brandColor}dd)`,
+      };
   const popularIndex = displayPlans.length >= 3 ? 1 : displayPlans.length - 1;
 
   const planFeatures = ["High Speed WiFi", "Power Backup", "Silent Zone", "CCTV Security"];
 
   useEffect(() => {
     if (displayLibrary?.name) document.title = `${displayLibrary.name} | Libriofy`;
-    return () => { document.title = "Libriofy – Automate Your Library"; };
+    return () => { document.title = "Libriofy - Automate Your Library"; };
   }, [displayLibrary?.name]);
 
   const scrollToForm = () => {
@@ -180,14 +264,14 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     <div className="min-h-screen bg-background">
       {isDemo && (
         <div className="bg-accent/20 text-accent-foreground text-center py-2 text-sm">
-          🎯 This is a demo preview. Create an account to set up your own library page.
+          Demo preview: Create an account to set up your own library page.
         </div>
       )}
 
       {/* Hero */}
       <header
         className="relative text-primary-foreground py-20 sm:py-32 overflow-hidden"
-        style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor}bb, ${brandColor}dd)` }}
+        style={heroBackgroundStyle}
       >
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 20% 50%, white 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
         <div className="container mx-auto px-4 text-center relative z-10">
@@ -199,9 +283,9 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                 <BookOpen className="w-8 h-8" />
               </div>
             )}
-            <h1 className="text-4xl sm:text-6xl font-bold font-display mb-4">{displayLibrary.name}</h1>
+            <h1 className="text-4xl sm:text-6xl font-bold font-display mb-4">{heroTitle}</h1>
             <p className="text-lg sm:text-xl text-primary-foreground/80 mb-6 max-w-lg mx-auto">
-              Premium Study Space for Focused Learning
+              {heroSubtitle}
             </p>
             <div className="flex items-center justify-center gap-4 text-primary-foreground/70 text-sm flex-wrap mb-8">
               {displayLibrary.address && (
@@ -210,7 +294,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
               {displayLibrary.opening_hours ? (
                 <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {displayLibrary.opening_hours}</span>
               ) : displaySlots.length > 0 ? (
-                <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {displaySlots[0].start_time.slice(0, 5)} – {displaySlots[displaySlots.length - 1].end_time.slice(0, 5)}</span>
+                <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {displaySlots[0].start_time.slice(0, 5)} - {displaySlots[displaySlots.length - 1].end_time.slice(0, 5)}</span>
               ) : null}
               <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {displayLibrary.total_seats} seats</span>
             </div>
@@ -218,7 +302,12 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
               <Button size="lg" onClick={scrollToForm} className="bg-background text-foreground hover:bg-background/90 font-semibold text-base px-8">
                 Book Seat <ChevronRight className="w-5 h-5 ml-1" />
               </Button>
-              <Button size="lg" variant="outline" className="border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 font-semibold text-base px-8" onClick={() => document.getElementById("plans")?.scrollIntoView({ behavior: "smooth" })}>
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-white/70 bg-black/30 text-white hover:bg-black/45 hover:text-white font-semibold text-base px-8 backdrop-blur-sm"
+                onClick={() => document.getElementById("plans")?.scrollIntoView({ behavior: "smooth" })}
+              >
                 View Plans
               </Button>
             </div>
@@ -227,7 +316,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       </header>
 
       {/* Image Slider */}
-      <ImageSlider />
+      <ImageSlider images={galleryForSections} />
 
       {/* Live Seat Availability */}
       {displaySlots.length > 0 && (
@@ -251,7 +340,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                     className={`bg-card rounded-xl border ${borderClass} p-5 text-center`}
                   >
                     <p className="text-sm font-semibold text-foreground mb-1">{slot.name}</p>
-                    <p className="text-xs text-muted-foreground mb-3">{slot.start_time.slice(0, 5)} – {slot.end_time.slice(0, 5)}</p>
+                    <p className="text-xs text-muted-foreground mb-3">{slot.start_time.slice(0, 5)} - {slot.end_time.slice(0, 5)}</p>
                     <p className={`text-4xl font-bold font-display ${colorClass}`}>{available}</p>
                     <p className="text-xs text-muted-foreground mt-1">seats left</p>
                     <div className="w-full h-1.5 bg-secondary rounded-full mt-3 overflow-hidden">
@@ -291,7 +380,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                     )}
                     <h3 className="text-lg font-bold font-display text-foreground">{plan.name}</h3>
                     <p className="text-3xl font-bold font-display text-primary mt-3">
-                      ₹{plan.price.toLocaleString("en-IN")}<span className="text-sm font-normal text-muted-foreground">/mo</span>
+                      Rs {plan.price.toLocaleString("en-IN")}<span className="text-sm font-normal text-muted-foreground">/mo</span>
                     </p>
                     {plan.description && <p className="text-sm text-muted-foreground mt-3">{plan.description}</p>}
                     <p className="text-xs text-muted-foreground mt-1">{plan.duration_hours}h daily access</p>
@@ -317,16 +406,16 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       <FacilitiesSection />
 
       {/* Gallery */}
-      <GallerySection />
+      <GallerySection images={galleryForSections} />
 
       {/* About */}
-      <AboutSection libraryName={displayLibrary.name} />
+      <AboutSection libraryName={displayLibrary.name} aboutText={aboutText} />
 
       {/* Testimonials */}
-      <TestimonialsSection />
+      <TestimonialsSection testimonials={testimonialsForSection} />
 
       {/* CTA */}
-      <CTASection brandColor={brandColor} onBookSeat={scrollToForm} />
+      <CTASection brandColor={brandColor} onBookSeat={scrollToForm} title={ctaTitle} subtitle={ctaSubtitle} />
 
       {/* Contact */}
       <div id="contact">
@@ -382,7 +471,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                           <SelectTrigger className="mt-1"><SelectValue placeholder="Select a plan" /></SelectTrigger>
                           <SelectContent>
                             {displayPlans.map((p) => (
-                              <SelectItem key={p.id} value={p.name}>{p.name} – ₹{p.price.toLocaleString("en-IN")}/mo</SelectItem>
+                              <SelectItem key={p.id} value={p.name}>{p.name} - Rs {p.price.toLocaleString("en-IN")}/mo</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -395,7 +484,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                           <SelectTrigger className="mt-1"><SelectValue placeholder="Select time slot" /></SelectTrigger>
                           <SelectContent>
                             {displaySlots.map((s) => (
-                              <SelectItem key={s.id} value={s.name}>{s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})</SelectItem>
+                              <SelectItem key={s.id} value={s.name}>{s.name} ({s.start_time.slice(0, 5)} - {s.end_time.slice(0, 5)})</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -417,7 +506,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       <LibraryFooter library={displayLibrary} />
 
       {/* WhatsApp */}
-      <WhatsAppButton />
+      <WhatsAppButton whatsappNumber={whatsappNumber} />
     </div>
   );
 };

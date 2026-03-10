@@ -1,62 +1,136 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
-import { useUserRole } from "@/hooks/useUserRole";
-import DashboardLayout from "@/components/dashboard/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
-import { MessageSquare, Plus, Send } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { MessageSquare, Send } from "lucide-react";
+import DashboardLayout from "@/components/dashboard/DashboardLayout";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/hooks/useAuth";
+import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
+
+type TicketRow = Database["public"]["Tables"]["support_tickets"]["Row"];
+type TicketInsert = Database["public"]["Tables"]["support_tickets"]["Insert"];
+
+const getErrorMessage = (error: unknown): string => {
+  if (!error || typeof error !== "object") return "Unknown error";
+  return (error as { message?: string }).message || "Unknown error";
+};
+
+const formatStatus = (status: string) =>
+  status
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+const statusVariant = (status: string): "default" | "secondary" | "destructive" | "outline" => {
+  if (status === "resolved" || status === "closed") return "secondary";
+  if (status === "open") return "default";
+  if (status === "rejected") return "destructive";
+  return "outline";
+};
 
 const SupportPage = () => {
   const { user } = useAuth();
-  const { data: roles } = useUserRole();
-  const libraryId = roles?.find((r) => r.role === "library_owner")?.library_id;
+  const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
 
-  const { data: tickets = [], isLoading } = useQuery({
-    queryKey: ["support-tickets", libraryId],
-    queryFn: async () => {
-      if (!libraryId) return [];
+  const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
+    queryKey: ["my-libraries-fallback", user?.id],
+    queryFn: async (): Promise<Array<{ id: string }>> => {
+      if (!user?.id) return [];
       const { data, error } = await supabase
-        .from("support_tickets" as any)
-        .select("*")
-        .eq("library_id", libraryId)
-        .order("created_at", { ascending: false });
+        .from("libraries")
+        .select("id")
+        .eq("owner_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
       if (error) throw error;
-      return data as any[];
+      return data;
     },
-    enabled: !!libraryId,
+    enabled: !!user?.id && !libraryId,
+  });
+
+  const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
+
+  const {
+    data: tickets = [],
+    isLoading: ticketsLoading,
+    isError: ticketsError,
+    error: ticketsQueryError,
+  } = useQuery({
+    queryKey: ["support-tickets", resolvedLibraryId],
+    queryFn: async (): Promise<TicketRow[]> => {
+      if (!resolvedLibraryId) return [];
+      const { data, error } = await supabase
+        .from("support_tickets")
+        .select("*")
+        .eq("library_id", resolvedLibraryId)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!resolvedLibraryId,
+    refetchInterval: 15000,
   });
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      if (!libraryId || !user) throw new Error("Missing context");
-      const { error } = await supabase.from("support_tickets" as any).insert({
-        library_id: libraryId,
+      if (!resolvedLibraryId || !user?.id) throw new Error("Library context missing.");
+      if (!title.trim()) throw new Error("Issue title is required.");
+
+      const payload: TicketInsert = {
+        library_id: resolvedLibraryId,
         user_id: user.id,
         title: title.trim(),
-        description: desc.trim(),
-      });
+        description: desc.trim() || null,
+      };
+
+      const { error } = await supabase.from("support_tickets").insert(payload);
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["support-tickets"] });
       setTitle("");
       setDesc("");
+      queryClient.invalidateQueries({ queryKey: ["support-tickets", resolvedLibraryId] });
       toast({ title: "Ticket submitted" });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (error: Error) => {
+      toast({ title: "Unable to submit ticket", description: error.message, variant: "destructive" });
+    },
   });
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      if (!resolvedLibraryId) throw new Error("Library context missing.");
+      const { error } = await supabase
+        .from("support_tickets")
+        .update({ status })
+        .eq("id", id)
+        .eq("library_id", resolvedLibraryId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["support-tickets", resolvedLibraryId] });
+      toast({ title: "Ticket status updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Unable to update ticket", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const loading = roleLibraryLoading || fallbackLoading || ticketsLoading;
+  const supportWhatsApp = ((import.meta.env.VITE_SUPPORT_WHATSAPP as string | undefined) || "919999999999").replace(/\D/g, "");
 
   return (
     <DashboardLayout>
@@ -66,8 +140,15 @@ const SupportPage = () => {
           <p className="text-sm text-muted-foreground mt-1">Get help with your library</p>
         </div>
 
+        {!resolvedLibraryId && !loading && (
+          <Card>
+            <CardContent className="py-8 text-center text-destructive">
+              Library not linked to your account. Please check user role setup.
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* New ticket */}
           <Card>
             <CardHeader>
               <CardTitle className="font-display text-lg">Submit a Ticket</CardTitle>
@@ -75,46 +156,84 @@ const SupportPage = () => {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Issue Title</Label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Brief description" />
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Brief description"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Description</Label>
-                <Textarea value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Describe your issue..." rows={4} />
+                <Textarea
+                  value={desc}
+                  onChange={(e) => setDesc(e.target.value)}
+                  placeholder="Describe your issue..."
+                  rows={4}
+                />
               </div>
-              <Button onClick={() => createMutation.mutate()} disabled={!title.trim() || createMutation.isPending} className="w-full">
-                <Send className="w-4 h-4 mr-2" /> Submit
+              <Button
+                className="w-full"
+                disabled={!resolvedLibraryId || !title.trim() || createMutation.isPending}
+                onClick={() => createMutation.mutate()}
+              >
+                <Send className="w-4 h-4 mr-2" />
+                {createMutation.isPending ? "Submitting..." : "Submit"}
               </Button>
               <div className="pt-2 border-t border-border">
-                <a href="https://wa.me/919999999999" target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline flex items-center gap-1">
-                  <MessageSquare className="w-3.5 h-3.5" /> Quick help via WhatsApp
+                <a
+                  href={`https://wa.me/${supportWhatsApp}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary hover:underline flex items-center gap-1"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Quick help via WhatsApp
                 </a>
               </div>
             </CardContent>
           </Card>
 
-          {/* Tickets list */}
           <div className="lg:col-span-2">
             <Card>
               <CardHeader>
                 <CardTitle className="font-display text-lg">Your Tickets</CardTitle>
               </CardHeader>
               <CardContent>
-                {isLoading ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">Loading...</p>
+                {loading ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">Loading tickets...</p>
+                ) : ticketsError ? (
+                  <p className="text-sm text-destructive text-center py-8">
+                    Unable to load tickets: {getErrorMessage(ticketsQueryError)}
+                  </p>
                 ) : tickets.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-8">No support tickets yet</p>
                 ) : (
                   <div className="space-y-3">
-                    {tickets.map((t: any) => (
-                      <div key={t.id} className="p-3 rounded-lg border border-border">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium text-foreground">{t.title}</p>
-                          <Badge variant={t.status === "open" ? "default" : t.status === "resolved" ? "secondary" : "outline"}>{t.status}</Badge>
+                    {tickets.map((ticket) => {
+                      const nextStatus = ticket.status === "resolved" ? "open" : "resolved";
+                      return (
+                        <div key={ticket.id} className="p-3 rounded-lg border border-border">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-medium text-foreground">{ticket.title}</p>
+                            <Badge variant={statusVariant(ticket.status)}>{formatStatus(ticket.status)}</Badge>
+                          </div>
+                          {ticket.description && <p className="text-xs text-muted-foreground mt-1">{ticket.description}</p>}
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <p className="text-[10px] text-muted-foreground/70">
+                              Created {format(new Date(ticket.created_at), "dd MMM yyyy, hh:mm a")}
+                            </p>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={statusMutation.isPending}
+                              onClick={() => statusMutation.mutate({ id: ticket.id, status: nextStatus })}
+                            >
+                              {ticket.status === "resolved" ? "Reopen" : "Mark Resolved"}
+                            </Button>
+                          </div>
                         </div>
-                        {t.description && <p className="text-xs text-muted-foreground mt-1">{t.description}</p>}
-                        <p className="text-[10px] text-muted-foreground/60 mt-2">{format(new Date(t.created_at), "dd MMM yyyy")}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

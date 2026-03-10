@@ -1,73 +1,84 @@
-# Welcome to your Lovable project
+# Libriofy
 
-## Project info
+Libriofy is a library automation platform for seat management, students, attendance, payments, and renewals.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Fix: "Database setup incomplete"
 
-## How can I edit this code?
+If `/dashboard` shows `public.user_roles was not found`, your Supabase project is linked but migrations were not applied on that project.
 
-There are several ways of editing your application.
+Run this in terminal from project root:
 
-**Use Lovable**
+```bash
+npx supabase login
+npx supabase link --project-ref xaoitjyuuxwksofmmydh
+npx supabase db push
+```
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+If `supabase link` asks for database password, copy it from:
+`Supabase Dashboard -> Project Settings -> Database -> Database password`.
 
-Changes made via Lovable will be committed automatically to this repo.
+Then restart app:
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## Local development
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```bash
+npm install
+npm run dev
+```
 
-**Use GitHub Codespaces**
+Runs on `http://localhost:8080`.
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Build
 
-## What technologies are used for this project?
+```bash
+npm run build
+```
 
-This project is built with:
+## Backup and recovery
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Libriofy now includes an operational backup workflow for Supabase data:
 
-## How can I deploy this project?
+- Supabase automatic backups should stay enabled for production recovery.
+- `npm run backup:db` creates a weekly export bundle under `backups/`.
+- Optional offsite upload is supported with AWS S3 or an `rclone` remote such as Google Drive.
+- `npm run restore:db` replays a saved export into a target Postgres database.
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+Full runbook: [docs/backup-and-recovery.md](docs/backup-and-recovery.md)
 
-## Can I connect a custom domain to my Lovable project?
+## Automatic renewal reminders
 
-Yes, you can!
+Libriofy now supports automatic renewal reminders for students:
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+- `2 days before expiry`
+- `1 day before expiry`
+- `On the expiry day`
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+The reminder scan is handled by the `process-renewals` Supabase Edge Function. It creates reminder notifications, attempts delivery, and stores delivery status in the dashboard.
+
+### Messaging provider setup
+
+Use either a custom webhook or Twilio:
+
+```bash
+# Optional: custom webhook for your own WhatsApp/SMS provider
+REMINDER_WEBHOOK_URL=https://your-provider.example.com/reminders
+
+# Optional: default country code used when student phone numbers are saved without + prefix
+REMINDER_DEFAULT_COUNTRY_CODE=+91
+
+# Optional: Twilio fallback / direct delivery
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+TWILIO_SMS_FROM=+1xxxxxxxxxx
+```
+
+If both WhatsApp and SMS are configured via Twilio, Libriofy tries WhatsApp first and falls back to SMS on failure.
+
+### Daily automation
+
+Schedule the `process-renewals` Edge Function to run once every day from the Supabase dashboard or your cron system. The renewals dashboard button can also run the same flow manually for testing.

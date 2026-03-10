@@ -5,9 +5,11 @@ import { motion } from "framer-motion";
 interface CTASectionProps {
   brandColor: string;
   onBookSeat: () => void;
+  title?: string | null;
+  subtitle?: string | null;
 }
 
-const CTASection = ({ brandColor, onBookSeat }: CTASectionProps) => (
+const CTASection = ({ brandColor, onBookSeat, title, subtitle }: CTASectionProps) => (
   <section className="py-20" style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)` }}>
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -16,10 +18,10 @@ const CTASection = ({ brandColor, onBookSeat }: CTASectionProps) => (
       className="container mx-auto px-4 text-center"
     >
       <h2 className="text-3xl sm:text-4xl font-bold font-display text-primary-foreground mb-4">
-        Book Your Seat Today
+        {title || "Book Your Seat Today"}
       </h2>
       <p className="text-primary-foreground/80 mb-8 max-w-md mx-auto">
-        Join hundreds of focused students. Limited seats available — reserve yours now.
+        {subtitle || "Join hundreds of focused students. Limited seats available - reserve yours now."}
       </p>
       <Button
         size="lg"
@@ -33,3 +35,4 @@ const CTASection = ({ brandColor, onBookSeat }: CTASectionProps) => (
 );
 
 export default CTASection;
+

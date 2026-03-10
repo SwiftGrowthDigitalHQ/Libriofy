@@ -12,8 +12,6 @@ export const useDomainLibrary = () => {
   // Skip resolution for known app domains
   const isAppDomain =
     hostname === "localhost" ||
-    hostname.endsWith(".lovable.app") ||
-    hostname.endsWith(".lovable.dev") ||
     hostname === "libriofy.com" ||
     hostname === "www.libriofy.com";
 

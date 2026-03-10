@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -12,41 +13,64 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid, Globe, Copy, Send, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid, Globe, Copy, Send, CheckCircle, Loader2, Palette } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { format } from "date-fns";
+import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import WebsiteCustomizationTab from "@/components/dashboard/WebsiteCustomizationTab";
 
-// Hardcoded demo library for now — in production, pick from user's libraries
-const DEMO_LIBRARY_ID = "00000000-0000-0000-0000-000000000000";
+type LibraryRow = Database["public"]["Tables"]["libraries"]["Row"];
+type LibraryUpdatePayload = Pick<
+  Database["public"]["Tables"]["libraries"]["Update"],
+  "name" | "address" | "city" | "logo_url" | "opening_hours" | "primary_color" | "total_seats" | "upi_id"
+>;
 
 const SettingsPage = () => {
   const { toast } = useToast();
-  const { user } = useAuth();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
 
-  // ─── Library Info ───
-  const { data: libraries = [] } = useQuery({
-    queryKey: ["my-libraries"],
-    queryFn: async () => {
+  const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
+    queryKey: ["settings-library-fallback", user?.id],
+    queryFn: async (): Promise<Array<{ id: string }>> => {
+      if (!user?.id) return [];
       const { data, error } = await supabase
         .from("libraries")
-        .select("*")
+        .select("id")
+        .eq("owner_id", user.id)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
+    enabled: !!user?.id && !libraryId,
   });
 
-  const activeLibrary = libraries[0]; // first library owned
+  const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
+
+  const { data: activeLibrary } = useQuery({
+    queryKey: ["settings-library", resolvedLibraryId],
+    queryFn: async (): Promise<LibraryRow | null> => {
+      if (!resolvedLibraryId) return null;
+      const { data, error } = await supabase
+        .from("libraries")
+        .select("*")
+        .eq("id", resolvedLibraryId)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!resolvedLibraryId,
+  });
 
   const updateLibMutation = useMutation({
-    mutationFn: async (updates: { name?: string; address?: string; city?: string; total_seats?: number; custom_domain?: string; logo_url?: string; primary_color?: string; opening_hours?: string }) => {
+    mutationFn: async (updates: LibraryUpdatePayload) => {
       if (!activeLibrary) throw new Error("No library");
       const { error } = await supabase.from("libraries").update(updates).eq("id", activeLibrary.id);
       if (error) throw error;
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings-library", resolvedLibraryId] });
       queryClient.invalidateQueries({ queryKey: ["my-libraries"] });
       toast({ title: "Library updated" });
     },
@@ -58,12 +82,13 @@ const SettingsPage = () => {
       <div className="space-y-6">
         <div>
           <h2 className="text-2xl font-bold font-display text-foreground">Settings</h2>
-          <p className="text-sm text-muted-foreground mt-1">Configure your library's plans, slots, and capacity</p>
+          <p className="text-sm text-muted-foreground mt-1">Configure your library details, payment settings, website content, plans, slots, and capacity</p>
         </div>
 
         <Tabs defaultValue="library" className="space-y-6">
           <TabsList className="bg-secondary">
             <TabsTrigger value="library"><Building2 className="w-4 h-4 mr-1.5" /> Library</TabsTrigger>
+            <TabsTrigger value="website"><Palette className="w-4 h-4 mr-1.5" /> Website</TabsTrigger>
             <TabsTrigger value="plans"><CreditCard className="w-4 h-4 mr-1.5" /> Plans</TabsTrigger>
             <TabsTrigger value="slots"><Clock className="w-4 h-4 mr-1.5" /> Time Slots</TabsTrigger>
             <TabsTrigger value="seats"><LayoutGrid className="w-4 h-4 mr-1.5" /> Seats</TabsTrigger>
@@ -71,7 +96,16 @@ const SettingsPage = () => {
 
           {/* Library Tab */}
           <TabsContent value="library">
-            <LibrarySettingsTab library={activeLibrary} onUpdate={(u) => updateLibMutation.mutate(u)} isPending={updateLibMutation.isPending} />
+            <LibrarySettingsTab
+              library={activeLibrary}
+              onUpdate={(updates) => updateLibMutation.mutate(updates)}
+              isPending={updateLibMutation.isPending || roleLibraryLoading || fallbackLoading}
+            />
+          </TabsContent>
+
+          {/* Website Tab */}
+          <TabsContent value="website">
+            <WebsiteCustomizationTab library={activeLibrary} />
           </TabsContent>
 
           {/* Plans Tab */}
@@ -94,27 +128,33 @@ const SettingsPage = () => {
   );
 };
 
-// ─── Library Info Tab ───
-const LibrarySettingsTab = ({ library, onUpdate, isPending }: { library: any; onUpdate: (u: any) => void; isPending: boolean }) => {
-  const { toast } = useToast();
+const LibrarySettingsTab = ({
+  library,
+  onUpdate,
+  isPending,
+}: {
+  library: LibraryRow | null | undefined;
+  onUpdate: (updates: LibraryUpdatePayload) => void;
+  isPending: boolean;
+}) => {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
-  const [customDomain, setCustomDomain] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#14b8a6");
   const [openingHours, setOpeningHours] = useState("");
+  const [upiId, setUpiId] = useState("");
 
-  const loaded = library?.id;
-  if (loaded && !name && library.name) {
-    setName(library.name);
+  useEffect(() => {
+    if (!library) return;
+    setName(library.name || "");
     setAddress(library.address || "");
     setCity(library.city || "");
-    setCustomDomain(library.custom_domain || "");
     setLogoUrl(library.logo_url || "");
     setPrimaryColor(library.primary_color || "#14b8a6");
     setOpeningHours(library.opening_hours || "");
-  }
+    setUpiId(library.upi_id || "");
+  }, [library]);
 
   if (!library) {
     return (
@@ -126,9 +166,6 @@ const LibrarySettingsTab = ({ library, onUpdate, isPending }: { library: any; on
       </Card>
     );
   }
-
-  const publicUrl = library.slug ? `${window.location.origin}/library/${library.slug}` : "";
-
   return (
     <div className="space-y-6">
       <Card>
@@ -151,7 +188,7 @@ const LibrarySettingsTab = ({ library, onUpdate, isPending }: { library: any; on
           </div>
           <div className="space-y-2">
             <Label>Opening Hours</Label>
-            <Input placeholder="e.g. 6:00 AM – 10:00 PM" value={openingHours} onChange={(e) => setOpeningHours(e.target.value)} />
+            <Input placeholder="e.g. 6:00 AM - 10:00 PM" value={openingHours} onChange={(e) => setOpeningHours(e.target.value)} />
           </div>
           <div className="space-y-2">
             <Label>Logo URL</Label>
@@ -170,12 +207,30 @@ const LibrarySettingsTab = ({ library, onUpdate, isPending }: { library: any; on
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-display">Payment Settings</CardTitle>
+          <CardDescription>Students will pay directly to this UPI ID when renewing their seat.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 max-w-lg">
+          <div className="space-y-2">
+            <Label>Library Owner UPI ID</Label>
+            <Input placeholder="abcstudylibrary@upi" value={upiId} onChange={(e) => setUpiId(e.target.value)} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Renewal QR codes and UPI links will use this account. Libriofy only records the proof and approval status.
+          </p>
+          <Button onClick={() => onUpdate({ upi_id: upiId.trim() || null })} disabled={isPending}>
+            {isPending ? "Saving..." : "Save Payment Settings"}
+          </Button>
+        </CardContent>
+      </Card>
+
       <DomainRequestCard library={library} />
     </div>
   );
 };
 
-// ─── Domain Request Card ───
 const DomainRequestCard = ({ library }: { library: any }) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -287,7 +342,6 @@ const DomainRequestCard = ({ library }: { library: any }) => {
   );
 };
 
-// ─── Plans Tab ───
 const PlansTab = ({ libraryId }: { libraryId?: string }) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -403,7 +457,7 @@ const PlansTab = ({ libraryId }: { libraryId?: string }) => {
                     <Input type="number" placeholder="8" value={form.duration_hours} onChange={(e) => setForm({ ...form, duration_hours: e.target.value })} />
                   </div>
                   <div className="space-y-2">
-                    <Label>Price (₹/month)</Label>
+                    <Label>Price (INR)</Label>
                     <Input type="number" placeholder="3500" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
                   </div>
                 </div>
@@ -443,7 +497,7 @@ const PlansTab = ({ libraryId }: { libraryId?: string }) => {
                     {plan.description && <p className="text-xs text-muted-foreground">{plan.description}</p>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{plan.duration_hours}h</TableCell>
-                  <TableCell className="font-medium">₹{Number(plan.price).toLocaleString()}</TableCell>
+                  <TableCell className="text-muted-foreground">Rs. {Number(plan.price || 0).toLocaleString("en-IN")}</TableCell>
                   <TableCell>
                     <Switch checked={plan.is_active} onCheckedChange={(is_active) => toggleMutation.mutate({ id: plan.id, is_active })} />
                   </TableCell>
@@ -467,7 +521,6 @@ const PlansTab = ({ libraryId }: { libraryId?: string }) => {
   );
 };
 
-// ─── Time Slots Tab ───
 const TimeSlotsTab = ({ libraryId }: { libraryId?: string }) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -626,7 +679,7 @@ const TimeSlotsTab = ({ libraryId }: { libraryId?: string }) => {
               {slots.map((slot: any) => (
                 <TableRow key={slot.id}>
                   <TableCell className="font-medium text-foreground">{slot.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{formatTime(slot.start_time)} – {formatTime(slot.end_time)}</TableCell>
+                  <TableCell className="text-muted-foreground">{formatTime(slot.start_time)} - {formatTime(slot.end_time)}</TableCell>
                   <TableCell className="text-muted-foreground">{slot.max_seats || "Unlimited"}</TableCell>
                   <TableCell>
                     <Switch checked={slot.is_active} onCheckedChange={(is_active) => toggleMutation.mutate({ id: slot.id, is_active })} />
@@ -651,7 +704,6 @@ const TimeSlotsTab = ({ libraryId }: { libraryId?: string }) => {
   );
 };
 
-// ─── Seats Tab ───
 const SeatsTab = ({ library, onUpdate, isPending }: { library: any; onUpdate: (u: any) => void; isPending: boolean }) => {
   const [seats, setSeats] = useState("");
 

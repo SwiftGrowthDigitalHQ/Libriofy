@@ -120,6 +120,7 @@ export type Database = {
           primary_color: string | null
           slug: string | null
           total_seats: number
+          upi_id: string | null
           updated_at: string
         }
         Insert: {
@@ -138,6 +139,7 @@ export type Database = {
           primary_color?: string | null
           slug?: string | null
           total_seats?: number
+          upi_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -156,6 +158,7 @@ export type Database = {
           primary_color?: string | null
           slug?: string | null
           total_seats?: number
+          upi_id?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -212,31 +215,55 @@ export type Database = {
       }
       notifications: {
         Row: {
+          channel: string | null
           created_at: string
+          delivery_status: string
           id: string
           library_id: string
           message: string | null
+          metadata: Json
+          provider_error: string | null
+          provider_message_id: string | null
+          provider_name: string | null
           read: boolean
+          recipient_phone: string | null
+          sent_at: string | null
           student_id: string | null
           title: string
           type: string
         }
         Insert: {
+          channel?: string | null
           created_at?: string
+          delivery_status?: string
           id?: string
           library_id: string
           message?: string | null
+          metadata?: Json
+          provider_error?: string | null
+          provider_message_id?: string | null
+          provider_name?: string | null
           read?: boolean
+          recipient_phone?: string | null
+          sent_at?: string | null
           student_id?: string | null
           title: string
           type: string
         }
         Update: {
+          channel?: string | null
           created_at?: string
+          delivery_status?: string
           id?: string
           library_id?: string
           message?: string | null
+          metadata?: Json
+          provider_error?: string | null
+          provider_message_id?: string | null
+          provider_name?: string | null
           read?: boolean
+          recipient_phone?: string | null
+          sent_at?: string | null
           student_id?: string | null
           title?: string
           type?: string
@@ -261,37 +288,52 @@ export type Database = {
       payments: {
         Row: {
           amount: number
+          approved_at: string | null
+          approved_by: string | null
           created_at: string
           id: string
           library_id: string
           payment_method: string | null
+          payment_screenshot: string | null
           period_end: string | null
           period_start: string | null
           plan: string | null
+          seat_id: string | null
+          source: string
           status: string
           student_id: string
         }
         Insert: {
           amount: number
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string
           id?: string
           library_id: string
           payment_method?: string | null
+          payment_screenshot?: string | null
           period_end?: string | null
           period_start?: string | null
           plan?: string | null
+          seat_id?: string | null
+          source?: string
           status?: string
           student_id: string
         }
         Update: {
           amount?: number
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string
           id?: string
           library_id?: string
           payment_method?: string | null
+          payment_screenshot?: string | null
           period_end?: string | null
           period_start?: string | null
           plan?: string | null
+          seat_id?: string | null
+          source?: string
           status?: string
           student_id?: string
         }
@@ -389,6 +431,41 @@ export type Database = {
         }
         Relationships: []
       }
+      seats: {
+        Row: {
+          created_at: string
+          id: string
+          library_id: string
+          seat_index: number
+          seat_number: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          library_id: string
+          seat_index: number
+          seat_number: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          library_id?: string
+          seat_index?: number
+          seat_number?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "seats_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       students: {
         Row: {
           created_at: string
@@ -399,10 +476,13 @@ export type Database = {
           last_check_in: string | null
           library_id: string
           no_show_days: number
+          plan_id: string | null
           phone: string | null
           plan: string | null
           qr_code: string
+          seat_id: string | null
           seat_number: string | null
+          slot_id: string | null
           slot: string | null
           start_date: string
           status: string
@@ -418,10 +498,13 @@ export type Database = {
           last_check_in?: string | null
           library_id: string
           no_show_days?: number
+          plan_id?: string | null
           phone?: string | null
           plan?: string | null
           qr_code?: string
+          seat_id?: string | null
           seat_number?: string | null
+          slot_id?: string | null
           slot?: string | null
           start_date?: string
           status?: string
@@ -437,10 +520,13 @@ export type Database = {
           last_check_in?: string | null
           library_id?: string
           no_show_days?: number
+          plan_id?: string | null
           phone?: string | null
           plan?: string | null
           qr_code?: string
+          seat_id?: string | null
           seat_number?: string | null
+          slot_id?: string | null
           slot?: string | null
           start_date?: string
           status?: string
@@ -453,6 +539,27 @@ export type Database = {
             columns: ["library_id"]
             isOneToOne: false
             referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "students_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "students_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "students_slot_id_fkey"
+            columns: ["slot_id"]
+            isOneToOne: false
+            referencedRelation: "time_slots"
             referencedColumns: ["id"]
           },
         ]
@@ -677,6 +784,10 @@ export type Database = {
           slot_name: string
         }[]
       }
+      get_student_renewal_context: {
+        Args: { p_student_token: string }
+        Returns: Json
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -693,6 +804,14 @@ export type Database = {
       }
       renew_student: {
         Args: { p_amount?: number; p_months?: number; p_student_id: string }
+        Returns: Json
+      }
+      submit_renewal_payment: {
+        Args: {
+          p_amount: number
+          p_payment_screenshot?: string
+          p_student_token: string
+        }
         Returns: Json
       }
     }

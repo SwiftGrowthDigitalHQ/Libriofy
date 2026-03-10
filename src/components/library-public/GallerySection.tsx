@@ -7,7 +7,16 @@ import lib3 from "@/assets/library-3.jpg";
 import lib4 from "@/assets/library-4.jpg";
 import lib5 from "@/assets/library-5.jpg";
 
-const images = [
+interface GalleryImage {
+  src: string;
+  alt?: string | null;
+}
+
+interface GallerySectionProps {
+  images?: GalleryImage[];
+}
+
+const defaultImages = [
   { src: lib1, alt: "Study area" },
   { src: lib5, alt: "Reading lounge" },
   { src: lib3, alt: "Silent zone" },
@@ -16,8 +25,9 @@ const images = [
   { src: lib1, alt: "Interior view" },
 ];
 
-const GallerySection = () => {
+const GallerySection = ({ images }: GallerySectionProps) => {
   const [lightbox, setLightbox] = useState<number | null>(null);
+  const galleryImages = images && images.length > 0 ? images : defaultImages;
 
   return (
     <section className="py-16 bg-secondary/30">
@@ -27,7 +37,7 @@ const GallerySection = () => {
         </h2>
         <p className="text-muted-foreground text-center mb-10">Take a virtual tour of our space</p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {images.map((img, i) => (
+          {galleryImages.map((img, i) => (
             <motion.button
               key={i}
               onClick={() => setLightbox(i)}
@@ -56,8 +66,8 @@ const GallerySection = () => {
             <motion.img
               initial={{ scale: 0.9 }}
               animate={{ scale: 1 }}
-              src={images[lightbox].src}
-              alt={images[lightbox].alt}
+              src={galleryImages[lightbox].src}
+              alt={galleryImages[lightbox].alt || "Library gallery image"}
               className="max-w-full max-h-[80vh] rounded-2xl object-contain"
               onClick={(e) => e.stopPropagation()}
             />

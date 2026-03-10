@@ -1,17 +1,16 @@
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScanLine, CheckCircle, XCircle, LogIn, LogOut } from "lucide-react";
+import { ScanLine, CheckCircle, XCircle, LogIn, LogOut, Camera, CameraOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import AttendanceLog from "@/components/dashboard/AttendanceLog";
-
-// Demo library ID — in production this comes from auth context
-const DEMO_LIBRARY_ID = "00000000-0000-0000-0000-000000000000";
+import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { useAuth } from "@/hooks/useAuth";
 
 interface CheckInResult {
   success: boolean;
@@ -21,36 +20,183 @@ interface CheckInResult {
   seat?: string;
 }
 
+type BarcodeDetectorResult = {
+  rawValue?: string;
+};
+
+type BarcodeDetectorInstance = {
+  detect: (source: ImageBitmapSource) => Promise<BarcodeDetectorResult[]>;
+};
+
+type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
+
 const AttendancePage = () => {
+  const queryClient = useQueryClient();
   const [qrInput, setQrInput] = useState("");
   const [lastResult, setLastResult] = useState<CheckInResult | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraBusy, setCameraBusy] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<BarcodeDetectorInstance | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const scanLockRef = useRef(false);
+
+  const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
+    queryKey: ["my-libraries-fallback", user?.id],
+    queryFn: async (): Promise<Array<{ id: string }>> => {
+      if (!user?.id) return [];
+      const { data, error } = await supabase
+        .from("libraries")
+        .select("id")
+        .eq("owner_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user?.id && !libraryId,
+  });
+
+  const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
+
+  const stopCamera = useCallback(() => {
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    scanLockRef.current = false;
+    setCameraOpen(false);
+    setCameraBusy(false);
+  }, []);
 
   const checkInMutation = useMutation({
     mutationFn: async (qrCode: string) => {
-      const { data, error } = await supabase.rpc("qr_check_in" as any, {
+      if (!resolvedLibraryId) throw new Error("Library not linked for this account.");
+      const { data, error } = await supabase.rpc("qr_check_in", {
         p_qr_code: qrCode,
-        p_library_id: DEMO_LIBRARY_ID,
+        p_library_id: resolvedLibraryId,
       });
       if (error) throw error;
       return data as unknown as CheckInResult;
     },
     onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["attendance-logs-today", resolvedLibraryId] });
       setLastResult(result);
       setQrInput("");
       if (result.success) {
         toast({
           title: result.action === "check_in" ? "Checked In!" : "Checked Out!",
-          description: `${result.student_name} — Seat ${result.seat || "N/A"}`,
+          description: `${result.student_name} - Seat ${result.seat || "N/A"}`,
         });
       } else {
         toast({ title: "Denied", description: result.error, variant: "destructive" });
       }
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const runScanLoop = () => {
+    const loop = async () => {
+      if (!cameraOpen || scanLockRef.current) return;
+
+      const video = videoRef.current;
+      const detector = detectorRef.current;
+
+      if (!video || !detector || video.readyState < 2) {
+        rafRef.current = window.requestAnimationFrame(() => void loop());
+        return;
+      }
+
+      try {
+        const barcodes = await detector.detect(video);
+        const scannedValue = barcodes.find((item) => typeof item.rawValue === "string" && item.rawValue.trim())?.rawValue?.trim();
+
+        if (scannedValue) {
+          scanLockRef.current = true;
+          setQrInput(scannedValue);
+          stopCamera();
+          checkInMutation.mutate(scannedValue);
+          return;
+        }
+      } catch {
+        // Ignore transient frame decode errors; scanner keeps running.
+      }
+
+      rafRef.current = window.requestAnimationFrame(() => void loop());
+    };
+
+    rafRef.current = window.requestAnimationFrame(() => void loop());
+  };
+
+  const startCamera = async () => {
+    setCameraError(null);
+
+    if (!resolvedLibraryId) {
+      setCameraError("Library not linked to your account.");
+      return;
+    }
+
+    const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
+    if (!BarcodeDetectorCtor) {
+      setCameraError("Camera QR scan is not supported in this browser. Use Chrome/Edge latest version.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Camera API not available in this browser.");
+      return;
+    }
+
+    try {
+      setCameraBusy(true);
+
+      detectorRef.current = new BarcodeDetectorCtor({ formats: ["qr_code"] });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+
+      if (!videoRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("Camera preview unavailable.");
+      }
+
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+
+      setCameraOpen(true);
+      setCameraBusy(false);
+      runScanLoop();
+    } catch (error: unknown) {
+      stopCamera();
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Camera permission denied or camera unavailable.";
+      setCameraError(message);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,7 +213,6 @@ const AttendancePage = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Scanner Card */}
           <Card className="lg:col-span-1">
             <CardHeader>
               <CardTitle className="text-lg font-display flex items-center gap-2">
@@ -85,18 +230,50 @@ const AttendancePage = () => {
                   autoFocus
                   className="text-lg h-12 font-mono"
                 />
-                <Button type="submit" className="w-full" disabled={checkInMutation.isPending}>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={checkInMutation.isPending || roleLibraryLoading || fallbackLoading || !resolvedLibraryId}
+                >
                   {checkInMutation.isPending ? "Processing..." : "Verify & Log"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={cameraOpen ? stopCamera : () => void startCamera()}
+                  disabled={cameraBusy || checkInMutation.isPending || roleLibraryLoading || fallbackLoading || !resolvedLibraryId}
+                >
+                  {cameraOpen ? (
+                    <>
+                      <CameraOff className="w-4 h-4 mr-2" /> Stop Camera
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-4 h-4 mr-2" /> {cameraBusy ? "Opening Camera..." : "Scan with Camera"}
+                    </>
+                  )}
                 </Button>
               </form>
 
-              {/* Result display */}
+              {cameraOpen && (
+                <div className="mt-4 rounded-lg border border-border overflow-hidden bg-secondary/20">
+                  <video ref={videoRef} className="w-full h-56 object-cover" muted playsInline />
+                </div>
+              )}
+
+              {cameraError && <p className="text-xs text-destructive mt-2">{cameraError}</p>}
+
+              {!resolvedLibraryId && !roleLibraryLoading && !fallbackLoading && (
+                <p className="text-xs text-destructive mt-2">Library not linked to your account. Please check user role setup.</p>
+              )}
+
               {lastResult && (
-                <div className={`mt-6 p-4 rounded-xl border-2 ${
-                  lastResult.success
-                    ? "border-success/30 bg-success/5"
-                    : "border-destructive/30 bg-destructive/5"
-                }`}>
+                <div
+                  className={`mt-6 p-4 rounded-xl border-2 ${
+                    lastResult.success ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"
+                  }`}
+                >
                   <div className="flex items-center gap-3 mb-2">
                     {lastResult.success ? (
                       <CheckCircle className="w-6 h-6 text-success" />
@@ -113,14 +290,16 @@ const AttendancePage = () => {
                       <div className="flex items-center gap-2">
                         <Badge variant={lastResult.action === "check_in" ? "default" : "secondary"}>
                           {lastResult.action === "check_in" ? (
-                            <><LogIn className="w-3 h-3 mr-1" /> Check In</>
+                            <>
+                              <LogIn className="w-3 h-3 mr-1" /> Check In
+                            </>
                           ) : (
-                            <><LogOut className="w-3 h-3 mr-1" /> Check Out</>
+                            <>
+                              <LogOut className="w-3 h-3 mr-1" /> Check Out
+                            </>
                           )}
                         </Badge>
-                        {lastResult.seat && (
-                          <Badge variant="outline">Seat {lastResult.seat}</Badge>
-                        )}
+                        {lastResult.seat && <Badge variant="outline">Seat {lastResult.seat}</Badge>}
                       </div>
                     </div>
                   ) : (
@@ -131,9 +310,8 @@ const AttendancePage = () => {
             </CardContent>
           </Card>
 
-          {/* Attendance Log */}
           <div className="lg:col-span-2">
-            <AttendanceLog />
+            <AttendanceLog libraryId={resolvedLibraryId} />
           </div>
         </div>
       </div>

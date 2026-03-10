@@ -1,10 +1,110 @@
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { useLibrarySubscription, isSubscriptionActive } from "@/hooks/useLibrarySubscription";
 import { AlertTriangle, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+
+type RazorpaySuccessResponse = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  handler: (response: RazorpaySuccessResponse) => Promise<void> | void;
+  prefill: Record<string, string>;
+  theme: { color: string };
+};
+
+type RazorpayInstance = { open: () => void };
+type RazorpayConstructor = new (options: RazorpayOptions) => RazorpayInstance;
+
+type CheckoutOrderResponse = {
+  order: { id: string; amount: number; currency: string };
+  keyId: string;
+};
 
 const SubscriptionGate = ({ children }: { children: ReactNode }) => {
   const { data: sub, isLoading } = useLibrarySubscription();
+  const { libraryId } = useCurrentLibraryId();
+  const { toast } = useToast();
+  const [renewLoading, setRenewLoading] = useState(false);
+  const razorpayWindow = window as Window & { Razorpay?: RazorpayConstructor };
+
+  const ensureRazorpayScript = async () => {
+    if (razorpayWindow.Razorpay) return true;
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Failed to load Razorpay SDK"));
+      document.body.appendChild(script);
+    });
+    return !!razorpayWindow.Razorpay;
+  };
+
+  const handleRenew = async () => {
+    if (!libraryId) return;
+    setRenewLoading(true);
+    try {
+      const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-razorpay-order", {
+        body: {
+          libraryId,
+          months: 1,
+        },
+      });
+      if (orderError) throw orderError;
+      if (!orderRes?.order) throw new Error("Order creation failed");
+
+      await ensureRazorpayScript();
+      if (!razorpayWindow.Razorpay) throw new Error("Razorpay SDK unavailable");
+
+      const razorpay = new razorpayWindow.Razorpay({
+        key: orderRes.keyId,
+        amount: orderRes.order.amount,
+        currency: orderRes.order.currency,
+        name: "Libriofy",
+        description: "Subscription Renewal",
+        order_id: orderRes.order.id,
+        handler: async (response: RazorpaySuccessResponse) => {
+          const { error: verifyError } = await supabase.functions.invoke("verify-razorpay-payment", {
+            body: {
+              libraryId,
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            },
+          });
+          if (verifyError) {
+            toast({ title: "Payment verification failed", description: verifyError.message, variant: "destructive" });
+            return;
+          }
+          toast({ title: "Subscription renewed", description: "Your account has been reactivated." });
+          window.location.reload();
+        },
+        prefill: {},
+        theme: {
+          color: "#14b8a6",
+        },
+      });
+
+      razorpay.open();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast({ title: "Renewal failed", description: message, variant: "destructive" });
+    } finally {
+      setRenewLoading(false);
+    }
+  };
 
   if (isLoading) return null;
 
@@ -38,9 +138,14 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
           <p className="text-muted-foreground mb-6">
             Your subscription has expired. Please renew to continue using the platform.
           </p>
-          <a href="https://wa.me/919999999999" target="_blank" rel="noopener noreferrer">
-            <Button>Renew Now</Button>
-          </a>
+          <div className="flex items-center justify-center gap-3">
+            <Button onClick={handleRenew} disabled={renewLoading || !libraryId}>
+              {renewLoading ? "Opening Checkout..." : "Renew Now"}
+            </Button>
+            <a href="https://wa.me/919999999999" target="_blank" rel="noopener noreferrer">
+              <Button variant="outline">Need Help?</Button>
+            </a>
+          </div>
         </div>
       </div>
     );

@@ -15,7 +15,7 @@ const CTABanner = () => (
         Ready to automate your library?
       </h2>
       <p className="text-primary-foreground/70 mb-8 max-w-lg mx-auto text-lg">
-        Join 500+ libraries saving hours every week. Start your 14-day free trial today.
+        Join 500+ libraries saving hours every week. Start your 7-day free trial today.
       </p>
       <div className="flex flex-col sm:flex-row gap-4 justify-center">
         <Link to="/dashboard">
