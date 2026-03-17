@@ -1,35 +1,57 @@
+import type { CSSProperties } from "react";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
+import type { WebsiteBackgroundType } from "@/lib/libraryWebsiteTheme";
 
 interface CTASectionProps {
   brandColor: string;
   onBookSeat: () => void;
   title?: string | null;
   subtitle?: string | null;
+  backgroundStyle?: CSSProperties;
+  backgroundType?: WebsiteBackgroundType;
+  titleColor?: string;
+  subtitleColor?: string;
+  buttonColor?: string;
+  buttonTextColor?: string;
 }
 
-const CTASection = ({ brandColor, onBookSeat, title, subtitle }: CTASectionProps) => (
-  <section className="py-20" style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)` }}>
+const CTASection = ({
+  brandColor,
+  onBookSeat,
+  title,
+  subtitle,
+  backgroundStyle,
+  backgroundType = "color",
+  titleColor = "#ffffff",
+  subtitleColor = "#ffffff",
+  buttonColor = "#ffffff",
+  buttonTextColor = "#0f172a",
+}: CTASectionProps) => (
+  <section className="py-20" style={backgroundStyle || { background: `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)` }}>
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
       className="container mx-auto px-4 text-center"
     >
-      <h2 className="text-3xl sm:text-4xl font-bold font-display text-primary-foreground mb-4">
-        {title || "Book Your Seat Today"}
-      </h2>
-      <p className="text-primary-foreground/80 mb-8 max-w-md mx-auto">
-        {subtitle || "Join hundreds of focused students. Limited seats available - reserve yours now."}
-      </p>
-      <Button
-        size="lg"
-        onClick={onBookSeat}
-        className="bg-background text-foreground hover:bg-background/90 font-semibold text-base px-8"
-      >
-        Book Now <ChevronRight className="w-5 h-5 ml-1" />
-      </Button>
+      <div className={backgroundType === "image" ? "mx-auto max-w-3xl rounded-3xl bg-black/25 p-8 backdrop-blur-sm" : ""}>
+        <h2 className="mb-4 text-3xl font-bold font-display sm:text-4xl" style={{ color: titleColor }}>
+          {title || "Book Your Seat Today"}
+        </h2>
+        <p className="mx-auto mb-8 max-w-md" style={{ color: subtitleColor }}>
+          {subtitle || "Join hundreds of focused students. Limited seats available - reserve yours now."}
+        </p>
+        <Button
+          size="lg"
+          onClick={onBookSeat}
+          className="font-semibold text-base px-8"
+          style={{ backgroundColor: buttonColor, color: buttonTextColor }}
+        >
+          Book Now <ChevronRight className="w-5 h-5 ml-1" />
+        </Button>
+      </div>
     </motion.div>
   </section>
 );

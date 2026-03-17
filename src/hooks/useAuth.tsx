@@ -10,7 +10,24 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, fullName: string, phoneNumber?: string) => Promise<void>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName: string,
+    phoneNumber?: string,
+    options?: {
+      referralCode?: string;
+      affiliateCode?: string;
+      accountType?: "library" | "partner" | "affiliate";
+      partnerProfile?: {
+        city?: string;
+        experience?: string;
+        payoutMethod?: string;
+        upiId?: string;
+        bankDetails?: Record<string, unknown>;
+      };
+    },
+  ) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   getCurrentSession: () => Promise<Session | null>;
@@ -62,7 +79,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const signUp = async (email: string, password: string, fullName: string, phoneNumber?: string) => {
+  const signUp = async (
+    email: string,
+    password: string,
+    fullName: string,
+    phoneNumber?: string,
+    options?: {
+      referralCode?: string;
+      affiliateCode?: string;
+      accountType?: "library" | "partner" | "affiliate";
+      partnerProfile?: {
+        city?: string;
+        experience?: string;
+        payoutMethod?: string;
+        upiId?: string;
+        bankDetails?: Record<string, unknown>;
+      };
+    },
+  ) => {
+    const referralCode = options?.referralCode ?? null;
+    const affiliateCode = options?.affiliateCode ?? null;
+    const accountType = options?.accountType ?? null;
+    const partnerProfile = options?.partnerProfile ?? null;
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
@@ -70,6 +109,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         data: {
           full_name: fullName,
           phone_number: phoneNumber ?? null,
+          referral_code: referralCode,
+          affiliate_code: affiliateCode,
+          account_type: accountType,
+          city: partnerProfile?.city ?? null,
+          experience: partnerProfile?.experience ?? null,
+          payout_method: partnerProfile?.payoutMethod ?? null,
+          upi_id: partnerProfile?.upiId ?? null,
+          bank_details: partnerProfile?.bankDetails ?? {},
         },
         emailRedirectTo: OAUTH_REDIRECT_URL,
       },

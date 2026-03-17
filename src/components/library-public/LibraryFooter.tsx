@@ -1,4 +1,3 @@
-import { BookOpen } from "lucide-react";
 import { Link } from "react-router-dom";
 
 interface LibraryFooterProps {
@@ -14,11 +13,7 @@ const LibraryFooter = ({ library }: LibraryFooterProps) => (
           <div className="flex items-center gap-2 mb-3">
             {library.logo_url ? (
               <img src={library.logo_url} alt={library.name} className="w-8 h-8 rounded-lg object-cover" />
-            ) : (
-              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                <BookOpen className="w-4 h-4 text-primary" />
-              </div>
-            )}
+            ) : null}
             <span className="font-bold font-display text-foreground">{library.name}</span>
           </div>
           <p className="text-sm text-muted-foreground">

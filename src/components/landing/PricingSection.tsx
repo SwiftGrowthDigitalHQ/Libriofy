@@ -14,7 +14,7 @@ const plans = [
   },
   {
     name: "Growth",
-    price: "₹6999",
+    price: "₹4999",
     period: "/month",
     desc: "For growing library networks",
     features: ["Up to 150 seats", "Seat management", "Advanced analytics", "Notifications", "Export"],

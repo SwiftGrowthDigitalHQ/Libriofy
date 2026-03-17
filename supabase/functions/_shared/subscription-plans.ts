@@ -19,7 +19,7 @@ export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanName, SubscriptionPlan> 
   },
   growth: {
     name: "growth",
-    price: 6999,
+    price: 4999,
     seatsLimit: 150,
     features: ["seat_management", "advanced_analytics", "notifications", "export"],
   },

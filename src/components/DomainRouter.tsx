@@ -14,7 +14,9 @@ const DomainRouter = ({ children }: { children: ReactNode }) => {
   const hostname = window.location.hostname;
   const isAppDomain =
     hostname === "localhost" ||
+    hostname === "partner.localhost" ||
     hostname === "libriofy.com" ||
+    hostname === "partner.libriofy.com" ||
     hostname === "www.libriofy.com";
 
   if (isAppDomain) return <>{children}</>;

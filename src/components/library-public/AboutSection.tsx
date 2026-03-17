@@ -4,12 +4,13 @@ import { motion } from "framer-motion";
 interface AboutSectionProps {
   libraryName: string;
   aboutText?: string | null;
+  headingColor?: string;
 }
 
-const AboutSection = ({ libraryName, aboutText }: AboutSectionProps) => (
+const AboutSection = ({ libraryName, aboutText, headingColor }: AboutSectionProps) => (
   <section className="py-16 bg-secondary/30">
     <div className="container mx-auto px-4 max-w-4xl">
-      <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">
+      <h2 className="text-2xl sm:text-3xl font-bold font-display text-center mb-2" style={headingColor ? { color: headingColor } : undefined}>
         About {libraryName}
       </h2>
       <p className="text-muted-foreground text-center mb-10 max-w-2xl mx-auto">

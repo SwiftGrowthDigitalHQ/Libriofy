@@ -2,24 +2,28 @@ import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Check, CreditCard, Loader2, Lock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useToast } from "@/hooks/use-toast";
 import { useUserRole } from "@/hooks/useUserRole";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  isFunctionUnavailableError,
+  readFunctionErrorMessage,
+  waitForActiveLibrarySubscription,
+} from "@/lib/billingEdgeFunctions";
+import {
   evaluateSubscriptionAccess,
   formatInr,
   formatSeatLimit,
-  getSubscriptionPlan,
   SUBSCRIPTION_BILLING_DAYS,
-  SUBSCRIPTION_PLANS,
-  type SubscriptionPlanName,
 } from "@/lib/subscription";
 import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
 
@@ -45,8 +49,51 @@ type RazorpayInstance = { open: () => void };
 type RazorpayConstructor = new (options: RazorpayOptions) => RazorpayInstance;
 
 type CheckoutOrderResponse = {
-  order: { id: string; amount: number; currency: string };
+  orderId: string;
+  amount: number;
+  currency: string;
   keyId: string;
+};
+
+type SubscriptionPlanDto = {
+  code: string;
+  name: string;
+  description: string | null;
+  price: number;
+  seats_limit: number | null;
+  features: string[];
+  is_active: boolean;
+  sort_order: number;
+};
+
+type SubscriptionQuoteResponse = {
+  success: true;
+  plan: {
+    code: string;
+    name: string;
+    description: string | null;
+    price: number;
+    seats_limit: number | null;
+    features: unknown;
+    is_active: boolean;
+  };
+  pricing: {
+    months: number;
+    unit_price: number;
+    subtotal_amount: number;
+    discount_amount: number;
+    total_amount: number;
+    discount_kind: "coupon" | "referral" | null;
+    coupon_code: string | null;
+  };
+};
+
+const normalizePlanCode = (value: string | null | undefined) => String(value ?? "").trim().toLowerCase();
+const normalizeCouponCode = (value: string | null | undefined) => String(value ?? "").trim().toUpperCase();
+
+const toFeaturesList = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((feature) => String(feature));
 };
 
 const BillingPage = () => {
@@ -56,31 +103,114 @@ const BillingPage = () => {
   const { libraryId } = useCurrentLibraryId();
   const { data: roles = [] } = useUserRole();
   const { data: subscription, isLoading } = useLibrarySubscription();
-  const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlanName>("growth");
+  const [selectedPlan, setSelectedPlan] = useState<string>("growth");
+  const [couponInput, setCouponInput] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const razorpayWindow = window as Window & { Razorpay?: RazorpayConstructor };
 
   const access = evaluateSubscriptionAccess(subscription);
   const isOwner = roles.some((role) => role.role === "library_owner");
-  const currentPlan = useMemo(() => getSubscriptionPlan(subscription?.plan_name), [subscription?.plan_name]);
+  const currentPlanCode = useMemo(() => normalizePlanCode(subscription?.plan_name), [subscription?.plan_name]);
+
+  const { data: subscriptionPlans = [], isLoading: plansLoading } = useQuery({
+    queryKey: ["subscription-plans"],
+    queryFn: async (): Promise<SubscriptionPlanDto[]> => {
+      const { data, error } = await supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .from("subscription_plans" as any)
+        .select("code, name, description, price, seats_limit, features, is_active, sort_order")
+        .order("sort_order", { ascending: true })
+        .order("price", { ascending: true });
+      if (error) throw error;
+
+      return (data as Array<Record<string, unknown>>).map((row) => ({
+        code: normalizePlanCode(String(row.code ?? "")),
+        name: String(row.name ?? ""),
+        description: row.description == null ? null : String(row.description),
+        price: Number(row.price ?? 0),
+        seats_limit: row.seats_limit == null ? null : Number(row.seats_limit),
+        features: toFeaturesList(row.features),
+        is_active: Boolean(row.is_active ?? true),
+        sort_order: Number(row.sort_order ?? 100),
+      }));
+    },
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  });
+
+  const availablePlans = useMemo(() => subscriptionPlans.filter((plan) => plan.is_active), [subscriptionPlans]);
+  const currentPlanDisplay = useMemo(() => {
+    if (!subscription?.plan_name) return "Not activated";
+    return subscriptionPlans.find((plan) => plan.code === currentPlanCode)?.name ?? subscription.plan_name;
+  }, [currentPlanCode, subscription?.plan_name, subscriptionPlans]);
 
   useEffect(() => {
-    if (currentPlan?.name) {
-      setSelectedPlan(currentPlan.name);
-      return;
-    }
-    if (subscription?.plan_name) {
-      const resolvedPlan = getSubscriptionPlan(subscription.plan_name);
-      if (resolvedPlan) {
-        setSelectedPlan(resolvedPlan.name);
-      }
-    }
-  }, [currentPlan?.name, subscription?.plan_name]);
+    if (!availablePlans.length) return;
+    setSelectedPlan((prev) => {
+      const prevCode = normalizePlanCode(prev);
+      if (prevCode && availablePlans.some((plan) => plan.code === prevCode)) return prevCode;
+      if (currentPlanCode && availablePlans.some((plan) => plan.code === currentPlanCode)) return currentPlanCode;
+      return availablePlans[0].code;
+    });
+  }, [availablePlans, currentPlanCode]);
 
   const selectedPlanConfig = useMemo(
-    () => SUBSCRIPTION_PLANS.find((plan) => plan.name === selectedPlan) ?? SUBSCRIPTION_PLANS[1],
-    [selectedPlan],
+    () => availablePlans.find((plan) => plan.code === normalizePlanCode(selectedPlan)) ?? availablePlans[0] ?? null,
+    [availablePlans, selectedPlan],
   );
+
+  const appliedCouponNormalized = useMemo(() => (appliedCoupon ? normalizeCouponCode(appliedCoupon) : ""), [appliedCoupon]);
+
+  const { data: quote, isFetching: quoteFetching } = useQuery({
+    queryKey: ["subscription-quote", libraryId, normalizePlanCode(selectedPlan), appliedCouponNormalized],
+    queryFn: async (): Promise<SubscriptionQuoteResponse | null> => {
+      if (!libraryId || !selectedPlanConfig) return null;
+      const { data, error } = await supabase.functions.invoke<SubscriptionQuoteResponse>("subscription-quote", {
+        body: {
+          libraryId,
+          planName: selectedPlanConfig.code,
+          months: 1,
+          couponCode: appliedCouponNormalized || undefined,
+        },
+      });
+
+      if (error) throw new Error(await readFunctionErrorMessage(error, "subscription-quote"));
+      if (!data?.success) return null;
+      return data;
+    },
+    enabled: !!libraryId && !!selectedPlanConfig,
+    staleTime: 30_000,
+    gcTime: 2 * 60_000,
+    retry: 1,
+  });
+
+  const applyCouponMutation = useMutation({
+    mutationFn: async (code: string) => {
+      if (!libraryId || !selectedPlanConfig) throw new Error("Library not loaded yet.");
+
+      const normalized = normalizeCouponCode(code);
+      const { data, error } = await supabase.functions.invoke<SubscriptionQuoteResponse>("subscription-quote", {
+        body: {
+          libraryId,
+          planName: selectedPlanConfig.code,
+          months: 1,
+          couponCode: normalized,
+        },
+      });
+
+      if (error) throw new Error(await readFunctionErrorMessage(error, "subscription-quote"));
+      if (!data?.success) throw new Error("Unable to apply coupon.");
+      return normalized;
+    },
+    onSuccess: (normalized) => {
+      setAppliedCoupon(normalized);
+      toast({ title: "Coupon applied", description: normalized });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Unable to apply coupon", description: error.message, variant: "destructive" });
+    },
+  });
 
   const ensureRazorpayScript = async () => {
     if (razorpayWindow.Razorpay) return true;
@@ -101,27 +231,38 @@ const BillingPage = () => {
     setCheckoutLoading(true);
 
     try {
-      const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-razorpay-order", {
+      const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-payment", {
         body: {
           libraryId,
-          planName: selectedPlanConfig.name,
+          plan: selectedPlanConfig.code,
           months: 1,
+          couponCode: appliedCouponNormalized || undefined,
         },
       });
 
-      if (orderError) throw orderError;
-      if (!orderRes?.order) throw new Error("Order creation failed.");
+      if (orderError) {
+        throw new Error(await readFunctionErrorMessage(orderError, "create-payment"));
+      }
+
+      if (!orderRes?.orderId || typeof orderRes.amount !== "number" || !orderRes.currency) {
+        console.error("create-payment: unexpected response", orderRes);
+        throw new Error("Order creation failed.");
+      }
 
       await ensureRazorpayScript();
       if (!razorpayWindow.Razorpay) throw new Error("Razorpay SDK unavailable.");
 
+      const envKeyId = String(import.meta.env.VITE_RAZORPAY_KEY_ID ?? "").trim();
+      const checkoutKeyId = envKeyId || orderRes.keyId;
+      if (!checkoutKeyId) throw new Error("Missing Razorpay key id.");
+
       const razorpay = new razorpayWindow.Razorpay({
-        key: orderRes.keyId,
-        amount: orderRes.order.amount,
-        currency: orderRes.order.currency,
+        key: checkoutKeyId,
+        amount: orderRes.amount,
+        currency: orderRes.currency,
         name: "Libriofy",
-        description: `${selectedPlanConfig.label} plan activation`,
-        order_id: orderRes.order.id,
+        description: `${selectedPlanConfig.name} plan activation`,
+        order_id: orderRes.orderId,
         handler: async (response: RazorpaySuccessResponse) => {
           const { error: verifyError } = await supabase.functions.invoke("verify-razorpay-payment", {
             body: {
@@ -133,10 +274,25 @@ const BillingPage = () => {
           });
 
           if (verifyError) {
+            const verifyMessage = await readFunctionErrorMessage(verifyError, "verify-razorpay-payment");
+            const activatedSubscription = await waitForActiveLibrarySubscription(libraryId);
+
+            if (activatedSubscription) {
+              await queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] });
+              toast({
+                title: "Plan activated",
+                description: `${selectedPlanConfig.name} is active. Payment confirmation completed through the webhook.`,
+              });
+              navigate("/dashboard", { replace: true });
+              return;
+            }
+
             toast({
-              title: "Payment verification failed",
-              description: verifyError.message,
-              variant: "destructive",
+              title: isFunctionUnavailableError(verifyError) ? "Payment received, activation pending" : "Payment verification failed",
+              description: isFunctionUnavailableError(verifyError)
+                ? `${verifyMessage} If Razorpay already captured the payment, the webhook can still activate your plan within a minute.`
+                : verifyMessage,
+              variant: isFunctionUnavailableError(verifyError) ? "default" : "destructive",
             });
             return;
           }
@@ -144,7 +300,7 @@ const BillingPage = () => {
           await queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] });
           toast({
             title: "Plan activated",
-            description: `${selectedPlanConfig.label} is now active for the next ${SUBSCRIPTION_BILLING_DAYS} days.`,
+            description: `${selectedPlanConfig.name} is now active for the next ${SUBSCRIPTION_BILLING_DAYS} days.`,
           });
           navigate("/dashboard", { replace: true });
         },
@@ -214,6 +370,9 @@ const BillingPage = () => {
     );
   }
 
+  const planIsSelected = selectedPlanConfig && normalizePlanCode(selectedPlan) === selectedPlanConfig.code;
+  const quotePricing = quote?.pricing ?? null;
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -240,7 +399,7 @@ const BillingPage = () => {
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Plan</span>
-                <span className="font-medium text-foreground">{currentPlan?.label ?? "Not activated"}</span>
+                <span className="font-medium text-foreground">{currentPlanDisplay}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Payment</span>
@@ -268,56 +427,131 @@ const BillingPage = () => {
             </CardHeader>
             <CardContent>
               <div className="grid gap-4 lg:grid-cols-3">
-                {SUBSCRIPTION_PLANS.map((plan) => {
-                  const isSelected = selectedPlan === plan.name;
-                  const isCurrent = currentPlan?.name === plan.name && access.isPlanActive;
+                {plansLoading ? (
+                  <div className="lg:col-span-3 flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading plans...
+                  </div>
+                ) : availablePlans.length ? (
+                  availablePlans.map((plan) => {
+                    const isSelected = normalizePlanCode(selectedPlan) === plan.code;
+                    const isCurrent = currentPlanCode === plan.code && access.isPlanActive;
 
-                  return (
-                    <button
-                      key={plan.name}
-                      type="button"
-                      className={`rounded-xl border p-5 text-left transition-colors ${
-                        isSelected ? "border-primary bg-primary/5" : "border-border bg-card"
-                      }`}
-                      onClick={() => setSelectedPlan(plan.name)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-lg font-semibold font-display text-foreground">{plan.label}</p>
-                          <p className="text-sm text-muted-foreground">{plan.description}</p>
+                    return (
+                      <button
+                        key={plan.code}
+                        type="button"
+                        className={`rounded-xl border p-5 text-left transition-colors ${
+                          isSelected ? "border-primary bg-primary/5" : "border-border bg-card"
+                        }`}
+                        onClick={() => setSelectedPlan(plan.code)}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-lg font-semibold font-display text-foreground">{plan.name}</p>
+                            {plan.description ? <p className="text-sm text-muted-foreground">{plan.description}</p> : null}
+                          </div>
+                          {isCurrent ? <Badge>Current</Badge> : null}
                         </div>
-                        {isCurrent ? <Badge>Current</Badge> : null}
-                      </div>
-                      <div className="mt-4">
-                        <p className="text-3xl font-bold text-foreground">{formatInr(plan.price)}</p>
-                        <p className="text-sm text-muted-foreground">per 30 days</p>
-                      </div>
-                      <p className="mt-3 text-sm font-medium text-foreground">{formatSeatLimit(plan.seatsLimit)}</p>
-                      <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
-                        {plan.features.map((feature) => (
-                          <li key={feature} className="flex items-center gap-2">
-                            <Check className="h-4 w-4 text-primary" />
-                            <span>{feature}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </button>
-                  );
-                })}
+                        <div className="mt-4">
+                          <p className="text-3xl font-bold text-foreground">{formatInr(plan.price)}</p>
+                          <p className="text-sm text-muted-foreground">per 30 days</p>
+                        </div>
+                        <p className="mt-3 text-sm font-medium text-foreground">{formatSeatLimit(plan.seats_limit)}</p>
+                        <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                          {plan.features.map((feature) => (
+                            <li key={feature} className="flex items-center gap-2">
+                              <Check className="h-4 w-4 text-primary" />
+                              <span>{feature}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="lg:col-span-3 rounded-xl border border-dashed border-border bg-secondary/30 p-6 text-sm text-muted-foreground">
+                    No active plans available yet. Ask a super admin to enable a plan in the Subscriptions panel.
+                  </div>
+                )}
               </div>
 
               <div className="mt-6 flex flex-col gap-3 rounded-xl border border-border bg-secondary/30 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-sm font-medium text-foreground">
-                    {selectedPlanConfig.label} plan
-                  </p>
+                  <p className="text-sm font-medium text-foreground">{selectedPlanConfig?.name ?? "Plan"}</p>
                   <p className="text-sm text-muted-foreground">
-                    {formatInr(selectedPlanConfig.price)} for the next {SUBSCRIPTION_BILLING_DAYS} days
+                    {quoteFetching || plansLoading ? (
+                      "Calculating total..."
+                    ) : quotePricing ? (
+                      <>
+                        {formatInr(quotePricing.total_amount)} for the next {SUBSCRIPTION_BILLING_DAYS} days
+                        {quotePricing.discount_amount > 0 ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            (saved {formatInr(quotePricing.discount_amount)}
+                            {quotePricing.discount_kind === "coupon" && quotePricing.coupon_code ? ` with ${quotePricing.coupon_code}` : ""})
+                          </span>
+                        ) : null}
+                      </>
+                    ) : (
+                      `${formatInr(selectedPlanConfig?.price ?? 0)} for the next ${SUBSCRIPTION_BILLING_DAYS} days`
+                    )}
                   </p>
+
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <div className="flex-1 space-y-1">
+                      <Label htmlFor="coupon" className="text-xs text-muted-foreground">
+                        Coupon
+                      </Label>
+                      <Input
+                        id="coupon"
+                        value={couponInput}
+                        placeholder="Enter coupon code"
+                        onChange={(e) => setCouponInput(e.target.value)}
+                        disabled={!libraryId || !selectedPlanConfig}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => applyCouponMutation.mutate(couponInput)}
+                        disabled={!couponInput.trim() || applyCouponMutation.isPending || !libraryId || !selectedPlanConfig}
+                      >
+                        {applyCouponMutation.isPending ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Applying...
+                          </>
+                        ) : (
+                          "Apply"
+                        )}
+                      </Button>
+                      {appliedCouponNormalized ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            setAppliedCoupon(null);
+                            setCouponInput("");
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
                 <Button
                   onClick={handleActivatePlan}
-                  disabled={checkoutLoading || !libraryId || !isOwner || access.reason === "account_disabled"}
+                  disabled={
+                    checkoutLoading ||
+                    !libraryId ||
+                    !isOwner ||
+                    access.reason === "account_disabled" ||
+                    plansLoading ||
+                    !selectedPlanConfig ||
+                    !planIsSelected
+                  }
                 >
                   {checkoutLoading ? (
                     <>

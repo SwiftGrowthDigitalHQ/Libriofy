@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { BookOpen, MapPin, Clock, Users, Check, ChevronRight, Loader2 } from "lucide-react";
+import { MapPin, Clock, Users, Check, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,10 +20,19 @@ import CTASection from "@/components/library-public/CTASection";
 import ContactSection from "@/components/library-public/ContactSection";
 import LibraryFooter from "@/components/library-public/LibraryFooter";
 import WhatsAppButton from "@/components/library-public/WhatsAppButton";
+import { resolveWebsiteTheme } from "@/lib/libraryWebsiteTheme";
 
 interface LibraryPublicPageProps {
   domainLibrary?: any;
 }
+
+type SlotAvailabilityRow = {
+  available_seats: number;
+  occupied_seats: number;
+  slot_id: string;
+  slot_name: string;
+  total_seats: number;
+};
 
 const normalizeWhatsAppNumber = (raw?: string | null): string => {
   const digits = (raw || "").replace(/\D/g, "");
@@ -33,7 +42,7 @@ const normalizeWhatsAppNumber = (raw?: string | null): string => {
 };
 
 const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
-  const { id } = useParams<{ id: string }>();
+  const { slug } = useParams<{ slug: string }>();
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
   const [formPhone, setFormPhone] = useState("");
@@ -72,15 +81,15 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
   };
 
   const { data: library, isLoading: libLoading } = useQuery({
-    queryKey: ["public-library", domainLibrary?.id || id],
+    queryKey: ["public-library", domainLibrary?.id || slug],
     queryFn: async () => {
       if (domainLibrary) return domainLibrary;
-      const { data, error } = await supabase.rpc("get_library_public", { p_identifier: id! });
+      const { data, error } = await supabase.rpc("get_library_public", { p_identifier: slug! });
       if (error) throw error;
       if (!data || (data as any[]).length === 0) return null;
       return (data as any[])[0];
     },
-    enabled: !!domainLibrary || !!id,
+    enabled: !!domainLibrary || !!slug,
     initialData: domainLibrary || undefined,
   });
 
@@ -152,16 +161,20 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     queryFn: async () => {
       const { data, error } = await supabase.rpc("get_slot_availability", { p_library_id: libraryId! });
       if (error) throw error;
-      return data as { slot_name: string; available_seats: number }[];
+      return (data ?? []) as SlotAvailabilityRow[];
     },
     enabled: !!libraryId,
     refetchInterval: 30000,
   });
 
   const availabilityMap = slotAvailability.reduce((acc, s) => {
-    acc[s.slot_name] = s.available_seats;
+    acc[s.slot_id] = {
+      availableSeats: s.available_seats,
+      occupiedSeats: s.occupied_seats,
+      totalSeats: s.total_seats,
+    };
     return acc;
-  }, {} as Record<string, number>);
+  }, {} as Record<string, { availableSeats: number; occupiedSeats: number; totalSeats: number }>);
 
   // Demo fallback
   const demoLibrary = {
@@ -189,7 +202,12 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     { id: "s3", name: "Afternoon", start_time: "14:00", end_time: "18:00", max_seats: 40 },
     { id: "s4", name: "Evening", start_time: "18:00", end_time: "22:00", max_seats: 40 },
   ];
-  const demoAvailability: Record<string, number> = { Morning: 37, Forenoon: 33, Afternoon: 8, Evening: 3 };
+  const demoAvailability: Record<string, { availableSeats: number; occupiedSeats: number; totalSeats: number }> = {
+    s1: { availableSeats: 37, occupiedSeats: 3, totalSeats: 40 },
+    s2: { availableSeats: 33, occupiedSeats: 7, totalSeats: 40 },
+    s3: { availableSeats: 8, occupiedSeats: 32, totalSeats: 40 },
+    s4: { availableSeats: 3, occupiedSeats: 37, totalSeats: 40 },
+  };
   const demoGalleryImages = [
     { src: "https://images.unsplash.com/photo-1481627834876-b7833e8f5570?auto=format&fit=crop&w=1200&q=80", alt: "Library desks" },
     { src: "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?auto=format&fit=crop&w=1200&q=80", alt: "Reading hall" },
@@ -201,7 +219,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     { name: "Sneha Patel", text: "Comfortable seating and convenient location.", rating: 5 },
   ];
 
-  const isDemo = !library && id === "demo";
+  const isDemo = !library && slug === "demo";
   const displayLibrary = library || demoLibrary;
   const displayPlans = plans.length > 0 ? plans : (isDemo ? demoPlans : []);
   const displaySlots = slots.length > 0 ? slots : (isDemo ? demoSlots : []);
@@ -214,22 +232,16 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     publishedReviews.length > 0
       ? publishedReviews.map((review) => ({ name: review.reviewer_name, text: review.review_text, rating: review.rating }))
       : (isDemo ? demoTestimonials : []);
-  const brandColor = displayLibrary?.primary_color || "#14b8a6";
-  const heroTitle = displayLibrary.hero_title || displayLibrary.name;
-  const heroSubtitle = displayLibrary.hero_subtitle || "Premium Study Space for Focused Learning";
+  const websiteTheme = resolveWebsiteTheme(displayLibrary);
+  const brandColor = websiteTheme.brandColor;
+  const heroTitle = websiteTheme.heroTitle;
+  const heroSubtitle = websiteTheme.heroSubtitle;
   const aboutText = displayLibrary.about_text || "";
-  const ctaTitle = displayLibrary.cta_title || "Book Your Seat Today";
-  const ctaSubtitle = displayLibrary.cta_subtitle || "Join hundreds of focused students. Limited seats available - reserve yours now.";
+  const ctaTitle = websiteTheme.ctaTitle;
+  const ctaSubtitle = websiteTheme.ctaSubtitle;
   const whatsappNumber = normalizeWhatsAppNumber(displayLibrary.whatsapp_number || displayLibrary.phone);
-  const heroBackgroundStyle = displayLibrary.hero_background_url
-    ? {
-        backgroundImage: `linear-gradient(135deg, ${brandColor}d9, ${brandColor}b3, ${brandColor}bf), url(${displayLibrary.hero_background_url})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-      }
-    : {
-        background: `linear-gradient(135deg, ${brandColor}, ${brandColor}bb, ${brandColor}dd)`,
-      };
+  const heroBackgroundStyle = websiteTheme.heroBackgroundStyle;
+  const sectionHeadingStyle = { color: websiteTheme.sectionHeadingColor };
   const popularIndex = displayPlans.length >= 3 ? 1 : displayPlans.length - 1;
 
   const planFeatures = ["High Speed WiFi", "Power Backup", "Silent Zone", "CCTV Security"];
@@ -278,13 +290,11 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
             {displayLibrary.logo_url ? (
               <img src={displayLibrary.logo_url} alt={displayLibrary.name} className="w-16 h-16 rounded-2xl mx-auto mb-6 object-cover shadow-lg" />
-            ) : (
-              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 bg-primary-foreground/20 backdrop-blur-sm">
-                <BookOpen className="w-8 h-8" />
-              </div>
-            )}
-            <h1 className="text-4xl sm:text-6xl font-bold font-display mb-4">{heroTitle}</h1>
-            <p className="text-lg sm:text-xl text-primary-foreground/80 mb-6 max-w-lg mx-auto">
+            ) : null}
+            <h1 className="text-4xl sm:text-6xl font-bold font-display mb-4" style={{ color: websiteTheme.heroTitleColor }}>
+              {heroTitle}
+            </h1>
+            <p className="text-lg sm:text-xl mb-6 max-w-lg mx-auto" style={{ color: websiteTheme.heroSubtitleColor }}>
               {heroSubtitle}
             </p>
             <div className="flex items-center justify-center gap-4 text-primary-foreground/70 text-sm flex-wrap mb-8">
@@ -322,12 +332,13 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       {displaySlots.length > 0 && (
         <section className="py-16">
           <div className="container mx-auto px-4 max-w-5xl">
-            <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">Live Seat Availability</h2>
+            <h2 className="text-2xl sm:text-3xl font-bold font-display text-center mb-2" style={sectionHeadingStyle}>Live Seat Availability</h2>
             <p className="text-muted-foreground text-center mb-8">Real-time updates every 30 seconds</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {displaySlots.map((slot) => {
-                const max = slot.max_seats ?? displayLibrary.total_seats;
-                const available = displayAvailability[slot.name] ?? max;
+                const slotAvailabilityEntry = displayAvailability[slot.id];
+                const max = slotAvailabilityEntry?.totalSeats ?? slot.max_seats ?? displayLibrary.total_seats;
+                const available = slotAvailabilityEntry?.availableSeats ?? max;
                 const pct = max > 0 ? available / max : 1;
                 const colorClass = pct <= 0.1 ? "text-destructive" : pct <= 0.3 ? "text-accent" : "text-success";
                 const borderClass = pct <= 0.1 ? "border-destructive/30" : pct <= 0.3 ? "border-accent/30" : "border-border";
@@ -361,7 +372,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       {displayPlans.length > 0 && (
         <section className="py-16 bg-secondary/30" id="plans">
           <div className="container mx-auto px-4 max-w-5xl">
-            <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">Choose Your Plan</h2>
+            <h2 className="text-2xl sm:text-3xl font-bold font-display text-center mb-2" style={sectionHeadingStyle}>Choose Your Plan</h2>
             <p className="text-muted-foreground text-center mb-10">Flexible plans to suit your study schedule</p>
             <div className={`grid grid-cols-1 sm:grid-cols-${Math.min(displayPlans.length, 3)} gap-6`}>
               {displayPlans.map((plan, i) => {
@@ -403,23 +414,34 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       )}
 
       {/* Facilities */}
-      <FacilitiesSection />
+      <FacilitiesSection headingColor={websiteTheme.sectionHeadingColor} />
 
       {/* Gallery */}
-      <GallerySection images={galleryForSections} />
+      <GallerySection images={galleryForSections} headingColor={websiteTheme.sectionHeadingColor} />
 
       {/* About */}
-      <AboutSection libraryName={displayLibrary.name} aboutText={aboutText} />
+      <AboutSection libraryName={displayLibrary.name} aboutText={aboutText} headingColor={websiteTheme.sectionHeadingColor} />
 
       {/* Testimonials */}
-      <TestimonialsSection testimonials={testimonialsForSection} />
+      <TestimonialsSection testimonials={testimonialsForSection} headingColor={websiteTheme.sectionHeadingColor} />
 
       {/* CTA */}
-      <CTASection brandColor={brandColor} onBookSeat={scrollToForm} title={ctaTitle} subtitle={ctaSubtitle} />
+      <CTASection
+        brandColor={brandColor}
+        onBookSeat={scrollToForm}
+        title={ctaTitle}
+        subtitle={ctaSubtitle}
+        backgroundStyle={websiteTheme.ctaBackgroundStyle}
+        backgroundType={websiteTheme.ctaBackgroundType}
+        titleColor={websiteTheme.ctaTitleColor}
+        subtitleColor={websiteTheme.ctaSubtitleColor}
+        buttonColor={websiteTheme.ctaButtonColor}
+        buttonTextColor={websiteTheme.ctaButtonTextColor}
+      />
 
       {/* Contact */}
       <div id="contact">
-        <ContactSection library={displayLibrary} />
+        <ContactSection library={displayLibrary} headingColor={websiteTheme.sectionHeadingColor} />
       </div>
 
       {/* Admission Form */}

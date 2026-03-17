@@ -19,7 +19,7 @@ import { Link } from "react-router-dom";
 const SuperAdminLibraries = () => {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
-  const [newLib, setNewLib] = useState({ name: "", address: "", city: "" });
+  const [newLib, setNewLib] = useState({ name: "", address: "", city: "", district: "", state: "", country: "India" });
   const [dialogOpen, setDialogOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -72,12 +72,21 @@ const SuperAdminLibraries = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
       const slug = newLib.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const { error } = await supabase.from("libraries").insert({ name: newLib.name, address: newLib.address, city: newLib.city, owner_id: user.id, slug });
+      const { error } = await supabase.from("libraries").insert({
+        name: newLib.name,
+        address: newLib.address,
+        city: newLib.city,
+        district: newLib.district.trim() || null,
+        state: newLib.state.trim() || null,
+        country: newLib.country.trim() || "India",
+        owner_id: user.id,
+        slug,
+      });
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-libraries"] });
-      setNewLib({ name: "", address: "", city: "" });
+      setNewLib({ name: "", address: "", city: "", district: "", state: "", country: "India" });
       setDialogOpen(false);
       toast({ title: "Library created" });
     },
@@ -124,6 +133,20 @@ const SuperAdminLibraries = () => {
                 <div className="space-y-2">
                   <Label>City</Label>
                   <Input value={newLib.city} onChange={(e) => setNewLib({ ...newLib, city: e.target.value })} placeholder="Mumbai" />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>District</Label>
+                    <Input value={newLib.district} onChange={(e) => setNewLib({ ...newLib, district: e.target.value })} placeholder="e.g. Mumbai Suburban" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>State</Label>
+                    <Input value={newLib.state} onChange={(e) => setNewLib({ ...newLib, state: e.target.value })} placeholder="e.g. Maharashtra" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Country</Label>
+                  <Input value={newLib.country} onChange={(e) => setNewLib({ ...newLib, country: e.target.value })} placeholder="India" />
                 </div>
                 <Button onClick={() => createMutation.mutate()} disabled={!newLib.name || createMutation.isPending} className="w-full">
                   {createMutation.isPending ? "Creating..." : "Create Library"}

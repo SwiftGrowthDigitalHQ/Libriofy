@@ -12,7 +12,9 @@ export const useDomainLibrary = () => {
   // Skip resolution for known app domains
   const isAppDomain =
     hostname === "localhost" ||
+    hostname === "partner.localhost" ||
     hostname === "libriofy.com" ||
+    hostname === "partner.libriofy.com" ||
     hostname === "www.libriofy.com";
 
   return useQuery({

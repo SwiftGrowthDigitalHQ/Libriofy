@@ -17,13 +17,17 @@ import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid, Globe, 
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { syncLockerCapacity } from "@/api/lockers";
+import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
+import { resolveSubscriptionLockerLimit, type LibrarySubscriptionRecord } from "@/lib/subscription";
 import WebsiteCustomizationTab from "@/components/dashboard/WebsiteCustomizationTab";
 
 type LibraryRow = Database["public"]["Tables"]["libraries"]["Row"];
 type LibraryUpdatePayload = Pick<
   Database["public"]["Tables"]["libraries"]["Update"],
-  "name" | "address" | "city" | "logo_url" | "opening_hours" | "primary_color" | "total_seats" | "upi_id"
+  "name" | "address" | "city" | "district" | "state" | "country" | "logo_url" | "opening_hours" | "primary_color" | "total_lockers" | "total_seats" | "upi_id"
 >;
+type LockerInventoryRow = Pick<Database["public"]["Tables"]["lockers"]["Row"], "id" | "locker_number" | "student_id">;
 
 const SettingsPage = () => {
   const { toast } = useToast();
@@ -47,6 +51,7 @@ const SettingsPage = () => {
   });
 
   const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
+  const { data: subscription, isLoading: subscriptionLoading } = useLibrarySubscription(resolvedLibraryId);
 
   const { data: activeLibrary } = useQuery({
     queryKey: ["settings-library", resolvedLibraryId],
@@ -71,6 +76,9 @@ const SettingsPage = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings-library", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["locker-capacity-inventory", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["lockers", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-overview", resolvedLibraryId] });
       queryClient.invalidateQueries({ queryKey: ["my-libraries"] });
       toast({ title: "Library updated" });
     },
@@ -120,7 +128,13 @@ const SettingsPage = () => {
 
           {/* Seats Tab */}
           <TabsContent value="seats">
-            <SeatsTab library={activeLibrary} onUpdate={(u) => updateLibMutation.mutate(u)} isPending={updateLibMutation.isPending} />
+            <SeatsTab
+              library={activeLibrary}
+              subscription={subscription}
+              subscriptionLoading={subscriptionLoading}
+              onUpdate={(u) => updateLibMutation.mutate(u)}
+              isPending={updateLibMutation.isPending}
+            />
           </TabsContent>
         </Tabs>
       </div>
@@ -140,6 +154,9 @@ const LibrarySettingsTab = ({
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
+  const [district, setDistrict] = useState("");
+  const [stateName, setStateName] = useState("");
+  const [country, setCountry] = useState("India");
   const [logoUrl, setLogoUrl] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#14b8a6");
   const [openingHours, setOpeningHours] = useState("");
@@ -150,6 +167,9 @@ const LibrarySettingsTab = ({
     setName(library.name || "");
     setAddress(library.address || "");
     setCity(library.city || "");
+    setDistrict(library.district || "");
+    setStateName(library.state || "");
+    setCountry(library.country || "India");
     setLogoUrl(library.logo_url || "");
     setPrimaryColor(library.primary_color || "#14b8a6");
     setOpeningHours(library.opening_hours || "");
@@ -186,6 +206,21 @@ const LibrarySettingsTab = ({
             <Label>City</Label>
             <Input value={city} onChange={(e) => setCity(e.target.value)} />
           </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>District</Label>
+              <Input value={district} onChange={(e) => setDistrict(e.target.value)} placeholder="e.g. Varanasi" />
+            </div>
+            <div className="space-y-2">
+              <Label>State</Label>
+              <Input value={stateName} onChange={(e) => setStateName(e.target.value)} placeholder="e.g. Uttar Pradesh" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Country</Label>
+            <Input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="India" />
+            <p className="text-xs text-muted-foreground">Used for Growth Intelligence heatmaps and expansion analytics.</p>
+          </div>
           <div className="space-y-2">
             <Label>Opening Hours</Label>
             <Input placeholder="e.g. 6:00 AM - 10:00 PM" value={openingHours} onChange={(e) => setOpeningHours(e.target.value)} />
@@ -201,7 +236,22 @@ const LibrarySettingsTab = ({
               <Input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="w-32" />
             </div>
           </div>
-          <Button onClick={() => onUpdate({ name, address, city, logo_url: logoUrl, primary_color: primaryColor, opening_hours: openingHours })} disabled={isPending}>
+          <Button
+            onClick={() =>
+              onUpdate({
+                name,
+                address,
+                city,
+                district: district.trim() || null,
+                state: stateName.trim() || null,
+                country: country.trim() || "India",
+                logo_url: logoUrl,
+                primary_color: primaryColor,
+                opening_hours: openingHours,
+              })
+            }
+            disabled={isPending}
+          >
             {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </CardContent>
@@ -704,37 +754,251 @@ const TimeSlotsTab = ({ libraryId }: { libraryId?: string }) => {
   );
 };
 
-const SeatsTab = ({ library, onUpdate, isPending }: { library: any; onUpdate: (u: any) => void; isPending: boolean }) => {
+const parseCapacityInput = (value: string) => Number.parseInt(value, 10);
+
+const parseLockerIndex = (lockerNumber: string | null | undefined) => {
+  const match = String(lockerNumber ?? "").match(/\d+/);
+  return match ? Number.parseInt(match[0], 10) : 0;
+};
+
+const SeatsTab = ({
+  library,
+  subscription,
+  subscriptionLoading,
+  onUpdate,
+  isPending,
+}: {
+  library: LibraryRow | null | undefined;
+  subscription: LibrarySubscriptionRecord | null | undefined;
+  subscriptionLoading: boolean;
+  onUpdate: (updates: LibraryUpdatePayload) => void;
+  isPending: boolean;
+}) => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [seats, setSeats] = useState("");
+  const [lockers, setLockers] = useState("");
+
+  const { data: lockerInventory = [], isLoading: lockerInventoryLoading, error: lockerInventoryError } = useQuery({
+    queryKey: ["locker-capacity-inventory", library?.id],
+    queryFn: async (): Promise<LockerInventoryRow[]> => {
+      if (!library?.id) return [];
+      const { data, error } = await supabase
+        .from("lockers")
+        .select("id, locker_number, student_id")
+        .eq("library_id", library.id);
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!library?.id,
+    staleTime: 30_000,
+  });
+  const currentLockerCount = lockerInventory.length;
+  const hasConfiguredLockerCapacity = typeof library?.total_lockers === "number";
+  const configuredLockerCapacity = hasConfiguredLockerCapacity ? Math.max(Number(library.total_lockers), 0) : 0;
+  const effectiveLockerCapacity = Math.max(configuredLockerCapacity, currentLockerCount);
+  const lockerPlanLimit = resolveSubscriptionLockerLimit(subscription);
+  const remainingLockers = lockerPlanLimit == null ? null : Math.max(lockerPlanLimit - effectiveLockerCapacity, 0);
+  const nextLockerCapacity = parseCapacityInput(lockers);
+  const lockedRemovalCount =
+    Number.isFinite(nextLockerCapacity) && nextLockerCapacity < currentLockerCount
+      ? lockerInventory.filter((locker) => locker.student_id && parseLockerIndex(locker.locker_number) > nextLockerCapacity).length
+      : 0;
+
+  useEffect(() => {
+    setSeats(String(library?.total_seats ?? 0));
+  }, [library?.id, library?.total_seats]);
+
+  useEffect(() => {
+    setLockers(String(effectiveLockerCapacity));
+  }, [effectiveLockerCapacity, library?.id]);
+
+  const lockerCapacityMutation = useMutation({
+    mutationFn: async (nextCapacity: number) => {
+      if (!library) throw new Error("No library selected.");
+      return syncLockerCapacity({
+        libraryId: library.id,
+        targetCapacity: nextCapacity,
+        existingLockers: lockerInventory,
+      });
+    },
+    onSuccess: async (syncedInventory, nextCapacity) => {
+      if (library?.id) {
+        queryClient.setQueryData(["locker-capacity-inventory", library.id], syncedInventory);
+        queryClient.setQueryData(["settings-library", library.id], (current: LibraryRow | null | undefined) =>
+          current ? { ...current, total_lockers: nextCapacity } : current,
+        );
+      }
+
+      setLockers(String(nextCapacity));
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["locker-capacity-inventory", library?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["lockers", library?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard-overview", library?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["settings-library", library?.id] }),
+      ]);
+      toast({ title: "Locker capacity updated" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Unable to update locker capacity",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSeatUpdate = () => {
+    if (!library) return;
+    const nextSeats = parseCapacityInput(seats);
+    if (!Number.isFinite(nextSeats) || nextSeats < 0) {
+      toast({
+        title: "Invalid seat capacity",
+        description: "Enter a valid whole number of seats.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (nextSeats === library.total_seats) {
+      toast({ title: "Seat capacity is already up to date." });
+      return;
+    }
+
+    onUpdate({ total_seats: nextSeats });
+  };
+
+  const handleLockerUpdate = () => {
+    if (!library) return;
+    const planLimitMessage = lockerPlanLimit
+      ? `Your current plan allows only ${lockerPlanLimit} lockers. Upgrade your plan to add more.`
+      : null;
+
+    if (!Number.isFinite(nextLockerCapacity) || nextLockerCapacity < 0) {
+      toast({
+        title: "Invalid locker capacity",
+        description: "Enter a valid whole number of lockers.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (
+      nextLockerCapacity === currentLockerCount &&
+      (!hasConfiguredLockerCapacity || nextLockerCapacity === configuredLockerCapacity)
+    ) {
+      toast({ title: "Locker capacity is already up to date." });
+      return;
+    }
+
+    if (lockerPlanLimit != null && nextLockerCapacity > lockerPlanLimit) {
+      toast({
+        title: "Plan limit reached",
+        description: planLimitMessage ?? undefined,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (lockerInventoryError) {
+      toast({
+        title: "Unable to verify locker usage",
+        description: "Refresh the page and try again so we can confirm which lockers are safe to remove.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (nextLockerCapacity < currentLockerCount && lockedRemovalCount > 0) {
+      toast({
+        title: "Cannot reduce locker capacity",
+        description: `Release or reassign the ${lockedRemovalCount} assigned locker${lockedRemovalCount === 1 ? "" : "s"} in the removal range before lowering capacity.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    lockerCapacityMutation.mutate(nextLockerCapacity);
+  };
 
   if (!library) {
     return <Card><CardContent className="py-12 text-center text-muted-foreground">No library selected.</CardContent></Card>;
   }
 
-  if (!seats && library.total_seats) {
-    setSeats(String(library.total_seats));
-  }
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg font-display">Seat Capacity</CardTitle>
-        <CardDescription>Set the total number of seats in your library</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4 max-w-sm">
-        <div className="p-4 bg-secondary rounded-lg">
-          <p className="text-sm text-muted-foreground">Current capacity</p>
-          <p className="text-3xl font-bold font-display text-foreground">{library.total_seats} seats</p>
-        </div>
-        <div className="space-y-2">
-          <Label>New Capacity</Label>
-          <Input type="number" value={seats} onChange={(e) => setSeats(e.target.value)} placeholder="40" />
-        </div>
-        <Button onClick={() => onUpdate({ total_seats: parseInt(seats) })} disabled={isPending || !seats}>
-          {isPending ? "Saving..." : "Update Capacity"}
-        </Button>
-      </CardContent>
-    </Card>
+    <div className="grid gap-6 xl:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-display">Seat Capacity</CardTitle>
+          <CardDescription>Set the total number of seats in your library.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="p-4 bg-secondary rounded-lg">
+            <p className="text-sm text-muted-foreground">Current capacity</p>
+            <p className="text-3xl font-bold font-display text-foreground">{library.total_seats} seats</p>
+          </div>
+          <div className="space-y-2 max-w-sm">
+            <Label>New Capacity</Label>
+            <Input type="number" min={0} value={seats} onChange={(event) => setSeats(event.target.value)} placeholder="40" />
+          </div>
+          <Button onClick={handleSeatUpdate} disabled={isPending || !seats}>
+            {isPending ? "Saving..." : "Update Seat Capacity"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-display">Locker Capacity</CardTitle>
+          <CardDescription>Increase capacity to generate new lockers automatically. Decrease only when the lockers being removed are unused.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="p-4 bg-secondary rounded-lg">
+              <p className="text-sm text-muted-foreground">Current Lockers</p>
+              <p className="text-2xl font-bold font-display text-foreground">{currentLockerCount}</p>
+            </div>
+            <div className="p-4 bg-secondary rounded-lg">
+              <p className="text-sm text-muted-foreground">Plan Limit</p>
+              <p className="text-2xl font-bold font-display text-foreground">
+                {subscriptionLoading ? "..." : lockerPlanLimit == null ? "Unlimited" : lockerPlanLimit}
+              </p>
+            </div>
+            <div className="p-4 bg-secondary rounded-lg">
+              <p className="text-sm text-muted-foreground">Remaining</p>
+              <p className="text-2xl font-bold font-display text-foreground">
+                {subscriptionLoading ? "..." : remainingLockers == null ? "Unlimited" : remainingLockers}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 max-w-sm">
+            <Label>New Capacity</Label>
+            <Input type="number" min={0} value={lockers} onChange={(event) => setLockers(event.target.value)} placeholder="20" />
+          </div>
+
+          {lockerInventoryError ? (
+            <p className="text-sm text-destructive">
+              Unable to load locker usage right now. Refresh before changing capacity.
+            </p>
+          ) : null}
+
+          {lockedRemovalCount > 0 ? (
+            <p className="text-sm text-amber-700">
+              {lockedRemovalCount} assigned locker{lockedRemovalCount === 1 ? "" : "s"} would be removed by this change. Release or reassign them first.
+            </p>
+          ) : null}
+
+          <Button
+            onClick={handleLockerUpdate}
+            disabled={isPending || lockerCapacityMutation.isPending || subscriptionLoading || lockerInventoryLoading || !lockers}
+          >
+            {lockerCapacityMutation.isPending ? "Saving..." : "Update Locker Capacity"}
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 };
 

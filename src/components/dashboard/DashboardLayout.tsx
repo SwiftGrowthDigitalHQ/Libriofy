@@ -1,17 +1,22 @@
 import { ReactNode, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { 
-  BookOpen, LayoutDashboard, LayoutGrid, Users, 
+  Archive, BookOpen, LayoutDashboard, LayoutGrid, Users, 
   CreditCard, CalendarClock, BarChart3, Settings, 
   ChevronLeft, Bell, Globe, LogOut, ScanLine, QrCode, RefreshCw, ListOrdered, Shield, HelpCircle
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useIsSuperAdmin } from "@/hooks/useUserRole";
 import { evaluateSubscriptionAccess, useLibrarySubscription } from "@/hooks/useLibrarySubscription";
+import NotificationBell from "@/components/notifications/NotificationBell";
 
-const libraryNavItems = [
+const baseLibraryNavItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { icon: LayoutGrid, label: "Seat Map", path: "/dashboard/seats" },
+  { icon: Archive, label: "Locker Map", path: "/dashboard/lockers" },
   { icon: Users, label: "Students", path: "/dashboard/students" },
   { icon: ScanLine, label: "Attendance", path: "/dashboard/attendance" },
   { icon: QrCode, label: "QR Passes", path: "/dashboard/qr-codes" },
@@ -21,19 +26,51 @@ const libraryNavItems = [
   { icon: CreditCard, label: "Payments", path: "/dashboard/payments" },
   { icon: CalendarClock, label: "Plans & Slots", path: "/dashboard/plans" },
   { icon: BarChart3, label: "Analytics", path: "/dashboard/analytics" },
+  { icon: Bell, label: "Notifications", path: "/dashboard/notifications" },
   { icon: HelpCircle, label: "Support", path: "/dashboard/support" },
-  { icon: Globe, label: "Public Page", path: "/library/demo" },
-  { icon: Settings, label: "Settings", path: "/dashboard/settings" },
 ];
+
+const settingsNavItem = { icon: Settings, label: "Settings", path: "/dashboard/settings" };
 
 const DashboardLayout = ({ children }: { children: ReactNode }) => {
   const [collapsed, setCollapsed] = useState(false);
   const { user, signOut } = useAuth();
+  const { libraryId } = useCurrentLibraryId();
   const { isSuperAdmin } = useIsSuperAdmin();
   const { data: subscription } = useLibrarySubscription();
   const navigate = useNavigate();
   const location = useLocation();
   const access = evaluateSubscriptionAccess(subscription);
+  const { data: currentLibrary } = useQuery({
+    queryKey: ["dashboard-public-library", libraryId],
+    queryFn: async (): Promise<{ slug: string | null } | null> => {
+      if (!libraryId) return null;
+
+      const { data, error } = await supabase
+        .from("libraries")
+        .select("slug")
+        .eq("id", libraryId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!libraryId,
+    staleTime: 60_000,
+  });
+  const publicPagePath = currentLibrary?.slug ? `/library/${currentLibrary.slug}` : null;
+  const libraryNavItems = [
+    ...baseLibraryNavItems,
+    {
+      icon: Globe,
+      label: "Public Page",
+      path: publicPagePath ?? "",
+      disabled: !publicPagePath,
+      target: "_blank",
+      rel: "noreferrer",
+    },
+    settingsNavItem,
+  ];
   const navItems = access.isAllowed
     ? libraryNavItems
     : libraryNavItems.filter((item) => item.path === "/dashboard/billing");
@@ -56,11 +93,28 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
 
         <nav className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
           {navItems.map((item) => {
-            const active = location.pathname === item.path;
+            const active = !item.target && location.pathname === item.path;
+
+            if (item.disabled) {
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  disabled
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-sidebar-foreground/40"
+                >
+                  <item.icon className="w-4 h-4 flex-shrink-0" />
+                  {!collapsed && <span>{item.label}</span>}
+                </button>
+              );
+            }
+
             return (
               <Link
                 key={item.path}
                 to={item.path}
+                target={item.target}
+                rel={item.rel}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                   active
                     ? "bg-sidebar-accent text-sidebar-primary font-medium"
@@ -115,10 +169,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
             <h1 className="text-lg font-semibold font-display text-foreground">Library Dashboard</h1>
           </div>
           <div className="flex items-center gap-3">
-            <button className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors relative">
-              <Bell className="w-4 h-4" />
-              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-accent border-2 border-card" />
-            </button>
+            <NotificationBell notificationsPath="/dashboard/notifications" />
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary">
               LA
             </div>

@@ -4,6 +4,7 @@ import { differenceInDays, format, parseISO } from "date-fns";
 import { CalendarClock, AlertTriangle, CheckCircle, RefreshCw, Search, Bell, Copy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { runRenewalReminderScan, type RenewalReminderScanResponse } from "@/api/renewals";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import StatsCard from "@/components/dashboard/StatsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,14 +24,24 @@ type StudentRenewalRow = Pick<
   "id" | "full_name" | "plan" | "seat_number" | "status" | "expiry_date" | "phone" | "qr_code"
 >;
 
-type RenewalNotificationRow = Pick<
-  Database["public"]["Tables"]["notifications"]["Row"],
-  "id" | "type" | "title" | "message" | "created_at" | "channel" | "delivery_status" | "recipient_phone" | "sent_at" | "provider_error"
-> & {
-  students: Pick<Database["public"]["Tables"]["students"]["Row"], "full_name" | "phone" | "seat_number"> | null;
+type ReminderLogRow = {
+  created_at: string;
+  delivery_channel: string | null;
+  error_message: string | null;
+  id: string;
+  message: string;
+  phone: string | null;
+  reminder_type: string;
+  sent_at: string | null;
+  status: string;
+  student_id: string | null;
 };
 
-const REMINDER_NOTIFICATION_TYPES = ["renewal_2day", "renewal_1day", "renewal_due_today"] as const;
+type ReminderLogWithStudent = ReminderLogRow & {
+  student: Pick<Database["public"]["Tables"]["students"]["Row"], "full_name" | "phone" | "seat_number"> | null;
+};
+
+const REMINDER_LOG_TYPES = ["renewal_7day", "renewal_1day", "renewal_due_today", "subscription_reminder_3day"] as const;
 
 type StudentWithDerived = StudentRenewalRow & {
   daysToExpiry: number | null;
@@ -94,27 +105,45 @@ const RenewalsPage = () => {
   });
 
   const {
-    data: notifications = [],
-    isLoading: notificationsLoading,
-    isError: notificationsError,
-    error: notificationsQueryError,
+    data: reminderLogs = [],
+    isLoading: reminderLogsLoading,
+    isError: reminderLogsError,
+    error: reminderLogsQueryError,
   } = useQuery({
-    queryKey: ["renewal-notifications", resolvedLibraryId],
-    queryFn: async (): Promise<RenewalNotificationRow[]> => {
+    queryKey: ["renewal-reminder-logs", resolvedLibraryId],
+    queryFn: async (): Promise<ReminderLogRow[]> => {
       if (!resolvedLibraryId) return [];
       const { data, error } = await supabase
-        .from("notifications")
-        .select("id, type, title, message, created_at, channel, delivery_status, recipient_phone, sent_at, provider_error, students:student_id(full_name, phone, seat_number)")
+        .from("reminder_logs" as any)
+        .select("id, created_at, reminder_type, phone, message, status, sent_at, delivery_channel, error_message, student_id")
         .eq("library_id", resolvedLibraryId)
-        .in("type", [...REMINDER_NOTIFICATION_TYPES])
+        .in("reminder_type", [...REMINDER_LOG_TYPES])
         .order("created_at", { ascending: false })
         .limit(25);
       if (error) throw error;
-      return (data ?? []) as RenewalNotificationRow[];
+      return (data ?? []) as ReminderLogRow[];
     },
     enabled: !!resolvedLibraryId,
     refetchInterval: 15000,
   });
+
+  const reminderLogsWithStudents = useMemo((): ReminderLogWithStudent[] => {
+    const studentMap = new Map(
+      students.map((student) => [
+        student.id,
+        {
+          full_name: student.full_name,
+          phone: student.phone,
+          seat_number: student.seat_number,
+        },
+      ]),
+    );
+
+    return reminderLogs.map((log) => ({
+      ...log,
+      student: log.student_id ? studentMap.get(log.student_id) ?? null : null,
+    }));
+  }, [reminderLogs, students]);
 
   const renewMutation = useMutation({
     mutationFn: async () => {
@@ -134,7 +163,7 @@ const RenewalsPage = () => {
         setMonths("1");
         setAmount("");
         queryClient.invalidateQueries({ queryKey: ["students-renewals", resolvedLibraryId] });
-        queryClient.invalidateQueries({ queryKey: ["renewal-notifications", resolvedLibraryId] });
+        queryClient.invalidateQueries({ queryKey: ["renewal-reminder-logs", resolvedLibraryId] });
       } else {
         toast({ title: "Unable to renew", description: result?.error || "Unknown error", variant: "destructive" });
       }
@@ -146,32 +175,43 @@ const RenewalsPage = () => {
 
   const scanRenewalsMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke<{
-        results?: {
-          reminders?: {
-            failed?: number;
-            processed?: number;
-            sent?: number;
-            skipped?: number;
-          };
-        };
-        success?: boolean;
-      }>("process-renewals");
-      if (error) throw error;
-      return data;
+      if (!resolvedLibraryId) throw new Error("No library selected.");
+      return runRenewalReminderScan(resolvedLibraryId);
     },
-    onSuccess: (result) => {
-      const reminderSummary = result?.results?.reminders;
+    onSuccess: (result: RenewalReminderScanResponse | null) => {
+      const reminderSummary = result?.results?.reminderDelivery;
+      const scanSummary = result?.results?.renewalScan as
+        | {
+            expired_students?: number;
+            library_owner_reminders_3day?: number;
+            student_reminders_1day?: number;
+            student_reminders_7day?: number;
+            student_reminders_due_today?: number;
+          }
+        | null
+        | undefined;
       if (reminderSummary) {
         toast({
           title: "Renewal scan completed",
-          description: `${reminderSummary.sent ?? 0} sent, ${reminderSummary.failed ?? 0} failed, ${reminderSummary.skipped ?? 0} skipped`,
+          description:
+            `${reminderSummary.sent ?? 0} sent, ${reminderSummary.failed ?? 0} failed, ${reminderSummary.skipped ?? 0} skipped` +
+            (scanSummary
+              ? `, ${(
+                Number(scanSummary.student_reminders_7day ?? 0) +
+                Number(scanSummary.student_reminders_1day ?? 0) +
+                Number(scanSummary.student_reminders_due_today ?? 0) +
+                Number(scanSummary.library_owner_reminders_3day ?? 0)
+              )} queued`
+              : ""),
         });
       } else {
         toast({ title: "Renewal scan completed" });
       }
       queryClient.invalidateQueries({ queryKey: ["students-renewals", resolvedLibraryId] });
-      queryClient.invalidateQueries({ queryKey: ["renewal-notifications", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["renewal-reminder-logs", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["library-notifications", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-overview", resolvedLibraryId] });
     },
     onError: (error: Error) => {
       toast({ title: "Scan failed", description: error.message, variant: "destructive" });
@@ -210,9 +250,9 @@ const RenewalsPage = () => {
   const dueTodayCount = studentsWithState.filter((student) => student.daysToExpiry === 0 && !student.isExpired).length;
   const expiredCount = studentsWithState.filter((student) => student.isExpired).length;
   const todayIso = new Date().toISOString().slice(0, 10);
-  const remindersSentToday = notifications.filter((notification) => notification.sent_at?.startsWith(todayIso)).length;
-  const remindersPending = notifications.filter((notification) => notification.delivery_status === "queued").length;
-  const remindersFailed = notifications.filter((notification) => notification.delivery_status === "failed").length;
+  const remindersSentToday = reminderLogs.filter((log) => log.sent_at?.startsWith(todayIso)).length;
+  const remindersPending = reminderLogs.filter((log) => log.status === "queued").length;
+  const remindersFailed = reminderLogs.filter((log) => log.status === "failed").length;
 
   const getExpiryBadge = (student: StudentWithDerived) => {
     if (student.isExpired) return <Badge variant="destructive">Expired</Badge>;
@@ -225,22 +265,24 @@ const RenewalsPage = () => {
   };
 
   const getReminderStageLabel = (type: string) => {
-    if (type === "renewal_2day") return "2 days before";
+    if (type === "renewal_7day") return "7 days before";
     if (type === "renewal_1day") return "1 day before";
     if (type === "renewal_due_today") return "Expiry day";
+    if (type === "subscription_reminder_3day") return "Library plan - 3 days before";
     return type;
   };
 
   const getNotifIcon = (type: string) => {
     if (type === "renewal_due_today") return <AlertTriangle className="w-3.5 h-3.5 text-destructive" />;
     if (type === "renewal_1day") return <Bell className="w-3.5 h-3.5 text-warning" />;
+    if (type === "subscription_reminder_3day") return <RefreshCw className="w-3.5 h-3.5 text-primary" />;
     return <CalendarClock className="w-3.5 h-3.5 text-primary" />;
   };
 
-  const getDeliveryBadge = (notification: RenewalNotificationRow) => {
-    if (notification.delivery_status === "sent") return <Badge className="bg-success/10 text-success hover:bg-success/10">Sent</Badge>;
-    if (notification.delivery_status === "failed") return <Badge variant="destructive">Failed</Badge>;
-    if (notification.delivery_status === "skipped") return <Badge variant="secondary">Skipped</Badge>;
+  const getDeliveryBadge = (log: ReminderLogRow) => {
+    if (log.status === "sent") return <Badge className="bg-success/10 text-success hover:bg-success/10">Sent</Badge>;
+    if (log.status === "failed") return <Badge variant="destructive">Failed</Badge>;
+    if (log.status === "skipped") return <Badge variant="secondary">Skipped</Badge>;
     return <Badge variant="outline">Queued</Badge>;
   };
 
@@ -403,42 +445,44 @@ const RenewalsPage = () => {
               </div>
             </CardHeader>
             <CardContent>
-              {notificationsLoading ? (
+              {reminderLogsLoading ? (
                 <p className="text-sm text-muted-foreground py-4 text-center">Loading reminders...</p>
-              ) : notificationsError ? (
-                <p className="text-sm text-destructive py-4 text-center">Unable to load reminders: {getErrorMessage(notificationsQueryError)}</p>
-              ) : notifications.length === 0 ? (
+              ) : reminderLogsError ? (
+                <p className="text-sm text-destructive py-4 text-center">Unable to load reminders: {getErrorMessage(reminderLogsQueryError)}</p>
+              ) : reminderLogsWithStudents.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-4 text-center">No reminder activity yet.</p>
               ) : (
                 <div className="space-y-3">
-                  {notifications.map((notif) => (
-                    <div key={notif.id} className="flex items-start gap-3 rounded-lg border border-border/60 p-3">
+                  {reminderLogsWithStudents.map((log) => (
+                    <div key={log.id} className="flex items-start gap-3 rounded-lg border border-border/60 p-3">
                       <div
                         className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                          notif.type === "renewal_due_today" ? "bg-destructive/10" : "bg-primary/10"
+                          log.reminder_type === "renewal_due_today" ? "bg-destructive/10" : "bg-primary/10"
                         }`}
                       >
-                        {getNotifIcon(notif.type)}
+                        {getNotifIcon(log.reminder_type)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <p className="text-sm font-medium text-foreground">{notif.students?.full_name || notif.title}</p>
-                          {getDeliveryBadge(notif)}
-                          {getChannelBadge(notif.channel)}
+                          <p className="text-sm font-medium text-foreground">
+                            {log.student?.full_name || (log.reminder_type === "subscription_reminder_3day" ? "Library owner" : "Student")}
+                          </p>
+                          {getDeliveryBadge(log)}
+                          {getChannelBadge(log.delivery_channel)}
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {getReminderStageLabel(notif.type)}
-                          {notif.students?.seat_number ? ` • Seat ${notif.students.seat_number}` : ""}
+                          {getReminderStageLabel(log.reminder_type)}
+                          {log.student?.seat_number ? ` - Seat ${log.student.seat_number}` : ""}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {notif.recipient_phone || notif.students?.phone || "Phone number missing"}
+                          {log.phone || log.student?.phone || "Phone number missing"}
                         </p>
-                        <p className="text-xs text-muted-foreground line-clamp-3 mt-2 whitespace-pre-line">{notif.message}</p>
-                        {notif.provider_error && (
-                          <p className="text-xs text-destructive mt-2">{notif.provider_error}</p>
+                        <p className="text-xs text-muted-foreground line-clamp-3 mt-2 whitespace-pre-line">{log.message}</p>
+                        {log.error_message && (
+                          <p className="text-xs text-destructive mt-2">{log.error_message}</p>
                         )}
                         <p className="text-xs text-muted-foreground/60 mt-2">
-                          {format(new Date(notif.sent_at || notif.created_at), "dd MMM, hh:mm a")}
+                          {format(new Date(log.sent_at || log.created_at), "dd MMM, hh:mm a")}
                         </p>
                       </div>
                     </div>

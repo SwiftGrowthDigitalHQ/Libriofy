@@ -8,3 +8,9 @@ verify_jwt = false
 
 [functions.process-waitlist]
 verify_jwt = false
+
+[functions.razorpay-webhook]
+verify_jwt = false
+
+[functions.create-payment]
+verify_jwt = false

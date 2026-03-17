@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 
-export type AppRole = "super_admin" | "library_owner" | "staff" | "student";
+export type AppRole = "super_admin" | "library_owner" | "staff" | "partner" | "student";
 export type UserRoleRecord = { role: AppRole; library_id: string | null };
 
 export const isUserRolesSchemaError = (error: unknown): boolean => {
@@ -47,6 +47,7 @@ export const getPrimaryRole = (roles: UserRoleRecord[] | null | undefined): AppR
   if (roles.some((r) => r.role === "super_admin")) return "super_admin";
   if (roles.some((r) => r.role === "library_owner")) return "library_owner";
   if (roles.some((r) => r.role === "staff")) return "staff";
+  if (roles.some((r) => r.role === "partner")) return "partner";
   if (roles.some((r) => r.role === "student")) return "student";
   return null;
 };
@@ -55,5 +56,6 @@ export const getRoleHomeRoute = (roles: UserRoleRecord[] | null | undefined): st
   const primary = getPrimaryRole(roles);
   if (primary === "super_admin") return "/admin";
   if (primary === "library_owner" || primary === "staff") return "/dashboard";
+  if (primary === "partner") return "/partner/dashboard";
   return "/auth";
 };

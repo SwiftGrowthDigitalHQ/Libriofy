@@ -10,10 +10,14 @@ const facilities = [
   { icon: VolumeX, label: "Silent Study Zone", desc: "Zero disturbance policy" },
 ];
 
-const FacilitiesSection = () => (
+interface FacilitiesSectionProps {
+  headingColor?: string;
+}
+
+const FacilitiesSection = ({ headingColor }: FacilitiesSectionProps) => (
   <section className="py-16">
     <div className="container mx-auto px-4 max-w-5xl">
-      <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">
+      <h2 className="text-2xl sm:text-3xl font-bold font-display text-center mb-2" style={headingColor ? { color: headingColor } : undefined}>
         Facilities
       </h2>
       <p className="text-muted-foreground text-center mb-10">Everything you need for focused studying</p>

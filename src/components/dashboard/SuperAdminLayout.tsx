@@ -2,15 +2,20 @@ import { ReactNode, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Building2, CreditCard,
-  ChevronLeft, LogOut, Settings, TrendingUp, Shield, Bell, Globe
+  ChevronLeft, LogOut, Settings, TrendingUp, Shield, Bell, Globe,
+  ListChecks, Users2, Wallet
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import NotificationBell from "@/components/notifications/NotificationBell";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
   { icon: Building2, label: "Libraries", path: "/admin/libraries" },
   { icon: TrendingUp, label: "Revenue", path: "/admin/revenue" },
   { icon: CreditCard, label: "Subscriptions", path: "/admin/subscriptions" },
+  { icon: Users2, label: "Partners", path: "/admin/partners" },
+  { icon: ListChecks, label: "Leads", path: "/admin/leads" },
+  { icon: Wallet, label: "Payouts", path: "/admin/payouts" },
   { icon: Bell, label: "Notifications", path: "/admin/notifications" },
   { icon: Globe, label: "Domains", path: "/admin/domains" },
   { icon: Settings, label: "Settings", path: "/admin/settings" },
@@ -90,6 +95,7 @@ const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
             <h1 className="text-lg font-semibold font-display text-foreground">Platform Administration</h1>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationBell notificationsPath="/admin/notifications" showLibraryName />
             <div className="w-8 h-8 rounded-full bg-destructive/20 flex items-center justify-center text-xs font-medium text-destructive">
               SA
             </div>

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, startOfDay, startOfMonth, subMonths, addMonths, differenceInCalendarDays, formatDistanceToNowStrict } from "date-fns";
-import { Users, LayoutGrid, CreditCard, CalendarClock, AlertTriangle, CheckCircle, Info } from "lucide-react";
+import { Archive, Users, LayoutGrid, CreditCard, CalendarClock, AlertTriangle, CheckCircle, CircleDollarSign, Info } from "lucide-react";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import StatsCard from "@/components/dashboard/StatsCard";
 import RevenueChart, { type RevenuePoint } from "@/components/dashboard/RevenueChart";
@@ -11,6 +11,7 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { isSuccessfulPaymentStatus } from "@/lib/payments";
+import { isMissingRelationError } from "@/lib/studentSlotUtils";
 
 type LibraryRow = Pick<Database["public"]["Tables"]["libraries"]["Row"], "id" | "total_seats">;
 type StudentDashboardRow = Pick<
@@ -19,11 +20,12 @@ type StudentDashboardRow = Pick<
 >;
 type NotificationRow = Pick<
   Database["public"]["Tables"]["notifications"]["Row"],
-  "id" | "type" | "title" | "message" | "created_at"
+  "id" | "type" | "category" | "title" | "message" | "created_at"
 >;
 type PaymentRow = Pick<Database["public"]["Tables"]["payments"]["Row"], "id" | "amount" | "status" | "created_at"> & {
   students: { full_name: string | null } | null;
 };
+type LockerDashboardRow = Pick<Database["public"]["Tables"]["lockers"]["Row"], "id" | "monthly_price" | "status">;
 type AttendanceRow = Pick<Database["public"]["Tables"]["attendance_logs"]["Row"], "id" | "check_in" | "check_out"> & {
   students: { full_name: string | null; seat_number: string | null } | null;
 };
@@ -41,6 +43,10 @@ type ActivityItem = {
 type DashboardData = {
   totalSeats: number;
   occupiedSeats: number;
+  totalLockers: number;
+  availableLockers: number;
+  occupiedLockers: number;
+  lockerRevenue: number;
   activeStudents: number;
   newAdmissionsThisMonth: number;
   revenueMTD: number;
@@ -69,8 +75,12 @@ const isActiveStudent = (student: StudentDashboardRow, today: Date): boolean => 
   return expiry >= today;
 };
 
-const notificationTypeToActivityType = (type: string): ActivityType => {
+const notificationTypeToActivityType = (category: string | null, type: string): ActivityType => {
   const value = type.toLowerCase();
+  if (value.includes("locker_assigned")) return "success";
+  if (value.includes("locker_payment_due")) return "warning";
+  if (category === "payment") return "success";
+  if (category === "renewal") return value.includes("expired") || value.includes("expiry") ? "warning" : "info";
   if (value.includes("expiry") || value.includes("no_show") || value.includes("waitlist")) return "warning";
   if (value.includes("success") || value.includes("payment")) return "success";
   return "info";
@@ -106,10 +116,14 @@ const Dashboard = () => {
   } = useQuery({
     queryKey: ["dashboard-overview", resolvedLibraryId],
     queryFn: async (): Promise<DashboardData> => {
-      if (!resolvedLibraryId) {
+      if (!resolvedLibraryId || !user?.id) {
         return {
           totalSeats: 0,
           occupiedSeats: 0,
+          totalLockers: 0,
+          availableLockers: 0,
+          occupiedLockers: 0,
+          lockerRevenue: 0,
           activeStudents: 0,
           newAdmissionsThisMonth: 0,
           revenueMTD: 0,
@@ -128,7 +142,7 @@ const Dashboard = () => {
       const chartStart = startOfMonth(subMonths(now, 6)).toISOString();
       const todayIso = format(now, "yyyy-MM-dd");
 
-      const [libraryRes, studentsRes, paymentsRes, notificationsRes, attendanceRes] = await Promise.all([
+      const [libraryRes, studentsRes, paymentsRes, notificationsRes, attendanceRes, lockersRes] = await Promise.all([
         supabase.from("libraries").select("id, total_seats").eq("id", resolvedLibraryId).maybeSingle(),
         supabase
           .from("students")
@@ -142,8 +156,8 @@ const Dashboard = () => {
           .order("created_at", { ascending: false }),
         supabase
           .from("notifications")
-          .select("id, type, title, message, created_at")
-          .eq("library_id", resolvedLibraryId)
+          .select("id, type, category, title, message, created_at")
+          .eq("user_id", user.id)
           .order("created_at", { ascending: false })
           .limit(8),
         supabase
@@ -153,6 +167,10 @@ const Dashboard = () => {
           .eq("date", todayIso)
           .order("check_in", { ascending: false })
           .limit(10),
+        supabase
+          .from("lockers")
+          .select("id, status, monthly_price")
+          .eq("library_id", resolvedLibraryId),
       ]);
 
       if (libraryRes.error) throw libraryRes.error;
@@ -160,12 +178,14 @@ const Dashboard = () => {
       if (paymentsRes.error) throw paymentsRes.error;
       if (notificationsRes.error) throw notificationsRes.error;
       if (attendanceRes.error) throw attendanceRes.error;
+      if (lockersRes.error && !isMissingRelationError(lockersRes.error, "lockers")) throw lockersRes.error;
 
       const library = libraryRes.data as LibraryRow | null;
       const students = (studentsRes.data ?? []) as StudentDashboardRow[];
       const payments = (paymentsRes.data ?? []) as PaymentRow[];
       const notifications = (notificationsRes.data ?? []) as NotificationRow[];
       const attendance = (attendanceRes.data ?? []) as AttendanceRow[];
+      const lockers = lockersRes.error ? [] : ((lockersRes.data ?? []) as LockerDashboardRow[]);
 
       const activeStudentsList = students.filter((student) => isActiveStudent(student, today));
       const activeStudents = activeStudentsList.length;
@@ -183,6 +203,13 @@ const Dashboard = () => {
         const days = differenceInCalendarDays(expiry, today);
         return days >= 0 && days <= 7;
       }).length;
+
+      const totalLockers = lockers.length;
+      const availableLockers = lockers.filter((locker) => locker.status === "available").length;
+      const occupiedLockers = lockers.filter((locker) => locker.status === "occupied").length;
+      const lockerRevenue = lockers
+        .filter((locker) => locker.status === "occupied")
+        .reduce((sum, locker) => sum + Number(locker.monthly_price || 0), 0);
 
       const successfulPayments = payments.filter((payment) => isSuccessfulPayment(payment.status));
 
@@ -226,7 +253,7 @@ const Dashboard = () => {
         action: item.title,
         detail: item.message || "Notification",
         createdAt: item.created_at,
-        type: notificationTypeToActivityType(item.type),
+        type: notificationTypeToActivityType(item.category, item.type),
       }));
 
       const admissionActivities: ActivityItem[] = [...students]
@@ -263,6 +290,10 @@ const Dashboard = () => {
       return {
         totalSeats: library?.total_seats || 0,
         occupiedSeats,
+        totalLockers,
+        availableLockers,
+        occupiedLockers,
+        lockerRevenue: Math.round(lockerRevenue),
         activeStudents,
         newAdmissionsThisMonth,
         revenueMTD: Math.round(revenueMTD),
@@ -272,7 +303,7 @@ const Dashboard = () => {
         recentActivity,
       };
     },
-    enabled: !!resolvedLibraryId,
+    enabled: !!resolvedLibraryId && !!user?.id,
     refetchInterval: 15000,
   });
 
@@ -328,7 +359,7 @@ const Dashboard = () => {
           </Card>
         ) : (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
               <StatsCard
                 icon={LayoutGrid}
                 title="Total Seats"
@@ -359,6 +390,38 @@ const Dashboard = () => {
                 change="Next 7 days"
                 trend="down"
                 iconColor="text-warning"
+              />
+              <StatsCard
+                icon={Archive}
+                title="Total Lockers"
+                value={String(dashboard?.totalLockers ?? 0)}
+                change={`${dashboard?.availableLockers ?? 0} available now`}
+                trend="up"
+                iconColor="text-primary"
+              />
+              <StatsCard
+                icon={CheckCircle}
+                title="Available Lockers"
+                value={String(dashboard?.availableLockers ?? 0)}
+                change={`${dashboard?.occupiedLockers ?? 0} occupied`}
+                trend="up"
+                iconColor="text-success"
+              />
+              <StatsCard
+                icon={Archive}
+                title="Occupied Lockers"
+                value={String(dashboard?.occupiedLockers ?? 0)}
+                change={`${Math.max((dashboard?.totalLockers ?? 0) - (dashboard?.occupiedLockers ?? 0), 0)} open`}
+                trend="up"
+                iconColor="text-warning"
+              />
+              <StatsCard
+                icon={CircleDollarSign}
+                title="Locker Revenue"
+                value={`Rs ${(dashboard?.lockerRevenue ?? 0).toLocaleString("en-IN")}`}
+                change="Monthly occupied locker value"
+                trend="up"
+                iconColor="text-success"
               />
             </div>
 

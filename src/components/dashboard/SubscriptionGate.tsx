@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import {
+  isFunctionUnavailableError,
+  readFunctionErrorMessage,
+  waitForActiveLibrarySubscription,
+} from "@/lib/billingEdgeFunctions";
 
 type RazorpaySuccessResponse = {
   razorpay_order_id: string;
@@ -28,7 +33,9 @@ type RazorpayInstance = { open: () => void };
 type RazorpayConstructor = new (options: RazorpayOptions) => RazorpayInstance;
 
 type CheckoutOrderResponse = {
-  order: { id: string; amount: number; currency: string };
+  orderId: string;
+  amount: number;
+  currency: string;
   keyId: string;
 };
 
@@ -56,25 +63,35 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
     if (!libraryId) return;
     setRenewLoading(true);
     try {
-      const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-razorpay-order", {
+      const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-payment", {
         body: {
           libraryId,
           months: 1,
         },
       });
-      if (orderError) throw orderError;
-      if (!orderRes?.order) throw new Error("Order creation failed");
+      if (orderError) {
+        throw new Error(await readFunctionErrorMessage(orderError, "create-payment"));
+      }
+
+      if (!orderRes?.orderId || typeof orderRes.amount !== "number" || !orderRes.currency) {
+        console.error("create-payment: unexpected response", orderRes);
+        throw new Error("Order creation failed");
+      }
 
       await ensureRazorpayScript();
       if (!razorpayWindow.Razorpay) throw new Error("Razorpay SDK unavailable");
 
+      const envKeyId = String(import.meta.env.VITE_RAZORPAY_KEY_ID ?? "").trim();
+      const checkoutKeyId = envKeyId || orderRes.keyId;
+      if (!checkoutKeyId) throw new Error("Missing Razorpay key id.");
+
       const razorpay = new razorpayWindow.Razorpay({
-        key: orderRes.keyId,
-        amount: orderRes.order.amount,
-        currency: orderRes.order.currency,
+        key: checkoutKeyId,
+        amount: orderRes.amount,
+        currency: orderRes.currency,
         name: "Libriofy",
         description: "Subscription Renewal",
-        order_id: orderRes.order.id,
+        order_id: orderRes.orderId,
         handler: async (response: RazorpaySuccessResponse) => {
           const { error: verifyError } = await supabase.functions.invoke("verify-razorpay-payment", {
             body: {
@@ -85,7 +102,22 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
             },
           });
           if (verifyError) {
-            toast({ title: "Payment verification failed", description: verifyError.message, variant: "destructive" });
+            const verifyMessage = await readFunctionErrorMessage(verifyError, "verify-razorpay-payment");
+            const activatedSubscription = await waitForActiveLibrarySubscription(libraryId);
+
+            if (activatedSubscription) {
+              toast({ title: "Subscription renewed", description: "Your account has been reactivated." });
+              window.location.reload();
+              return;
+            }
+
+            toast({
+              title: isFunctionUnavailableError(verifyError) ? "Payment received, activation pending" : "Payment verification failed",
+              description: isFunctionUnavailableError(verifyError)
+                ? `${verifyMessage} If Razorpay already captured the payment, the webhook can still reactivate your account within a minute.`
+                : verifyMessage,
+              variant: isFunctionUnavailableError(verifyError) ? "default" : "destructive",
+            });
             return;
           }
           toast({ title: "Subscription renewed", description: "Your account has been reactivated." });

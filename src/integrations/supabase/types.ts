@@ -107,61 +107,206 @@ export type Database = {
         Row: {
           active_students: number
           address: string | null
+          about_text: string | null
           city: string | null
+          country: string
           created_at: string
+          cta_background_color: string | null
+          cta_background_image_url: string | null
+          cta_background_type: string
+          cta_button_color: string | null
+          cta_button_text_color: string | null
+          cta_gradient_from: string | null
+          cta_gradient_to: string | null
+          cta_subtitle: string | null
+          cta_subtitle_color: string | null
+          cta_text_color: string | null
+          cta_title: string | null
+          cta_title_color: string | null
           custom_domain: string | null
+          district: string | null
           enabled: boolean
+          hero_background_url: string | null
           id: string
+          hero_overlay_color: string | null
+          hero_overlay_disabled: boolean
+          hero_overlay_opacity: number
+          hero_subtitle: string | null
+          hero_subtitle_color: string | null
+          hero_title: string | null
+          hero_title_color: string | null
+          library_name: string
           logo_url: string | null
           monthly_revenue: number
           name: string
           opening_hours: string | null
           owner_id: string
+          owner_name: string | null
+          phone: string | null
           primary_color: string | null
+          section_heading_color: string | null
           slug: string | null
+          state: string | null
+          total_lockers: number
           total_seats: number
           upi_id: string | null
           updated_at: string
+          whatsapp_number: string | null
         }
         Insert: {
           active_students?: number
           address?: string | null
+          about_text?: string | null
           city?: string | null
+          country?: string
           created_at?: string
+          cta_background_color?: string | null
+          cta_background_image_url?: string | null
+          cta_background_type?: string
+          cta_button_color?: string | null
+          cta_button_text_color?: string | null
+          cta_gradient_from?: string | null
+          cta_gradient_to?: string | null
+          cta_subtitle?: string | null
+          cta_subtitle_color?: string | null
+          cta_text_color?: string | null
+          cta_title?: string | null
+          cta_title_color?: string | null
           custom_domain?: string | null
+          district?: string | null
           enabled?: boolean
+          hero_background_url?: string | null
           id?: string
+          hero_overlay_color?: string | null
+          hero_overlay_disabled?: boolean
+          hero_overlay_opacity?: number
+          hero_subtitle?: string | null
+          hero_subtitle_color?: string | null
+          hero_title?: string | null
+          hero_title_color?: string | null
           logo_url?: string | null
           monthly_revenue?: number
           name: string
           opening_hours?: string | null
           owner_id: string
+          owner_name?: string | null
+          phone?: string | null
           primary_color?: string | null
+          section_heading_color?: string | null
           slug?: string | null
+          state?: string | null
+          total_lockers?: number
           total_seats?: number
           upi_id?: string | null
           updated_at?: string
+          whatsapp_number?: string | null
         }
         Update: {
           active_students?: number
           address?: string | null
+          about_text?: string | null
           city?: string | null
+          country?: string
           created_at?: string
+          cta_background_color?: string | null
+          cta_background_image_url?: string | null
+          cta_background_type?: string
+          cta_button_color?: string | null
+          cta_button_text_color?: string | null
+          cta_gradient_from?: string | null
+          cta_gradient_to?: string | null
+          cta_subtitle?: string | null
+          cta_subtitle_color?: string | null
+          cta_text_color?: string | null
+          cta_title?: string | null
+          cta_title_color?: string | null
           custom_domain?: string | null
+          district?: string | null
           enabled?: boolean
+          hero_background_url?: string | null
           id?: string
+          hero_overlay_color?: string | null
+          hero_overlay_disabled?: boolean
+          hero_overlay_opacity?: number
+          hero_subtitle?: string | null
+          hero_subtitle_color?: string | null
+          hero_title?: string | null
+          hero_title_color?: string | null
           logo_url?: string | null
           monthly_revenue?: number
           name?: string
           opening_hours?: string | null
           owner_id?: string
+          owner_name?: string | null
+          phone?: string | null
           primary_color?: string | null
+          section_heading_color?: string | null
           slug?: string | null
+          state?: string | null
+          total_lockers?: number
           total_seats?: number
           upi_id?: string | null
           updated_at?: string
+          whatsapp_number?: string | null
         }
         Relationships: []
+      }
+      lockers: {
+        Row: {
+          column: number
+          created_at: string
+          id: string
+          library_id: string
+          locker_number: string
+          monthly_price: number
+          payment_due_date: string | null
+          row: number
+          status: string
+          student_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          column: number
+          created_at?: string
+          id?: string
+          library_id: string
+          locker_number: string
+          monthly_price?: number
+          payment_due_date?: string | null
+          row: number
+          status?: string
+          student_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          column?: number
+          created_at?: string
+          id?: string
+          library_id?: string
+          locker_number?: string
+          monthly_price?: number
+          payment_due_date?: string | null
+          row?: number
+          status?: string
+          student_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lockers_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lockers_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       library_subscriptions: {
         Row: {
@@ -170,6 +315,7 @@ export type Database = {
           features: Json
           id: string
           library_id: string
+          lockers_limit: number | null
           plan_name: string
           price: number
           seats_limit: number
@@ -183,6 +329,7 @@ export type Database = {
           features?: Json
           id?: string
           library_id: string
+          lockers_limit?: number | null
           plan_name?: string
           price?: number
           seats_limit?: number
@@ -196,6 +343,7 @@ export type Database = {
           features?: Json
           id?: string
           library_id?: string
+          lockers_limit?: number | null
           plan_name?: string
           price?: number
           seats_limit?: number
@@ -215,58 +363,67 @@ export type Database = {
       }
       notifications: {
         Row: {
+          category: Database["public"]["Enums"]["notification_category"] | null
           channel: string | null
           created_at: string
           delivery_status: string
           id: string
+          is_read: boolean
           library_id: string
           message: string | null
           metadata: Json
           provider_error: string | null
           provider_message_id: string | null
           provider_name: string | null
-          read: boolean
           recipient_phone: string | null
+          role: Database["public"]["Enums"]["notification_role"] | null
           sent_at: string | null
           student_id: string | null
           title: string
           type: string
+          user_id: string | null
         }
         Insert: {
+          category?: Database["public"]["Enums"]["notification_category"] | null
           channel?: string | null
           created_at?: string
           delivery_status?: string
           id?: string
+          is_read?: boolean
           library_id: string
           message?: string | null
           metadata?: Json
           provider_error?: string | null
           provider_message_id?: string | null
           provider_name?: string | null
-          read?: boolean
           recipient_phone?: string | null
+          role?: Database["public"]["Enums"]["notification_role"] | null
           sent_at?: string | null
           student_id?: string | null
           title: string
           type: string
+          user_id?: string | null
         }
         Update: {
+          category?: Database["public"]["Enums"]["notification_category"] | null
           channel?: string | null
           created_at?: string
           delivery_status?: string
           id?: string
+          is_read?: boolean
           library_id?: string
           message?: string | null
           metadata?: Json
           provider_error?: string | null
           provider_message_id?: string | null
           provider_name?: string | null
-          read?: boolean
           recipient_phone?: string | null
+          role?: Database["public"]["Enums"]["notification_role"] | null
           sent_at?: string | null
           student_id?: string | null
           title?: string
           type?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -566,6 +723,9 @@ export type Database = {
       }
       support_tickets: {
         Row: {
+          admin_replied_at: string | null
+          admin_replied_by: string | null
+          admin_reply: string | null
           created_at: string
           description: string | null
           id: string
@@ -576,6 +736,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          admin_replied_at?: string | null
+          admin_replied_by?: string | null
+          admin_reply?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -586,6 +749,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          admin_replied_at?: string | null
+          admin_replied_by?: string | null
+          admin_reply?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -734,7 +900,35 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      admin_city_analytics: {
+        Row: {
+          city: string
+          libraries: number
+          state: string
+        }
+      }
+      admin_district_analytics: {
+        Row: {
+          district: string
+          libraries: number
+          state: string
+        }
+      }
+      admin_state_analytics: {
+        Row: {
+          libraries: number
+          state: string
+        }
+      }
+      admin_platform_coverage: {
+        Row: {
+          active_cities: number
+          active_districts: number
+          india_market_penetration_percent: number
+          states_covered: number
+          total_libraries: number
+        }
+      }
     }
     Functions: {
       add_to_waiting_list: {
@@ -748,6 +942,14 @@ export type Database = {
         }
         Returns: Json
       }
+      assign_locker: {
+        Args: {
+          p_locker_id: string
+          p_monthly_price?: number
+          p_student_id: string
+        }
+        Returns: Json
+      }
       confirm_waiting_list: { Args: { p_entry_id: string }; Returns: Json }
       detect_no_shows: { Args: never; Returns: undefined }
       get_library_public: {
@@ -755,20 +957,48 @@ export type Database = {
         Returns: {
           active_students: number
           address: string | null
+          about_text: string | null
           city: string | null
+          country: string
           created_at: string
+          cta_background_color: string | null
+          cta_background_image_url: string | null
+          cta_background_type: string
+          cta_button_color: string | null
+          cta_button_text_color: string | null
+          cta_gradient_from: string | null
+          cta_gradient_to: string | null
+          cta_subtitle: string | null
+          cta_subtitle_color: string | null
+          cta_text_color: string | null
+          cta_title: string | null
+          cta_title_color: string | null
           custom_domain: string | null
+          district: string | null
           enabled: boolean
+          hero_background_url: string | null
           id: string
+          hero_overlay_color: string | null
+          hero_overlay_disabled: boolean
+          hero_overlay_opacity: number
+          hero_subtitle: string | null
+          hero_subtitle_color: string | null
+          hero_title: string | null
+          hero_title_color: string | null
           logo_url: string | null
           monthly_revenue: number
           name: string
           opening_hours: string | null
           owner_id: string
+          phone: string | null
           primary_color: string | null
+          section_heading_color: string | null
           slug: string | null
+          state: string | null
+          total_lockers: number
           total_seats: number
           updated_at: string
+          whatsapp_number: string | null
         }[]
         SetofOptions: {
           from: "*"
@@ -781,7 +1011,10 @@ export type Database = {
         Args: { p_library_id: string }
         Returns: {
           available_seats: number
+          occupied_seats: number
+          slot_id: string
           slot_name: string
+          total_seats: number
         }[]
       }
       get_student_renewal_context: {
@@ -795,16 +1028,23 @@ export type Database = {
         }
         Returns: boolean
       }
+      locker_label_from_index: { Args: { p_index: number }; Returns: string }
       notify_next_in_queue: { Args: { p_library_id: string }; Returns: Json }
+      process_locker_renewals: { Args: never; Returns: Json }
       process_renewals: { Args: never; Returns: Json }
       process_waiting_list_timeouts: { Args: never; Returns: Json }
       qr_check_in: {
         Args: { p_library_id: string; p_qr_code: string }
         Returns: Json
       }
+      release_locker: { Args: { p_locker_id: string }; Returns: Json }
       renew_student: {
         Args: { p_amount?: number; p_months?: number; p_student_id: string }
         Returns: Json
+      }
+      sync_library_lockers: {
+        Args: { p_columns?: number; p_library_id: string; p_total_lockers: number }
+        Returns: undefined
       }
       submit_renewal_payment: {
         Args: {
@@ -817,6 +1057,8 @@ export type Database = {
     }
     Enums: {
       app_role: "super_admin" | "library_owner" | "staff" | "student"
+      notification_category: "payment" | "renewal" | "support" | "system" | "affiliate"
+      notification_role: "admin" | "library"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -945,6 +1187,8 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["super_admin", "library_owner", "staff", "student"],
+      notification_category: ["payment", "renewal", "support", "system", "affiliate"],
+      notification_role: ["admin", "library"],
     },
   },
 } as const

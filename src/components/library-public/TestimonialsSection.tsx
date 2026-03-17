@@ -9,6 +9,7 @@ interface Testimonial {
 
 interface TestimonialsSectionProps {
   testimonials?: Testimonial[];
+  headingColor?: string;
 }
 
 const defaultTestimonials: Testimonial[] = [
@@ -17,13 +18,13 @@ const defaultTestimonials: Testimonial[] = [
   { name: "Sneha Patel", text: "Comfortable seating and great ambiance. The staff is very supportive and the location is convenient.", rating: 5 },
 ];
 
-const TestimonialsSection = ({ testimonials }: TestimonialsSectionProps) => {
+const TestimonialsSection = ({ testimonials, headingColor }: TestimonialsSectionProps) => {
   const items = testimonials && testimonials.length > 0 ? testimonials : defaultTestimonials;
 
   return (
     <section className="py-16">
       <div className="container mx-auto px-4 max-w-5xl">
-        <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">
+        <h2 className="text-2xl sm:text-3xl font-bold font-display text-center mb-2" style={headingColor ? { color: headingColor } : undefined}>
           What Our Students Say
         </h2>
         <p className="text-muted-foreground text-center mb-10">Trusted by hundreds of serious learners</p>

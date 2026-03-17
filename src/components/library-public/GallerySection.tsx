@@ -14,6 +14,7 @@ interface GalleryImage {
 
 interface GallerySectionProps {
   images?: GalleryImage[];
+  headingColor?: string;
 }
 
 const defaultImages = [
@@ -25,14 +26,14 @@ const defaultImages = [
   { src: lib1, alt: "Interior view" },
 ];
 
-const GallerySection = ({ images }: GallerySectionProps) => {
+const GallerySection = ({ images, headingColor }: GallerySectionProps) => {
   const [lightbox, setLightbox] = useState<number | null>(null);
   const galleryImages = images && images.length > 0 ? images : defaultImages;
 
   return (
     <section className="py-16 bg-secondary/30">
       <div className="container mx-auto px-4 max-w-5xl">
-        <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-2">
+        <h2 className="text-2xl sm:text-3xl font-bold font-display text-center mb-2" style={headingColor ? { color: headingColor } : undefined}>
           Gallery
         </h2>
         <p className="text-muted-foreground text-center mb-10">Take a virtual tour of our space</p>

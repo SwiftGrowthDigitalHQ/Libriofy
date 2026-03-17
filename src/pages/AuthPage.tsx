@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,13 @@ import { BookOpen, Mail, Smartphone, Chrome, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
 
-const AuthPage = () => {
+type AuthPageProps = {
+  initialMode?: "login" | "signup" | "verify-phone";
+};
+
+const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
   // Mode: "login" | "signup" | "verify-phone"
-  const [mode, setMode] = useState<"login" | "signup" | "verify-phone">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "verify-phone">(initialMode);
 
   // Email login
   const [email, setEmail] = useState("");
@@ -37,7 +41,15 @@ const AuthPage = () => {
   const [loading, setLoading] = useState(false);
   const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
+
+  const affiliateRef = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const ref = params.get("ref")?.trim();
+    const affiliate = params.get("affiliate")?.trim();
+    return ref || affiliate || null;
+  }, [location.search]);
 
   const redirectAfterLogin = useCallback(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser();
@@ -48,6 +60,8 @@ const AuthPage = () => {
       .eq("user_id", currentUser.id);
     if (roles?.some((r) => r.role === "super_admin")) {
       navigate("/admin");
+    } else if (roles?.some((r) => r.role === "partner")) {
+      navigate("/partner/dashboard");
     } else {
       navigate("/dashboard");
     }
@@ -180,7 +194,13 @@ const AuthPage = () => {
     setLoading(true);
     try {
       const normalizedPhone = signupPhone.trim();
-      await signUp(signupEmail, signupPassword, signupName, normalizedPhone || undefined);
+      await signUp(
+        signupEmail,
+        signupPassword,
+        signupName,
+        normalizedPhone || undefined,
+        affiliateRef ? { affiliateCode: affiliateRef } : undefined,
+      );
       // Update profile with phone only when provided
       const { data: { user } } = await supabase.auth.getUser();
       if (user && normalizedPhone) {

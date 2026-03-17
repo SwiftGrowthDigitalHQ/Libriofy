@@ -7,17 +7,18 @@ import {
   type LibrarySubscriptionRecord,
 } from "@/lib/subscription";
 
-export const useLibrarySubscription = () => {
+export const useLibrarySubscription = (libraryIdOverride?: string | null) => {
   const { libraryId } = useCurrentLibraryId();
+  const resolvedLibraryId = libraryIdOverride === undefined ? libraryId : libraryIdOverride;
 
   return useQuery({
-    queryKey: ["library-subscription", libraryId],
+    queryKey: ["library-subscription", resolvedLibraryId],
     queryFn: async () => {
-      if (!libraryId) return null;
+      if (!resolvedLibraryId) return null;
       const { data, error } = await supabase
         .from("library_subscriptions")
         .select("*, libraries(enabled, name)")
-        .eq("library_id", libraryId)
+        .eq("library_id", resolvedLibraryId)
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
@@ -29,7 +30,7 @@ export const useLibrarySubscription = () => {
         libraries: Array.isArray(normalized.libraries) ? normalized.libraries[0] ?? null : normalized.libraries ?? null,
       } satisfies LibrarySubscriptionRecord;
     },
-    enabled: !!libraryId,
+    enabled: !!resolvedLibraryId,
   });
 };
 

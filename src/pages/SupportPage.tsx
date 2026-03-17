@@ -231,6 +231,19 @@ const SupportPage = () => {
                               {ticket.status === "resolved" ? "Reopen" : "Mark Resolved"}
                             </Button>
                           </div>
+                          {ticket.admin_reply ? (
+                            <div className="mt-3 rounded-lg bg-secondary/60 p-3">
+                              <p className="text-xs font-medium text-foreground">Support reply</p>
+                              <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
+                                {ticket.admin_reply}
+                              </p>
+                              {ticket.admin_replied_at ? (
+                                <p className="mt-2 text-[10px] text-muted-foreground/70">
+                                  Replied {format(new Date(ticket.admin_replied_at), "dd MMM yyyy, hh:mm a")}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}

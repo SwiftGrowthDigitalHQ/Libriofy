@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 
 interface ContactSectionProps {
   library: any;
+  headingColor?: string;
 }
 
 const normalizeWhatsAppNumber = (raw?: string | null): string => {
@@ -12,7 +13,7 @@ const normalizeWhatsAppNumber = (raw?: string | null): string => {
   return digits;
 };
 
-const ContactSection = ({ library }: ContactSectionProps) => {
+const ContactSection = ({ library, headingColor }: ContactSectionProps) => {
   const phone = library.phone || "+91 98765 43210";
   const whatsappNumber = normalizeWhatsAppNumber(library.whatsapp_number || library.phone);
   const address = `${library.address || "Koramangala, 5th Block"}${library.city ? `, ${library.city}` : ", Bangalore"}`;
@@ -20,7 +21,7 @@ const ContactSection = ({ library }: ContactSectionProps) => {
   return (
     <section className="py-16">
       <div className="container mx-auto px-4 max-w-4xl">
-        <h2 className="text-2xl sm:text-3xl font-bold font-display text-foreground text-center mb-10">
+        <h2 className="text-2xl sm:text-3xl font-bold font-display text-center mb-10" style={headingColor ? { color: headingColor } : undefined}>
           Get In Touch
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">

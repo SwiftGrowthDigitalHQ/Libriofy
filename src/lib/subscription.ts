@@ -5,6 +5,7 @@ export type SubscriptionPlan = {
   label: string;
   price: number;
   seatsLimit: number | null;
+  lockersLimit: number | null;
   description: string;
   features: string[];
 };
@@ -21,6 +22,7 @@ export type LibrarySubscriptionRecord = {
   trial_end_date: string | null;
   price: number;
   seats_limit: number;
+  lockers_limit?: number | null;
   features: string[];
   status: string;
   started_at: string;
@@ -59,14 +61,16 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     label: "Starter",
     price: 2999,
     seatsLimit: 50,
+    lockersLimit: 10,
     description: "For libraries getting started with paid operations.",
     features: ["Up to 50 seats", "Seat management", "Notifications"],
   },
   {
     name: "growth",
     label: "Growth",
-    price: 6999,
+    price: 4999,
     seatsLimit: 150,
+    lockersLimit: 40,
     description: "For growing libraries that need higher seat capacity.",
     features: ["Up to 150 seats", "Seat management", "Advanced analytics", "Notifications", "Export"],
   },
@@ -75,6 +79,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     label: "Pro",
     price: 9999,
     seatsLimit: null,
+    lockersLimit: 150,
     description: "For large operations that need full flexibility.",
     features: ["Unlimited seats", "All features", "Custom domain", "Priority support"],
   },
@@ -110,6 +115,21 @@ export const formatSeatLimit = (seatsLimit: number | null | undefined) => {
   if (!seatsLimit || seatsLimit <= 0) return "Unlimited seats";
   return `Up to ${seatsLimit} seats`;
 };
+
+export const formatLockerLimit = (lockersLimit: number | null | undefined) => {
+  if (!lockersLimit || lockersLimit <= 0) return "Unlimited lockers";
+  return `Up to ${lockersLimit} lockers`;
+};
+
+export const getPlanLockerLimit = (value: string | null | undefined) => {
+  const normalized = normalizeStatus(value);
+  if (normalized === "premium") return 150;
+  return PLAN_MAP.get(normalized as SubscriptionPlanName)?.lockersLimit ?? null;
+};
+
+export const resolveSubscriptionLockerLimit = (
+  subscription: LibrarySubscriptionRecord | null | undefined,
+) => getPlanLockerLimit(subscription?.plan_name) ?? subscription?.lockers_limit ?? null;
 
 export const evaluateSubscriptionAccess = (
   subscription: LibrarySubscriptionRecord | null | undefined,
