@@ -11,6 +11,7 @@ import {
   readFunctionErrorMessage,
   waitForActiveLibrarySubscription,
 } from "@/lib/billingEdgeFunctions";
+import { getSupportWhatsAppUrl } from "@/lib/supportContact";
 
 type RazorpaySuccessResponse = {
   razorpay_order_id: string;
@@ -156,7 +157,7 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
           <p className="text-muted-foreground mb-6">
             Your library account has been suspended. Please contact support to resolve this issue.
           </p>
-          <a href="https://wa.me/919999999999" target="_blank" rel="noopener noreferrer">
+          <a href={getSupportWhatsAppUrl()} target="_blank" rel="noopener noreferrer">
             <Button variant="outline">Contact Support</Button>
           </a>
         </div>
@@ -179,7 +180,7 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
             <Button onClick={handleRenew} disabled={renewLoading || !libraryId}>
               {renewLoading ? "Opening Checkout..." : "Renew Now"}
             </Button>
-            <a href="https://wa.me/919999999999" target="_blank" rel="noopener noreferrer">
+            <a href={getSupportWhatsAppUrl()} target="_blank" rel="noopener noreferrer">
               <Button variant="outline">Need Help?</Button>
             </a>
           </div>

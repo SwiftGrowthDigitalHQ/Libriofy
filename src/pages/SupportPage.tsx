@@ -14,6 +14,7 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { getSupportWhatsAppUrl } from "@/lib/supportContact";
 
 type TicketRow = Database["public"]["Tables"]["support_tickets"]["Row"];
 type TicketInsert = Database["public"]["Tables"]["support_tickets"]["Insert"];
@@ -130,8 +131,6 @@ const SupportPage = () => {
   });
 
   const loading = roleLibraryLoading || fallbackLoading || ticketsLoading;
-  const supportWhatsApp = ((import.meta.env.VITE_SUPPORT_WHATSAPP as string | undefined) || "919999999999").replace(/\D/g, "");
-
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -181,7 +180,7 @@ const SupportPage = () => {
               </Button>
               <div className="pt-2 border-t border-border">
                 <a
-                  href={`https://wa.me/${supportWhatsApp}`}
+                  href={getSupportWhatsAppUrl()}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-primary hover:underline flex items-center gap-1"

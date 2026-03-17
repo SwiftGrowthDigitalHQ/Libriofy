@@ -1,5 +1,6 @@
 import { BookOpen, MessageCircle } from "lucide-react";
 import { Link } from "react-router-dom";
+import { getSupportWhatsAppUrl } from "@/lib/supportContact";
 
 const LandingFooter = () => (
   <footer className="bg-sidebar border-t border-sidebar-border pt-16 pb-8">
@@ -46,7 +47,7 @@ const LandingFooter = () => (
             <li><a href="#" className="hover:text-sidebar-foreground transition-colors">Terms of Service</a></li>
           </ul>
           <a
-            href="https://wa.me/919876543210?text=Hi, I'm interested in Libriofy"
+            href={getSupportWhatsAppUrl("Hi, I'm interested in Libriofy")}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 mt-4 text-sm text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
