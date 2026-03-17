@@ -6,6 +6,7 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
+  getEdgeFunctionAuthHeaders,
   isFunctionUnavailableError,
   readFunctionErrorMessage,
   waitForActiveLibrarySubscription,
@@ -63,7 +64,9 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
     if (!libraryId) return;
     setRenewLoading(true);
     try {
+      const headers = await getEdgeFunctionAuthHeaders();
       const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-payment", {
+        headers,
         body: {
           libraryId,
           months: 1,
@@ -93,7 +96,9 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
         description: "Subscription Renewal",
         order_id: orderRes.orderId,
         handler: async (response: RazorpaySuccessResponse) => {
+          const verifyHeaders = await getEdgeFunctionAuthHeaders();
           const { error: verifyError } = await supabase.functions.invoke("verify-razorpay-payment", {
+            headers: verifyHeaders,
             body: {
               libraryId,
               razorpay_order_id: response.razorpay_order_id,

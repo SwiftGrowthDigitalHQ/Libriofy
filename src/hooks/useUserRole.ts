@@ -5,6 +5,15 @@ import { useAuth } from "./useAuth";
 export type AppRole = "super_admin" | "library_owner" | "staff" | "partner" | "student";
 export type UserRoleRecord = { role: AppRole; library_id: string | null };
 
+export const isSupabaseUnauthorizedError = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; status?: number; message?: string };
+  if (maybeError.status === 401) return true;
+
+  const message = (maybeError.message ?? "").toLowerCase();
+  return message.includes("unauthorized") || message.includes("jwt") || message.includes("auth");
+};
+
 export const isUserRolesSchemaError = (error: unknown): boolean => {
   if (!error || typeof error !== "object") return false;
   const maybeError = error as { code?: string; status?: number; message?: string };
@@ -23,11 +32,17 @@ export const useUserRole = () => {
         .from("user_roles")
         .select("role, library_id")
         .eq("user_id", user.id);
-      if (error) throw error;
+      if (error) {
+        if (isSupabaseUnauthorizedError(error)) {
+          await supabase.auth.signOut({ scope: "local" });
+        }
+        throw error;
+      }
       return data as UserRoleRecord[];
     },
     enabled: !!user,
     retry: (failureCount, error) => {
+      if (isSupabaseUnauthorizedError(error)) return false;
       if (isUserRolesSchemaError(error)) return false;
       return failureCount < 2;
     },

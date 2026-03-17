@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
-import { useUserRole } from "./useUserRole";
+import { isSupabaseUnauthorizedError, useUserRole } from "./useUserRole";
 
 export const useCurrentLibraryId = () => {
   const { user } = useAuth();
@@ -20,6 +20,9 @@ export const useCurrentLibraryId = () => {
         .limit(1);
 
       if (error) {
+        if (isSupabaseUnauthorizedError(error)) {
+          await supabase.auth.signOut({ scope: "local" });
+        }
         throw error;
       }
 
@@ -27,6 +30,10 @@ export const useCurrentLibraryId = () => {
     },
     enabled: !!user?.id,
     staleTime: 60_000,
+    retry: (failureCount, error) => {
+      if (isSupabaseUnauthorizedError(error)) return false;
+      return failureCount < 2;
+    },
   });
 
   const libraryId = useMemo(() => {

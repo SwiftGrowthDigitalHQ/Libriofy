@@ -6,16 +6,25 @@ type FunctionErrorLike = Error | { message: string; context?: Response };
 const EDGE_FUNCTION_SEND_FAILURE = "Failed to send a request to the Edge Function";
 
 const normalizeFunctionErrorBody = async (context?: Response) => {
-  if (!context) return { detail: null as string | null, error: null as string | null };
+  if (!context) {
+    return {
+      code: null as number | null,
+      detail: null as string | null,
+      error: null as string | null,
+      message: null as string | null,
+    };
+  }
 
   try {
     const body = await context.clone().json();
     return {
+      code: typeof body?.code === "number" ? body.code : null,
       error: body?.error ? String(body.error) : null,
       detail: body?.detail ? String(body.detail) : null,
+      message: body?.message ? String(body.message) : null,
     };
   } catch {
-    return { detail: null, error: null };
+    return { code: null, detail: null, error: null, message: null };
   }
 };
 
@@ -38,13 +47,28 @@ export const readFunctionErrorMessage = async (error: FunctionErrorLike, functio
 
   const body = await normalizeFunctionErrorBody(context);
   if (body.error) message = body.error;
+  if (!body.error && body.message) message = body.message;
   if (body.detail) message = `${message}: ${body.detail}`;
 
   if (isFunctionUnavailableError({ message, context })) {
     return getUnavailableFunctionMessage(functionName);
   }
 
+  if (context?.status === 401 && message === "Missing authorization header") {
+    return functionName
+      ? `${functionName} rejected the request because the auth token was not forwarded. Refresh the page, sign in again, and make sure the function accepts authenticated requests.`
+      : "The Edge Function rejected the request because the auth token was not forwarded. Refresh the page and sign in again.";
+  }
+
   return message;
+};
+
+export const getEdgeFunctionAuthHeaders = async () => {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+
+  const accessToken = data.session?.access_token;
+  return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));

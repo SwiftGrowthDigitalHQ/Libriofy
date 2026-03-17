@@ -41,6 +41,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const clearStoredSession = async () => {
+      setSession(null);
+      setUser(null);
+      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+    };
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (event === "SIGNED_OUT") {
         console.info("[auth] User signed out or session expired.");
@@ -55,12 +61,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
+
+        if (!data.session) {
+          setSession(null);
+          setUser(null);
+          return;
+        }
+
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          console.warn("[auth] Stored session is invalid, clearing it.", userError);
+          await clearStoredSession();
+          return;
+        }
+
         setSession(data.session);
-        setUser(data.session?.user ?? null);
+        setUser(userData.user);
       } catch (error) {
         console.error("[auth] Failed to restore session:", error);
-        setSession(null);
-        setUser(null);
+        await clearStoredSession();
       } finally {
         setLoading(false);
       }

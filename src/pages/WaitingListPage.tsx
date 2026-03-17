@@ -36,6 +36,10 @@ type QueueResult = {
   error?: string;
   position?: number;
   student_name?: string;
+  student_id?: string;
+  seat_number?: string | null;
+  plan_name?: string | null;
+  slot_names?: string[] | null;
 };
 
 const getErrorMessage = (error: unknown): string => {
@@ -180,11 +184,24 @@ const WaitingListPage = () => {
     },
     onSuccess: (result) => {
       if (result?.success) {
-        toast({ title: "Confirmed", description: `${result.student_name} is confirmed` });
+        const seatLabel = result.seat_number ? ` on seat ${result.seat_number}` : "";
+        toast({
+          title: "Student admitted",
+          description: `${result.student_name} is now an active student${seatLabel}.`,
+        });
       } else {
         toast({ title: "Failed", description: result?.error, variant: "destructive" });
       }
       queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["students", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["student-slot-assignments", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["seat-map-students", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["seat-map-slot-assignments", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["seat-map-slot-overview", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["students-qr", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-overview", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["analytics-overview", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["plans-page-student-count", resolvedLibraryId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

@@ -14,3 +14,9 @@ verify_jwt = false
 
 [functions.create-payment]
 verify_jwt = false
+
+[functions.subscription-quote]
+verify_jwt = false
+
+[functions.verify-razorpay-payment]
+verify_jwt = false

@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUserRole } from "@/hooks/useUserRole";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  getEdgeFunctionAuthHeaders,
   isFunctionUnavailableError,
   readFunctionErrorMessage,
   waitForActiveLibrarySubscription,
@@ -166,7 +167,9 @@ const BillingPage = () => {
     queryKey: ["subscription-quote", libraryId, normalizePlanCode(selectedPlan), appliedCouponNormalized],
     queryFn: async (): Promise<SubscriptionQuoteResponse | null> => {
       if (!libraryId || !selectedPlanConfig) return null;
+      const headers = await getEdgeFunctionAuthHeaders();
       const { data, error } = await supabase.functions.invoke<SubscriptionQuoteResponse>("subscription-quote", {
+        headers,
         body: {
           libraryId,
           planName: selectedPlanConfig.code,
@@ -190,7 +193,9 @@ const BillingPage = () => {
       if (!libraryId || !selectedPlanConfig) throw new Error("Library not loaded yet.");
 
       const normalized = normalizeCouponCode(code);
+      const headers = await getEdgeFunctionAuthHeaders();
       const { data, error } = await supabase.functions.invoke<SubscriptionQuoteResponse>("subscription-quote", {
+        headers,
         body: {
           libraryId,
           planName: selectedPlanConfig.code,
@@ -231,7 +236,9 @@ const BillingPage = () => {
     setCheckoutLoading(true);
 
     try {
+      const headers = await getEdgeFunctionAuthHeaders();
       const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-payment", {
+        headers,
         body: {
           libraryId,
           plan: selectedPlanConfig.code,
@@ -264,7 +271,9 @@ const BillingPage = () => {
         description: `${selectedPlanConfig.name} plan activation`,
         order_id: orderRes.orderId,
         handler: async (response: RazorpaySuccessResponse) => {
+          const verifyHeaders = await getEdgeFunctionAuthHeaders();
           const { error: verifyError } = await supabase.functions.invoke("verify-razorpay-payment", {
+            headers: verifyHeaders,
             body: {
               libraryId,
               razorpay_order_id: response.razorpay_order_id,
