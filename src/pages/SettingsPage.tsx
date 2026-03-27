@@ -19,13 +19,33 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { syncLockerCapacity } from "@/api/lockers";
 import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
-import { resolveSubscriptionLockerLimit, type LibrarySubscriptionRecord } from "@/lib/subscription";
+import {
+  formatLockerLimit,
+  formatSeatLimit,
+  resolveSubscriptionLockerLimit,
+  resolveSubscriptionPlanLabel,
+  resolveSubscriptionSeatLimit,
+  type LibrarySubscriptionRecord,
+} from "@/lib/subscription";
 import WebsiteCustomizationTab from "@/components/dashboard/WebsiteCustomizationTab";
 
 type LibraryRow = Database["public"]["Tables"]["libraries"]["Row"];
 type LibraryUpdatePayload = Pick<
   Database["public"]["Tables"]["libraries"]["Update"],
-  "name" | "address" | "city" | "district" | "state" | "country" | "logo_url" | "opening_hours" | "primary_color" | "total_lockers" | "total_seats" | "upi_id"
+  | "name"
+  | "address"
+  | "city"
+  | "district"
+  | "state"
+  | "country"
+  | "logo_url"
+  | "opening_hours"
+  | "primary_color"
+  | "max_lockers"
+  | "max_seats"
+  | "total_lockers"
+  | "total_seats"
+  | "upi_id"
 >;
 type LockerInventoryRow = Pick<Database["public"]["Tables"]["lockers"]["Row"], "id" | "locker_number" | "student_id">;
 
@@ -76,6 +96,7 @@ const SettingsPage = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings-library", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["billing-library-capacity", resolvedLibraryId] });
       queryClient.invalidateQueries({ queryKey: ["locker-capacity-inventory", resolvedLibraryId] });
       queryClient.invalidateQueries({ queryKey: ["lockers", resolvedLibraryId] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview", resolvedLibraryId] });
@@ -797,7 +818,14 @@ const SeatsTab = ({
   const hasConfiguredLockerCapacity = typeof library?.total_lockers === "number";
   const configuredLockerCapacity = hasConfiguredLockerCapacity ? Math.max(Number(library.total_lockers), 0) : 0;
   const effectiveLockerCapacity = Math.max(configuredLockerCapacity, currentLockerCount);
-  const lockerPlanLimit = resolveSubscriptionLockerLimit(subscription);
+  const seatPlanLimit =
+    resolveSubscriptionSeatLimit(subscription) ??
+    (typeof library?.max_seats === "number" ? Math.max(Number(library.max_seats), 0) : null);
+  const lockerPlanLimit =
+    resolveSubscriptionLockerLimit(subscription) ??
+    (typeof library?.max_lockers === "number" ? Math.max(Number(library.max_lockers), 0) : null);
+  const currentPlanLabel = resolveSubscriptionPlanLabel(subscription) ?? "Starter";
+  const remainingSeats = seatPlanLimit == null ? null : Math.max(seatPlanLimit - Math.max(Number(library?.total_seats ?? 0), 0), 0);
   const remainingLockers = lockerPlanLimit == null ? null : Math.max(lockerPlanLimit - effectiveLockerCapacity, 0);
   const nextLockerCapacity = parseCapacityInput(lockers);
   const lockedRemovalCount =
@@ -818,6 +846,7 @@ const SeatsTab = ({
       if (!library) throw new Error("No library selected.");
       return syncLockerCapacity({
         libraryId: library.id,
+        planLimit: lockerPlanLimit,
         targetCapacity: nextCapacity,
         existingLockers: lockerInventory,
       });
@@ -826,7 +855,14 @@ const SeatsTab = ({
       if (library?.id) {
         queryClient.setQueryData(["locker-capacity-inventory", library.id], syncedInventory);
         queryClient.setQueryData(["settings-library", library.id], (current: LibraryRow | null | undefined) =>
-          current ? { ...current, total_lockers: nextCapacity } : current,
+          current
+            ? {
+                ...current,
+                max_lockers:
+                  typeof lockerPlanLimit === "number" && lockerPlanLimit >= 0 ? lockerPlanLimit : current.max_lockers,
+                total_lockers: nextCapacity,
+              }
+            : current,
         );
       }
 
@@ -837,6 +873,7 @@ const SeatsTab = ({
         queryClient.invalidateQueries({ queryKey: ["lockers", library?.id] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard-overview", library?.id] }),
         queryClient.invalidateQueries({ queryKey: ["settings-library", library?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["billing-library-capacity", library?.id] }),
       ]);
       toast({ title: "Locker capacity updated" });
     },
@@ -852,6 +889,9 @@ const SeatsTab = ({
   const handleSeatUpdate = () => {
     if (!library) return;
     const nextSeats = parseCapacityInput(seats);
+    const planLimitMessage = seatPlanLimit
+      ? `Your current plan allows only ${seatPlanLimit} seats. Upgrade your plan to add more.`
+      : null;
     if (!Number.isFinite(nextSeats) || nextSeats < 0) {
       toast({
         title: "Invalid seat capacity",
@@ -866,7 +906,19 @@ const SeatsTab = ({
       return;
     }
 
-    onUpdate({ total_seats: nextSeats });
+    if (seatPlanLimit != null && nextSeats > seatPlanLimit) {
+      toast({
+        title: "Plan limit reached",
+        description: planLimitMessage ?? undefined,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    onUpdate({
+      max_seats: seatPlanLimit ?? undefined,
+      total_seats: nextSeats,
+    });
   };
 
   const handleLockerUpdate = () => {
@@ -927,77 +979,141 @@ const SeatsTab = ({
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg font-display">Seat Capacity</CardTitle>
-          <CardDescription>Set the total number of seats in your library.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="p-4 bg-secondary rounded-lg">
-            <p className="text-sm text-muted-foreground">Current capacity</p>
-            <p className="text-3xl font-bold font-display text-foreground">{library.total_seats} seats</p>
-          </div>
-          <div className="space-y-2 max-w-sm">
-            <Label>New Capacity</Label>
-            <Input type="number" min={0} value={seats} onChange={(event) => setSeats(event.target.value)} placeholder="40" />
-          </div>
-          <Button onClick={handleSeatUpdate} disabled={isPending || !seats}>
-            {isPending ? "Saving..." : "Update Seat Capacity"}
-          </Button>
-        </CardContent>
-      </Card>
+    <div className="space-y-6">
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-xl border border-border bg-secondary/30 p-4">
+          <p className="text-sm text-muted-foreground">Current Plan</p>
+          <p className="mt-1 text-2xl font-bold font-display text-foreground capitalize">{currentPlanLabel}</p>
+        </div>
+        <div className="rounded-xl border border-border bg-secondary/30 p-4">
+          <p className="text-sm text-muted-foreground">Seats Used</p>
+          <p className="mt-1 text-2xl font-bold font-display text-foreground">
+            {subscriptionLoading ? "..." : seatPlanLimit == null ? `${library.total_seats} / Unlimited` : `${library.total_seats} / ${seatPlanLimit}`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {subscriptionLoading ? "Loading plan limits..." : remainingSeats == null ? "No seat cap on this plan." : `${remainingSeats} seats available in your plan.`}
+          </p>
+        </div>
+        <div className="rounded-xl border border-border bg-secondary/30 p-4">
+          <p className="text-sm text-muted-foreground">Lockers Used</p>
+          <p className="mt-1 text-2xl font-bold font-display text-foreground">
+            {subscriptionLoading ? "..." : lockerPlanLimit == null ? `${effectiveLockerCapacity} / Unlimited` : `${effectiveLockerCapacity} / ${lockerPlanLimit}`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {subscriptionLoading ? "Loading plan limits..." : remainingLockers == null ? "No locker cap on this plan." : `${remainingLockers} lockers available in your plan.`}
+          </p>
+        </div>
+        <div className="rounded-xl border border-border bg-secondary/30 p-4">
+          <p className="text-sm text-muted-foreground">Plan Limits</p>
+          <p className="mt-1 text-sm font-medium text-foreground">{formatSeatLimit(seatPlanLimit)}</p>
+          <p className="mt-1 text-sm font-medium text-foreground">{formatLockerLimit(lockerPlanLimit)}</p>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg font-display">Locker Capacity</CardTitle>
-          <CardDescription>Increase capacity to generate new lockers automatically. Decrease only when the lockers being removed are unused.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="p-4 bg-secondary rounded-lg">
-              <p className="text-sm text-muted-foreground">Current Lockers</p>
-              <p className="text-2xl font-bold font-display text-foreground">{currentLockerCount}</p>
+      <p className="text-sm text-amber-700">Upgrade plan to increase seat or locker capacity.</p>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg font-display">Seat Capacity</CardTitle>
+            <CardDescription>Configured seats can never exceed the maximum capacity included in your current subscription plan.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="p-4 bg-secondary rounded-lg">
+                <p className="text-sm text-muted-foreground">Configured Seats</p>
+                <p className="text-2xl font-bold font-display text-foreground">{library.total_seats}</p>
+              </div>
+              <div className="p-4 bg-secondary rounded-lg">
+                <p className="text-sm text-muted-foreground">Plan Max</p>
+                <p className="text-2xl font-bold font-display text-foreground">
+                  {subscriptionLoading ? "..." : seatPlanLimit == null ? "Unlimited" : seatPlanLimit}
+                </p>
+              </div>
+              <div className="p-4 bg-secondary rounded-lg">
+                <p className="text-sm text-muted-foreground">Remaining</p>
+                <p className="text-2xl font-bold font-display text-foreground">
+                  {subscriptionLoading ? "..." : remainingSeats == null ? "Unlimited" : remainingSeats}
+                </p>
+              </div>
             </div>
-            <div className="p-4 bg-secondary rounded-lg">
-              <p className="text-sm text-muted-foreground">Plan Limit</p>
-              <p className="text-2xl font-bold font-display text-foreground">
-                {subscriptionLoading ? "..." : lockerPlanLimit == null ? "Unlimited" : lockerPlanLimit}
+
+            <div className="space-y-2 max-w-sm">
+              <Label>Configured Seats</Label>
+              <Input
+                type="number"
+                min={0}
+                max={seatPlanLimit ?? undefined}
+                value={seats}
+                onChange={(event) => setSeats(event.target.value)}
+                placeholder="40"
+              />
+            </div>
+
+            <Button onClick={handleSeatUpdate} disabled={isPending || subscriptionLoading || !seats}>
+              {isPending ? "Saving..." : "Update Seat Capacity"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg font-display">Locker Capacity</CardTitle>
+            <CardDescription>Increase capacity to generate new lockers automatically. Decrease only when the lockers being removed are unused.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="p-4 bg-secondary rounded-lg">
+                <p className="text-sm text-muted-foreground">Configured Lockers</p>
+                <p className="text-2xl font-bold font-display text-foreground">{effectiveLockerCapacity}</p>
+              </div>
+              <div className="p-4 bg-secondary rounded-lg">
+                <p className="text-sm text-muted-foreground">Plan Max</p>
+                <p className="text-2xl font-bold font-display text-foreground">
+                  {subscriptionLoading ? "..." : lockerPlanLimit == null ? "Unlimited" : lockerPlanLimit}
+                </p>
+              </div>
+              <div className="p-4 bg-secondary rounded-lg">
+                <p className="text-sm text-muted-foreground">Remaining</p>
+                <p className="text-2xl font-bold font-display text-foreground">
+                  {subscriptionLoading ? "..." : remainingLockers == null ? "Unlimited" : remainingLockers}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 max-w-sm">
+              <Label>Configured Lockers</Label>
+              <Input
+                type="number"
+                min={0}
+                max={lockerPlanLimit ?? undefined}
+                value={lockers}
+                onChange={(event) => setLockers(event.target.value)}
+                placeholder="20"
+              />
+            </div>
+
+            {lockerInventoryError ? (
+              <p className="text-sm text-destructive">
+                Unable to load locker usage right now. Refresh before changing capacity.
               </p>
-            </div>
-            <div className="p-4 bg-secondary rounded-lg">
-              <p className="text-sm text-muted-foreground">Remaining</p>
-              <p className="text-2xl font-bold font-display text-foreground">
-                {subscriptionLoading ? "..." : remainingLockers == null ? "Unlimited" : remainingLockers}
+            ) : null}
+
+            {lockedRemovalCount > 0 ? (
+              <p className="text-sm text-amber-700">
+                {lockedRemovalCount} assigned locker{lockedRemovalCount === 1 ? "" : "s"} would be removed by this change. Release or reassign them first.
               </p>
-            </div>
-          </div>
+            ) : null}
 
-          <div className="space-y-2 max-w-sm">
-            <Label>New Capacity</Label>
-            <Input type="number" min={0} value={lockers} onChange={(event) => setLockers(event.target.value)} placeholder="20" />
-          </div>
-
-          {lockerInventoryError ? (
-            <p className="text-sm text-destructive">
-              Unable to load locker usage right now. Refresh before changing capacity.
-            </p>
-          ) : null}
-
-          {lockedRemovalCount > 0 ? (
-            <p className="text-sm text-amber-700">
-              {lockedRemovalCount} assigned locker{lockedRemovalCount === 1 ? "" : "s"} would be removed by this change. Release or reassign them first.
-            </p>
-          ) : null}
-
-          <Button
-            onClick={handleLockerUpdate}
-            disabled={isPending || lockerCapacityMutation.isPending || subscriptionLoading || lockerInventoryLoading || !lockers}
-          >
-            {lockerCapacityMutation.isPending ? "Saving..." : "Update Locker Capacity"}
-          </Button>
-        </CardContent>
-      </Card>
+            <Button
+              onClick={handleLockerUpdate}
+              disabled={isPending || lockerCapacityMutation.isPending || subscriptionLoading || lockerInventoryLoading || !lockers}
+            >
+              {lockerCapacityMutation.isPending ? "Saving..." : "Update Locker Capacity"}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 };

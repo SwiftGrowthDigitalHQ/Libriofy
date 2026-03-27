@@ -20,12 +20,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useAuth } from "@/hooks/useAuth";
+import { STUDENT_GENDER_OPTIONS, formatStudentGender, getStudentGenderBadgeClassName, type StudentGender } from "@/lib/studentGender";
 
 type WaitingEntry = Database["public"]["Tables"]["waiting_list"]["Row"];
 type TimeSlotOption = Pick<Database["public"]["Tables"]["time_slots"]["Row"], "id" | "name">;
@@ -54,7 +56,14 @@ const WaitingListPage = () => {
   const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [form, setForm] = useState({ student_name: "", phone: "", email: "", preferred_slot: "", preferred_plan: "" });
+  const [form, setForm] = useState({
+    student_name: "",
+    gender: "" as StudentGender | "",
+    phone: "",
+    email: "",
+    preferred_slot: "",
+    preferred_plan: "",
+  });
 
   const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
     queryKey: ["my-libraries-fallback", user?.id],
@@ -133,6 +142,7 @@ const WaitingListPage = () => {
       const { data, error } = await supabase.rpc("add_to_waiting_list", {
         p_library_id: resolvedLibraryId,
         p_student_name: form.student_name,
+        p_gender: form.gender || undefined,
         p_phone: form.phone || null,
         p_email: form.email || null,
         p_preferred_slot: form.preferred_slot || null,
@@ -145,7 +155,7 @@ const WaitingListPage = () => {
       if (result?.success) {
         toast({ title: "Added to queue", description: `Position #${result.position}` });
         setDialogOpen(false);
-        setForm({ student_name: "", phone: "", email: "", preferred_slot: "", preferred_plan: "" });
+        setForm({ student_name: "", gender: "", phone: "", email: "", preferred_slot: "", preferred_plan: "" });
         queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
       } else {
         toast({ title: "Failed", description: result?.error || "Unknown error", variant: "destructive" });
@@ -313,6 +323,29 @@ const WaitingListPage = () => {
                     <Label>Student Name *</Label>
                     <Input value={form.student_name} onChange={(e) => setForm({ ...form, student_name: e.target.value })} placeholder="Full name" />
                   </div>
+                  <div className="space-y-3">
+                    <Label>Gender *</Label>
+                    <RadioGroup
+                      value={form.gender}
+                      onValueChange={(value) => setForm({ ...form, gender: value as StudentGender })}
+                      className="grid gap-3 sm:grid-cols-2"
+                    >
+                      {STUDENT_GENDER_OPTIONS.map((option) => {
+                        const inputId = `waiting-list-gender-${option.value}`;
+
+                        return (
+                          <label
+                            key={option.value}
+                            htmlFor={inputId}
+                            className="flex cursor-pointer items-center gap-3 rounded-xl border border-border px-4 py-3 transition-colors hover:bg-muted/40"
+                          >
+                            <RadioGroupItem id={inputId} value={option.value} />
+                            <span className="text-sm font-medium text-foreground">{option.label}</span>
+                          </label>
+                        );
+                      })}
+                    </RadioGroup>
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Phone</Label>
@@ -363,7 +396,7 @@ const WaitingListPage = () => {
                       </Select>
                     </div>
                   </div>
-                  <Button className="w-full" disabled={!form.student_name || addMutation.isPending} onClick={() => addMutation.mutate()}>
+                  <Button className="w-full" disabled={!form.student_name || !form.gender || addMutation.isPending} onClick={() => addMutation.mutate()}>
                     {addMutation.isPending ? "Adding..." : "Add to Queue"}
                   </Button>
                 </div>
@@ -450,6 +483,11 @@ const WaitingListPage = () => {
                       <TableCell className="font-mono text-muted-foreground">{entry.position}</TableCell>
                       <TableCell>
                         <p className="font-medium text-foreground">{entry.student_name}</p>
+                        {entry.gender ? (
+                          <Badge variant="outline" className={`mt-1 rounded-full px-2.5 py-0.5 text-[11px] ${getStudentGenderBadgeClassName(entry.gender)}`}>
+                            {formatStudentGender(entry.gender)}
+                          </Badge>
+                        ) : null}
                         <p className="text-xs text-muted-foreground sm:hidden">{entry.phone || entry.email || ""}</p>
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">

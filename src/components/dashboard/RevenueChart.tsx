@@ -1,8 +1,16 @@
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart3 } from "lucide-react";
+import { ComposedChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line } from "recharts";
 
 export type RevenuePoint = {
   month: string;
   revenue: number;
+};
+
+export type DailyRevenuePoint = {
+  day: string;
+  label: string;
+  currentMonthRevenue: number;
+  previousMonthRevenue: number;
 };
 
 const defaultData: RevenuePoint[] = [
@@ -17,52 +25,123 @@ const defaultData: RevenuePoint[] = [
 
 type RevenueChartProps = {
   data?: RevenuePoint[];
+  dailyData?: DailyRevenuePoint[];
   title?: string;
+  subtitle?: string;
 };
 
-const RevenueChart = ({ data = defaultData, title = "Revenue Trend" }: RevenueChartProps) => {
+type ChartRevenuePoint = {
+  day: string;
+  label: string;
+  currentMonthRevenue: number;
+  previousMonthRevenue: number;
+};
+
+const RevenueChart = ({
+  data = defaultData,
+  dailyData = [],
+  title = "Revenue Trend",
+  subtitle = "Monthly payment collections across recent months.",
+}: RevenueChartProps) => {
   const hasData = data.some((item) => item.revenue > 0);
+  const hasDailyData = dailyData.some((item) => item.currentMonthRevenue > 0 || item.previousMonthRevenue > 0);
+  const peakValue = Math.max(...data.map((item) => item.revenue), 0);
+  const peakMonth = data.find((item) => item.revenue === peakValue)?.month ?? null;
+  const shouldUseWeeklyView = dailyData.length > 14;
+  const chartData: ChartRevenuePoint[] = shouldUseWeeklyView
+    ? Array.from({ length: Math.ceil(dailyData.length / 7) }, (_, index) => {
+        const weekPoints = dailyData.slice(index * 7, index * 7 + 7);
+        const startLabel = weekPoints[0]?.label ?? `Week ${index + 1}`;
+        const endLabel = weekPoints[weekPoints.length - 1]?.label ?? startLabel;
+
+        return {
+          day: `Week ${index + 1}`,
+          label: startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`,
+          currentMonthRevenue: weekPoints.reduce((sum, point) => sum + point.currentMonthRevenue, 0),
+          previousMonthRevenue: weekPoints.reduce((sum, point) => sum + point.previousMonthRevenue, 0),
+        };
+      })
+    : dailyData;
 
   return (
-    <div className="bg-card rounded-xl border border-border p-5">
-      <h3 className="text-sm font-semibold font-display text-foreground mb-4">{title}</h3>
-      <div className="h-64">
-        {hasData ? (
+    <div className="rounded-xl border border-border bg-card p-5">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold font-display text-foreground">{title}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <div className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
+            {shouldUseWeeklyView ? "Weekly grouping" : "Daily breakdown"}
+          </div>
+          {hasData && peakMonth ? (
+            <div className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
+              Peak month: {peakMonth}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="h-72">
+        {hasDailyData ? (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data}>
-              <defs>
-                <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="hsl(172, 66%, 30%)" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="hsl(172, 66%, 30%)" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(200, 15%, 89%)" />
-              <XAxis dataKey="month" tick={{ fontSize: 12 }} stroke="hsl(200, 10%, 45%)" />
-              <YAxis tick={{ fontSize: 12 }} stroke="hsl(200, 10%, 45%)" tickFormatter={(v) => `Rs ${Math.round(v / 1000)}K`} />
+            <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 6, bottom: 8 }} barCategoryGap={shouldUseWeeklyView ? "18%" : "26%"}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(200 15% 89%)" vertical={false} />
+              <XAxis
+                dataKey="day"
+                tick={{ fontSize: 12 }}
+                stroke="hsl(200 10% 45%)"
+                tickMargin={10}
+                minTickGap={24}
+                interval={0}
+                padding={{ left: 12, right: 12 }}
+              />
+              <YAxis tick={{ fontSize: 12 }} stroke="hsl(200 10% 45%)" tickFormatter={(value) => `\u20b9${Math.round(value / 1000)}K`} />
               <Tooltip
-                formatter={(value: number) => [`Rs ${value.toLocaleString("en-IN")}`, "Revenue"]}
+                labelFormatter={(_value, payload) => payload?.[0]?.payload?.label ?? "Day"}
+                formatter={(value: number, name: string) => [
+                  `\u20b9${value.toLocaleString("en-IN")}`,
+                  name === "currentMonthRevenue" ? "This month" : "Last month",
+                ]}
                 contentStyle={{
-                  backgroundColor: "hsl(0, 0%, 100%)",
-                  border: "1px solid hsl(200, 15%, 89%)",
-                  borderRadius: "8px",
+                  backgroundColor: "hsl(0 0% 100%)",
+                  border: "1px solid hsl(200 15% 89%)",
+                  borderRadius: "12px",
                   fontSize: "12px",
                 }}
               />
-              <Area
+              <Bar dataKey="currentMonthRevenue" name="This month" fill="hsl(172 66% 40%)" radius={[8, 8, 4, 4]} maxBarSize={24} />
+              <Line
                 type="monotone"
-                dataKey="revenue"
-                stroke="hsl(172, 66%, 30%)"
-                strokeWidth={2}
-                fill="url(#revenueGradient)"
+                dataKey="previousMonthRevenue"
+                name="Last month"
+                stroke="hsl(24 95% 53%)"
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4 }}
               />
-            </AreaChart>
+            </ComposedChart>
           </ResponsiveContainer>
         ) : (
-          <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-            No payment trend yet
+          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-border/80 bg-muted/20 px-6 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+              <BarChart3 className="h-5 w-5 text-primary" />
+            </div>
+            <p className="mt-4 text-sm font-medium text-foreground">No payment trend yet</p>
+            <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+              Approve your first payments to unlock daily revenue breakdowns and last-month comparisons.
+            </p>
           </div>
         )}
       </div>
+
+      <p className="mt-4 text-xs text-muted-foreground">
+        {hasDailyData
+          ? shouldUseWeeklyView
+            ? "Bars show weekly revenue blocks. The orange line compares the same weekly periods from last month."
+            : "Bars show daily revenue. The orange line tracks the same dates from last month for quick comparison."
+          : "The dashboard will keep showing revenue summaries even before the chart has enough data."}
+      </p>
     </div>
   );
 };

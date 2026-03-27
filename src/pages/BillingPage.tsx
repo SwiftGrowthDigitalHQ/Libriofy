@@ -14,6 +14,7 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useToast } from "@/hooks/use-toast";
 import { useUserRole } from "@/hooks/useUserRole";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import {
   getEdgeFunctionAuthHeaders,
   isFunctionUnavailableError,
@@ -23,7 +24,11 @@ import {
 import {
   evaluateSubscriptionAccess,
   formatInr,
+  formatLockerLimit,
   formatSeatLimit,
+  resolveSubscriptionLockerLimit,
+  resolveSubscriptionPlanLabel,
+  resolveSubscriptionSeatLimit,
   SUBSCRIPTION_BILLING_DAYS,
 } from "@/lib/subscription";
 import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
@@ -62,6 +67,7 @@ type SubscriptionPlanDto = {
   description: string | null;
   price: number;
   seats_limit: number | null;
+  lockers_limit: number | null;
   features: string[];
   is_active: boolean;
   sort_order: number;
@@ -75,6 +81,7 @@ type SubscriptionQuoteResponse = {
     description: string | null;
     price: number;
     seats_limit: number | null;
+    lockers_limit: number | null;
     features: unknown;
     is_active: boolean;
   };
@@ -89,6 +96,11 @@ type SubscriptionQuoteResponse = {
   };
 };
 
+type LibraryCapacitySnapshot = Pick<
+  Database["public"]["Tables"]["libraries"]["Row"],
+  "id" | "max_lockers" | "max_seats" | "name" | "total_lockers" | "total_seats"
+>;
+
 const normalizePlanCode = (value: string | null | undefined) => String(value ?? "").trim().toLowerCase();
 const normalizeCouponCode = (value: string | null | undefined) => String(value ?? "").trim().toUpperCase();
 
@@ -96,6 +108,9 @@ const toFeaturesList = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   return value.map((feature) => String(feature));
 };
+
+const exceedsPlanLimit = (currentUsage: number, planLimit: number | null | undefined) =>
+  typeof planLimit === "number" && planLimit > 0 && currentUsage > planLimit;
 
 const BillingPage = () => {
   const navigate = useNavigate();
@@ -114,13 +129,30 @@ const BillingPage = () => {
   const isOwner = roles.some((role) => role.role === "library_owner");
   const currentPlanCode = useMemo(() => normalizePlanCode(subscription?.plan_name), [subscription?.plan_name]);
 
+  const { data: librarySnapshot } = useQuery({
+    queryKey: ["billing-library-capacity", libraryId],
+    queryFn: async (): Promise<LibraryCapacitySnapshot | null> => {
+      if (!libraryId) return null;
+      const { data, error } = await supabase
+        .from("libraries")
+        .select("id, name, total_seats, total_lockers, max_seats, max_lockers")
+        .eq("id", libraryId)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!libraryId,
+    staleTime: 30_000,
+    gcTime: 2 * 60_000,
+  });
+
   const { data: subscriptionPlans = [], isLoading: plansLoading } = useQuery({
     queryKey: ["subscription-plans"],
     queryFn: async (): Promise<SubscriptionPlanDto[]> => {
       const { data, error } = await supabase
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .from("subscription_plans" as any)
-        .select("code, name, description, price, seats_limit, features, is_active, sort_order")
+        .select("code, name, description, price, seats_limit, lockers_limit, features, is_active, sort_order")
         .order("sort_order", { ascending: true })
         .order("price", { ascending: true });
       if (error) throw error;
@@ -131,6 +163,7 @@ const BillingPage = () => {
         description: row.description == null ? null : String(row.description),
         price: Number(row.price ?? 0),
         seats_limit: row.seats_limit == null ? null : Number(row.seats_limit),
+        lockers_limit: row.lockers_limit == null ? null : Number(row.lockers_limit),
         features: toFeaturesList(row.features),
         is_active: Boolean(row.is_active ?? true),
         sort_order: Number(row.sort_order ?? 100),
@@ -141,10 +174,22 @@ const BillingPage = () => {
   });
 
   const availablePlans = useMemo(() => subscriptionPlans.filter((plan) => plan.is_active), [subscriptionPlans]);
+  const activeSeatLimit = useMemo(
+    () => resolveSubscriptionSeatLimit(subscription) ?? librarySnapshot?.max_seats ?? null,
+    [librarySnapshot?.max_seats, subscription],
+  );
+  const activeLockerLimit = useMemo(
+    () => resolveSubscriptionLockerLimit(subscription) ?? librarySnapshot?.max_lockers ?? null,
+    [librarySnapshot?.max_lockers, subscription],
+  );
   const currentPlanDisplay = useMemo(() => {
     if (!subscription?.plan_name) return "Not activated";
-    return subscriptionPlans.find((plan) => plan.code === currentPlanCode)?.name ?? subscription.plan_name;
-  }, [currentPlanCode, subscription?.plan_name, subscriptionPlans]);
+    return (
+      resolveSubscriptionPlanLabel(subscription) ??
+      subscriptionPlans.find((plan) => plan.code === currentPlanCode)?.name ??
+      subscription.plan_name
+    );
+  }, [currentPlanCode, subscription, subscription?.plan_name, subscriptionPlans]);
 
   useEffect(() => {
     if (!availablePlans.length) return;
@@ -160,6 +205,23 @@ const BillingPage = () => {
     () => availablePlans.find((plan) => plan.code === normalizePlanCode(selectedPlan)) ?? availablePlans[0] ?? null,
     [availablePlans, selectedPlan],
   );
+
+  const selectedPlanCapacityWarning = useMemo(() => {
+    if (!selectedPlanConfig || !librarySnapshot) return null;
+
+    const warnings: string[] = [];
+    if (exceedsPlanLimit(librarySnapshot.total_seats, selectedPlanConfig.seats_limit)) {
+      warnings.push(`${librarySnapshot.total_seats} configured seats exceed the ${selectedPlanConfig.seats_limit} seat limit`);
+    }
+    if (exceedsPlanLimit(librarySnapshot.total_lockers, selectedPlanConfig.lockers_limit)) {
+      warnings.push(`${librarySnapshot.total_lockers} configured lockers exceed the ${selectedPlanConfig.lockers_limit} locker limit`);
+    }
+
+    if (warnings.length === 0) return null;
+    return `${warnings.join(" and ")}. Reduce capacity in Settings before switching to ${selectedPlanConfig.name}.`;
+  }, [librarySnapshot, selectedPlanConfig]);
+
+  const selectedPlanBlocked = !!selectedPlanCapacityWarning;
 
   const appliedCouponNormalized = useMemo(() => (appliedCoupon ? normalizeCouponCode(appliedCoupon) : ""), [appliedCoupon]);
 
@@ -182,7 +244,7 @@ const BillingPage = () => {
       if (!data?.success) return null;
       return data;
     },
-    enabled: !!libraryId && !!selectedPlanConfig,
+    enabled: !!libraryId && !!selectedPlanConfig && !selectedPlanBlocked,
     staleTime: 30_000,
     gcTime: 2 * 60_000,
     retry: 1,
@@ -287,7 +349,11 @@ const BillingPage = () => {
             const activatedSubscription = await waitForActiveLibrarySubscription(libraryId);
 
             if (activatedSubscription) {
-              await queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] });
+              await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] }),
+                queryClient.invalidateQueries({ queryKey: ["billing-library-capacity", libraryId] }),
+                queryClient.invalidateQueries({ queryKey: ["settings-library", libraryId] }),
+              ]);
               toast({
                 title: "Plan activated",
                 description: `${selectedPlanConfig.name} is active. Payment confirmation completed through the webhook.`,
@@ -306,7 +372,11 @@ const BillingPage = () => {
             return;
           }
 
-          await queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] });
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] }),
+            queryClient.invalidateQueries({ queryKey: ["billing-library-capacity", libraryId] }),
+            queryClient.invalidateQueries({ queryKey: ["settings-library", libraryId] }),
+          ]);
           toast({
             title: "Plan activated",
             description: `${selectedPlanConfig.name} is now active for the next ${SUBSCRIPTION_BILLING_DAYS} days.`,
@@ -426,6 +496,22 @@ const BillingPage = () => {
                   {access.planExpiryDate ? format(new Date(access.planExpiryDate), "dd MMM yyyy") : "-"}
                 </span>
               </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Seats configured</span>
+                <span className="font-medium text-foreground">
+                  {librarySnapshot
+                    ? `${librarySnapshot.total_seats} / ${activeSeatLimit == null ? "Unlimited" : activeSeatLimit}`
+                    : "-"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Lockers configured</span>
+                <span className="font-medium text-foreground">
+                  {librarySnapshot
+                    ? `${librarySnapshot.total_lockers} / ${activeLockerLimit == null ? "Unlimited" : activeLockerLimit}`
+                    : "-"}
+                </span>
+              </div>
             </CardContent>
           </Card>
 
@@ -466,7 +552,10 @@ const BillingPage = () => {
                           <p className="text-3xl font-bold text-foreground">{formatInr(plan.price)}</p>
                           <p className="text-sm text-muted-foreground">per 30 days</p>
                         </div>
-                        <p className="mt-3 text-sm font-medium text-foreground">{formatSeatLimit(plan.seats_limit)}</p>
+                        <div className="mt-3 space-y-1 text-sm font-medium text-foreground">
+                          <p>{formatSeatLimit(plan.seats_limit)}</p>
+                          <p>{formatLockerLimit(plan.lockers_limit)}</p>
+                        </div>
                         <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                           {plan.features.map((feature) => (
                             <li key={feature} className="flex items-center gap-2">
@@ -489,7 +578,9 @@ const BillingPage = () => {
                 <div>
                   <p className="text-sm font-medium text-foreground">{selectedPlanConfig?.name ?? "Plan"}</p>
                   <p className="text-sm text-muted-foreground">
-                    {quoteFetching || plansLoading ? (
+                    {selectedPlanBlocked ? (
+                      "Reduce configured capacity in Settings before switching to this plan."
+                    ) : quoteFetching || plansLoading ? (
                       "Calculating total..."
                     ) : quotePricing ? (
                       <>
@@ -505,6 +596,15 @@ const BillingPage = () => {
                       `${formatInr(selectedPlanConfig?.price ?? 0)} for the next ${SUBSCRIPTION_BILLING_DAYS} days`
                     )}
                   </p>
+                  {selectedPlanConfig ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatSeatLimit(selectedPlanConfig.seats_limit)} and {formatLockerLimit(selectedPlanConfig.lockers_limit)}
+                    </p>
+                  ) : null}
+
+                  {selectedPlanCapacityWarning ? (
+                    <p className="mt-3 text-sm text-amber-700">{selectedPlanCapacityWarning}</p>
+                  ) : null}
 
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1 space-y-1">
@@ -516,7 +616,7 @@ const BillingPage = () => {
                         value={couponInput}
                         placeholder="Enter coupon code"
                         onChange={(e) => setCouponInput(e.target.value)}
-                        disabled={!libraryId || !selectedPlanConfig}
+                        disabled={!libraryId || !selectedPlanConfig || selectedPlanBlocked}
                       />
                     </div>
                     <div className="flex gap-2">
@@ -524,7 +624,7 @@ const BillingPage = () => {
                         type="button"
                         variant="outline"
                         onClick={() => applyCouponMutation.mutate(couponInput)}
-                        disabled={!couponInput.trim() || applyCouponMutation.isPending || !libraryId || !selectedPlanConfig}
+                        disabled={!couponInput.trim() || applyCouponMutation.isPending || !libraryId || !selectedPlanConfig || selectedPlanBlocked}
                       >
                         {applyCouponMutation.isPending ? (
                           <>
@@ -559,7 +659,8 @@ const BillingPage = () => {
                     access.reason === "account_disabled" ||
                     plansLoading ||
                     !selectedPlanConfig ||
-                    !planIsSelected
+                    !planIsSelected ||
+                    selectedPlanBlocked
                   }
                 >
                   {checkoutLoading ? (
@@ -568,7 +669,7 @@ const BillingPage = () => {
                       Opening checkout...
                     </>
                   ) : isOwner ? (
-                    access.isPlanActive ? "Renew or switch plan" : "Activate plan"
+                    selectedPlanBlocked ? "Reduce capacity first" : access.isPlanActive ? "Renew or switch plan" : "Activate plan"
                   ) : (
                     "Only the library owner can pay"
                   )}

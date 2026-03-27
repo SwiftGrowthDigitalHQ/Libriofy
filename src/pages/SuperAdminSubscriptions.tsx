@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   formatInr,
+  formatLockerLimit,
   formatSeatLimit,
   SUBSCRIPTION_BILLING_DAYS,
 } from "@/lib/subscription";
@@ -46,6 +47,7 @@ type AdminSubscriptionRow = {
   status: string;
   price: number;
   seats_limit: number;
+  lockers_limit: number | null;
   features: string[];
   libraries: LibrarySummaryRow | null;
 };
@@ -57,6 +59,7 @@ type SubscriptionPlanAdminRow = {
   description: string | null;
   price: number;
   seats_limit: number | null;
+  lockers_limit: number | null;
   features: string[];
   is_active: boolean;
   sort_order: number;
@@ -139,6 +142,7 @@ const normalizeSubscriptionRow = (
   status: subscription.status,
   price: subscription.price,
   seats_limit: subscription.seats_limit,
+  lockers_limit: subscription.lockers_limit ?? null,
   features: Array.isArray(subscription.features) ? (subscription.features as string[]) : [],
   libraries: librariesById.get(subscription.library_id) ?? null,
 });
@@ -157,6 +161,7 @@ const SuperAdminSubscriptions = () => {
     description: "",
     price: "",
     seats_limit: "",
+    lockers_limit: "",
     features: "",
     sort_order: "100",
     is_active: true,
@@ -202,6 +207,7 @@ const SuperAdminSubscriptions = () => {
         description: row.description == null ? null : String(row.description),
         price: Number(row.price ?? 0),
         seats_limit: row.seats_limit == null ? null : Number(row.seats_limit),
+        lockers_limit: row.lockers_limit == null ? null : Number(row.lockers_limit),
         features: Array.isArray(row.features) ? row.features.map((feature) => String(feature)) : [],
         is_active: Boolean(row.is_active ?? true),
         sort_order: Number(row.sort_order ?? 100),
@@ -355,6 +361,8 @@ const SuperAdminSubscriptions = () => {
       const sortOrder = Math.trunc(Number(planForm.sort_order || 100));
       const seatsLimitRaw = planForm.seats_limit.trim();
       const seatsLimit = seatsLimitRaw ? Math.trunc(Number(seatsLimitRaw)) : null;
+      const lockersLimitRaw = planForm.lockers_limit.trim();
+      const lockersLimit = lockersLimitRaw ? Math.trunc(Number(lockersLimitRaw)) : null;
       const features = parseFeaturesTextarea(planForm.features);
 
       if (!code) throw new Error("Plan code is required.");
@@ -362,7 +370,10 @@ const SuperAdminSubscriptions = () => {
       if (!Number.isFinite(price) || price < 0) throw new Error("Price must be 0 or greater.");
       if (!Number.isFinite(sortOrder)) throw new Error("Sort order must be a number.");
       if (seatsLimitRaw && (!Number.isFinite(seatsLimit) || Number(seatsLimit) <= 0)) {
-        throw new Error("Seat limit must be greater than 0 (or leave blank for unlimited).");
+        throw new Error("Seat limit must be greater than 0.");
+      }
+      if (lockersLimitRaw && (!Number.isFinite(lockersLimit) || Number(lockersLimit) <= 0)) {
+        throw new Error("Locker limit must be greater than 0.");
       }
 
       const payload = {
@@ -371,6 +382,7 @@ const SuperAdminSubscriptions = () => {
         description,
         price,
         seats_limit: seatsLimit,
+        lockers_limit: lockersLimit,
         features,
         is_active: planForm.is_active,
         sort_order: sortOrder,
@@ -401,6 +413,7 @@ const SuperAdminSubscriptions = () => {
         description: "",
         price: "",
         seats_limit: "",
+        lockers_limit: "",
         features: "",
         sort_order: "100",
         is_active: true,
@@ -590,6 +603,7 @@ const SuperAdminSubscriptions = () => {
       plan_price: plan.price,
       price: plan.price,
       seats_limit: plan.seats_limit ?? 0,
+      lockers_limit: plan.lockers_limit ?? null,
       features: plan.features,
     });
   };
@@ -615,6 +629,7 @@ const SuperAdminSubscriptions = () => {
       status: editSub.status,
       price: editSub.plan_price ?? editSub.price,
       seats_limit: editSub.seats_limit,
+      lockers_limit: editSub.lockers_limit,
       features: editSub.features,
     };
 
@@ -644,6 +659,7 @@ const SuperAdminSubscriptions = () => {
       plan_price: plan.price,
       price: plan.price,
       seats_limit: plan.seats_limit ?? 0,
+      lockers_limit: plan.lockers_limit ?? null,
       features: plan.features,
       payment_status: "paid",
       status: "active",
@@ -658,6 +674,7 @@ const SuperAdminSubscriptions = () => {
         plan_price: plan.price,
         price: plan.price,
         seats_limit: plan.seats_limit ?? 0,
+        lockers_limit: plan.lockers_limit ?? null,
         features: plan.features,
         payment_status: "paid",
         status: "active",
@@ -755,7 +772,10 @@ const SuperAdminSubscriptions = () => {
                           <p className="text-3xl font-bold text-foreground">{formatInr(plan.price)}</p>
                           <p className="text-sm text-muted-foreground">per 30 days</p>
                         </div>
-                        <p className="text-sm font-medium text-foreground">{formatSeatLimit(plan.seats_limit)}</p>
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium text-foreground">{formatSeatLimit(plan.seats_limit)}</p>
+                          <p className="text-sm font-medium text-foreground">{formatLockerLimit(plan.lockers_limit)}</p>
+                        </div>
                         <ul className="space-y-1 text-xs text-muted-foreground">
                           {plan.features.slice(0, 5).map((feature) => (
                             <li key={feature}>{feature}</li>
@@ -867,6 +887,7 @@ const SuperAdminSubscriptions = () => {
                         description: "",
                         price: "",
                         seats_limit: "",
+                        lockers_limit: "",
                         features: "",
                         sort_order: "100",
                         is_active: true,
@@ -890,6 +911,7 @@ const SuperAdminSubscriptions = () => {
                         <TableHead>Name</TableHead>
                         <TableHead>Price</TableHead>
                         <TableHead className="hidden md:table-cell">Seats</TableHead>
+                        <TableHead className="hidden md:table-cell">Lockers</TableHead>
                         <TableHead className="hidden md:table-cell">Active</TableHead>
                         <TableHead className="hidden md:table-cell">Sort</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -909,6 +931,7 @@ const SuperAdminSubscriptions = () => {
                           </TableCell>
                           <TableCell>{formatInr(plan.price)}</TableCell>
                           <TableCell className="hidden md:table-cell">{formatSeatLimit(plan.seats_limit)}</TableCell>
+                          <TableCell className="hidden md:table-cell">{formatLockerLimit(plan.lockers_limit)}</TableCell>
                           <TableCell className="hidden md:table-cell">
                             <Badge variant={plan.is_active ? "secondary" : "outline"}>{plan.is_active ? "Active" : "Disabled"}</Badge>
                           </TableCell>
@@ -926,6 +949,7 @@ const SuperAdminSubscriptions = () => {
                                     description: plan.description ?? "",
                                     price: String(plan.price),
                                     seats_limit: plan.seats_limit == null ? "" : String(plan.seats_limit),
+                                    lockers_limit: plan.lockers_limit == null ? "" : String(plan.lockers_limit),
                                     features: featuresToTextarea(plan.features),
                                     sort_order: String(plan.sort_order),
                                     is_active: plan.is_active,
@@ -1292,7 +1316,7 @@ const SuperAdminSubscriptions = () => {
                   </div>
                 </div>
 
-                <div className="grid gap-4 rounded-xl border border-border bg-secondary/20 p-4 sm:grid-cols-3">
+                <div className="grid gap-4 rounded-xl border border-border bg-secondary/20 p-4 sm:grid-cols-4">
                   <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Plan price</p>
                     <p className="mt-1 text-base font-semibold text-foreground">{formatInr(editSub.plan_price ?? editSub.price)}</p>
@@ -1300,6 +1324,10 @@ const SuperAdminSubscriptions = () => {
                   <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Seat limit</p>
                     <p className="mt-1 text-base font-semibold text-foreground">{formatSeatLimit(editSub.seats_limit || null)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Locker limit</p>
+                    <p className="mt-1 text-base font-semibold text-foreground">{formatLockerLimit(editSub.lockers_limit)}</p>
                   </div>
                   <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Next action</p>
@@ -1347,6 +1375,7 @@ const SuperAdminSubscriptions = () => {
                 description: "",
                 price: "",
                 seats_limit: "",
+                lockers_limit: "",
                 features: "",
                 sort_order: "100",
                 is_active: true,
@@ -1403,7 +1432,18 @@ const SuperAdminSubscriptions = () => {
                     min="1"
                     value={planForm.seats_limit}
                     onChange={(event) => setPlanForm({ ...planForm, seats_limit: event.target.value })}
-                    placeholder="Blank = unlimited"
+                    placeholder="50"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Locker limit</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={planForm.lockers_limit}
+                    onChange={(event) => setPlanForm({ ...planForm, lockers_limit: event.target.value })}
+                    placeholder="30"
                   />
                 </div>
 
@@ -1429,7 +1469,7 @@ const SuperAdminSubscriptions = () => {
                   <Textarea
                     value={planForm.features}
                     onChange={(event) => setPlanForm({ ...planForm, features: event.target.value })}
-                    placeholder={`Up to 50 seats\nSeat management\nNotifications`}
+                    placeholder={`Up to 50 seats\nUp to 30 lockers\nSeat management\nNotifications`}
                   />
                 </div>
               </div>

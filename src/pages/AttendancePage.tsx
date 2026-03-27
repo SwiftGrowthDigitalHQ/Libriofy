@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import jsQR from "jsqr";
 import { supabase } from "@/integrations/supabase/client";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -41,9 +42,11 @@ const AttendancePage = () => {
   const { user } = useAuth();
   const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<BarcodeDetectorInstance | null>(null);
   const rafRef = useRef<number | null>(null);
+  const cameraOpenRef = useRef(false);
   const scanLockRef = useRef(false);
 
   const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
@@ -76,6 +79,8 @@ const AttendancePage = () => {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    detectorRef.current = null;
+    cameraOpenRef.current = false;
     scanLockRef.current = false;
     setCameraOpen(false);
     setCameraBusy(false);
@@ -93,6 +98,7 @@ const AttendancePage = () => {
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["attendance-logs-today", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-overview", resolvedLibraryId] });
       setLastResult(result);
       setQrInput("");
       if (result.success) {
@@ -109,22 +115,59 @@ const AttendancePage = () => {
     },
   });
 
-  const runScanLoop = () => {
+  const readQrCodeFromFrame = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) return null;
+
+    const detector = detectorRef.current;
+    if (detector) {
+      try {
+        const barcodes = await detector.detect(video);
+        const nativeValue = barcodes.find((item) => typeof item.rawValue === "string" && item.rawValue.trim())?.rawValue?.trim();
+        if (nativeValue) return nativeValue;
+      } catch {
+        // If native detection fails for a frame, continue with the canvas fallback below.
+      }
+    }
+
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) return null;
+
+    const canvas = canvasRef.current ?? document.createElement("canvas");
+    canvasRef.current = canvas;
+
+    const maxScanWidth = 960;
+    const scale = width > maxScanWidth ? maxScanWidth / width : 1;
+    const targetWidth = Math.max(1, Math.round(width * scale));
+    const targetHeight = Math.max(1, Math.round(height * scale));
+
+    if (canvas.width !== targetWidth) canvas.width = targetWidth;
+    if (canvas.height !== targetHeight) canvas.height = targetHeight;
+
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return null;
+
+    context.drawImage(video, 0, 0, targetWidth, targetHeight);
+    const imageData = context.getImageData(0, 0, targetWidth, targetHeight);
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: "attemptBoth",
+    });
+
+    return code?.data?.trim() || null;
+  }, []);
+
+  const runScanLoop = useCallback(() => {
     const loop = async () => {
-      if (!cameraOpen || scanLockRef.current) return;
+      if (!cameraOpenRef.current || scanLockRef.current) return;
 
-      const video = videoRef.current;
-      const detector = detectorRef.current;
-
-      if (!video || !detector || video.readyState < 2) {
+      if (!videoRef.current || videoRef.current.readyState < 2) {
         rafRef.current = window.requestAnimationFrame(() => void loop());
         return;
       }
 
       try {
-        const barcodes = await detector.detect(video);
-        const scannedValue = barcodes.find((item) => typeof item.rawValue === "string" && item.rawValue.trim())?.rawValue?.trim();
-
+        const scannedValue = await readQrCodeFromFrame();
         if (scannedValue) {
           scanLockRef.current = true;
           setQrInput(scannedValue);
@@ -139,7 +182,36 @@ const AttendancePage = () => {
       rafRef.current = window.requestAnimationFrame(() => void loop());
     };
 
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current);
+    }
     rafRef.current = window.requestAnimationFrame(() => void loop());
+  }, [checkInMutation, readQrCodeFromFrame, stopCamera]);
+
+  const getCameraErrorMessage = (error: unknown) => {
+    if (error instanceof DOMException) {
+      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+        return "Camera permission was denied. Allow camera access and try again.";
+      }
+      if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+        return "No camera was found on this device.";
+      }
+      if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+        return "Camera is busy in another app or browser tab. Close it there and try again.";
+      }
+      if (error.name === "OverconstrainedError") {
+        return "Unable to start the preferred camera. Try again or switch devices.";
+      }
+      if (error.name === "SecurityError") {
+        return "Camera access is blocked by browser security settings for this page.";
+      }
+    }
+
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+
+    return "Camera permission denied or camera unavailable.";
   };
 
   const startCamera = async () => {
@@ -151,24 +223,34 @@ const AttendancePage = () => {
     }
 
     const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
-    if (!BarcodeDetectorCtor) {
-      setCameraError("Camera QR scan is not supported in this browser. Use Chrome/Edge latest version.");
-      return;
-    }
-
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError("Camera API not available in this browser.");
       return;
     }
 
     try {
+      stopCamera();
       setCameraBusy(true);
 
-      detectorRef.current = new BarcodeDetectorCtor({ formats: ["qr_code"] });
+      detectorRef.current = null;
+      if (BarcodeDetectorCtor) {
+        try {
+          detectorRef.current = new BarcodeDetectorCtor({ formats: ["qr_code"] });
+        } catch {
+          detectorRef.current = null;
+        }
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
         audio: false,
       });
+
+      if (!videoRef.current) {
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        });
+      }
 
       if (!videoRef.current) {
         stream.getTracks().forEach((track) => track.stop());
@@ -179,16 +261,13 @@ const AttendancePage = () => {
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
 
+      cameraOpenRef.current = true;
       setCameraOpen(true);
       setCameraBusy(false);
       runScanLoop();
     } catch (error: unknown) {
       stopCamera();
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Camera permission denied or camera unavailable.";
-      setCameraError(message);
+      setCameraError(getCameraErrorMessage(error));
     }
   };
 
@@ -256,9 +335,20 @@ const AttendancePage = () => {
                 </Button>
               </form>
 
-              {cameraOpen && (
+              {(cameraOpen || cameraBusy) && (
                 <div className="mt-4 rounded-lg border border-border overflow-hidden bg-secondary/20">
-                  <video ref={videoRef} className="w-full h-56 object-cover" muted playsInline />
+                  <video
+                    ref={videoRef}
+                    className={`w-full h-56 object-cover ${cameraOpen ? "block" : "hidden"}`}
+                    autoPlay
+                    muted
+                    playsInline
+                  />
+                  {cameraBusy && !cameraOpen ? (
+                    <div className="flex h-56 items-center justify-center text-sm text-muted-foreground">
+                      Initializing camera preview...
+                    </div>
+                  ) : null}
                 </div>
               )}
 

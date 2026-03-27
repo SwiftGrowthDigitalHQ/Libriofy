@@ -11,6 +11,7 @@ const normalizeFunctionErrorBody = async (context?: Response) => {
       code: null as number | null,
       detail: null as string | null,
       error: null as string | null,
+      hint: null as string | null,
       message: null as string | null,
     };
   }
@@ -21,10 +22,11 @@ const normalizeFunctionErrorBody = async (context?: Response) => {
       code: typeof body?.code === "number" ? body.code : null,
       error: body?.error ? String(body.error) : null,
       detail: body?.detail ? String(body.detail) : null,
+      hint: body?.hint ? String(body.hint) : null,
       message: body?.message ? String(body.message) : null,
     };
   } catch {
-    return { code: null, detail: null, error: null, message: null };
+    return { code: null, detail: null, error: null, hint: null, message: null };
   }
 };
 
@@ -49,6 +51,7 @@ export const readFunctionErrorMessage = async (error: FunctionErrorLike, functio
   if (body.error) message = body.error;
   if (!body.error && body.message) message = body.message;
   if (body.detail) message = `${message}: ${body.detail}`;
+  if (body.hint) message = `${message} Hint: ${body.hint}`;
 
   if (isFunctionUnavailableError({ message, context })) {
     return getUnavailableFunctionMessage(functionName);

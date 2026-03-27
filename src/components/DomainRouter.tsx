@@ -1,7 +1,8 @@
-import { ReactNode } from "react";
+import { lazy, ReactNode } from "react";
 import { useDomainLibrary } from "@/hooks/useDomainLibrary";
-import LibraryPublicPage from "@/pages/LibraryPublicPage";
 import { Loader2 } from "lucide-react";
+
+const LibraryPublicPage = lazy(() => import("@/pages/LibraryPublicPage"));
 
 /**
  * If the current hostname matches a library's custom_domain,

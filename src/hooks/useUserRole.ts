@@ -38,7 +38,28 @@ export const useUserRole = () => {
         }
         throw error;
       }
-      return data as UserRoleRecord[];
+
+      const roles = (data as UserRoleRecord[]) ?? [];
+      if (roles.some((role) => role.role === "partner")) {
+        return roles;
+      }
+
+      const { data: affiliate, error: affiliateError } = await supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .from("affiliates" as any)
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (affiliateError) {
+        throw affiliateError;
+      }
+
+      if (affiliate) {
+        return [...roles, { role: "partner", library_id: null }];
+      }
+
+      return roles;
     },
     enabled: !!user,
     retry: (failureCount, error) => {
@@ -60,9 +81,9 @@ export const useIsSuperAdmin = () => {
 export const getPrimaryRole = (roles: UserRoleRecord[] | null | undefined): AppRole | null => {
   if (!roles?.length) return null;
   if (roles.some((r) => r.role === "super_admin")) return "super_admin";
+  if (roles.some((r) => r.role === "partner")) return "partner";
   if (roles.some((r) => r.role === "library_owner")) return "library_owner";
   if (roles.some((r) => r.role === "staff")) return "staff";
-  if (roles.some((r) => r.role === "partner")) return "partner";
   if (roles.some((r) => r.role === "student")) return "student";
   return null;
 };

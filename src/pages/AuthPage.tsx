@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { ReactNode, useCallback, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,10 +11,24 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp
 import { BookOpen, Mail, Smartphone, Chrome, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
+import InstallAppButton from "@/components/pwa/InstallAppButton";
 
 type AuthPageProps = {
   initialMode?: "login" | "signup" | "verify-phone";
 };
+
+const AuthShell = ({ children }: { children: ReactNode }) => (
+  <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="w-full max-w-md space-y-4">
+      <div className="flex justify-end">
+        <InstallAppButton variant="outline" size="sm">
+          Install App
+        </InstallAppButton>
+      </div>
+      {children}
+    </div>
+  </div>
+);
 
 const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
   // Mode: "login" | "signup" | "verify-phone"
@@ -58,9 +72,24 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
       .from("user_roles")
       .select("role")
       .eq("user_id", currentUser.id);
+
+    const hasPartnerRole = roles?.some((r) => r.role === "partner") ?? false;
+    let hasPartnerProfile = false;
+
+    if (!hasPartnerRole) {
+      const { data: affiliate } = await supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .from("affiliates" as any)
+        .select("id")
+        .eq("user_id", currentUser.id)
+        .maybeSingle();
+
+      hasPartnerProfile = !!affiliate;
+    }
+
     if (roles?.some((r) => r.role === "super_admin")) {
       navigate("/admin");
-    } else if (roles?.some((r) => r.role === "partner")) {
+    } else if (hasPartnerRole || hasPartnerProfile) {
       navigate("/partner/dashboard");
     } else {
       navigate("/dashboard");
@@ -221,8 +250,8 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
   // --- Render: Phone Verification Step ---
   if (mode === "verify-phone") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-md">
+      <AuthShell>
+        <Card className="w-full">
           <CardHeader className="text-center">
             <div className="mx-auto w-12 h-12 rounded-xl bg-primary flex items-center justify-center mb-4">
               <Smartphone className="w-6 h-6 text-primary-foreground" />
@@ -279,15 +308,15 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
             </button>
           </CardContent>
         </Card>
-      </div>
+      </AuthShell>
     );
   }
 
   // --- Render: Signup ---
   if (mode === "signup") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-md">
+      <AuthShell>
+        <Card className="w-full">
           <CardHeader className="text-center">
             <div className="mx-auto w-12 h-12 rounded-xl bg-primary flex items-center justify-center mb-4">
               <BookOpen className="w-6 h-6 text-primary-foreground" />
@@ -347,14 +376,14 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
             </p>
           </CardContent>
         </Card>
-      </div>
+      </AuthShell>
     );
   }
 
   // --- Render: Login ---
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
+    <AuthShell>
+      <Card className="w-full">
         <CardHeader className="text-center">
           <div className="mx-auto w-12 h-12 rounded-xl bg-primary flex items-center justify-center mb-4">
             <BookOpen className="w-6 h-6 text-primary-foreground" />
@@ -446,7 +475,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
           </p>
         </CardContent>
       </Card>
-    </div>
+    </AuthShell>
   );
 };
 

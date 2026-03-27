@@ -460,6 +460,8 @@ END;
 $$;
 
 -- 9) Update admin dashboard view to include partner contact fields + stored totals.
+DROP VIEW IF EXISTS public.admin_affiliate_dashboard;
+
 CREATE OR REPLACE VIEW public.admin_affiliate_dashboard AS
 SELECT
   a.id AS affiliate_id,
@@ -698,4 +700,3 @@ BEGIN
   RETURN NEW;
 END;
 $function$;
-

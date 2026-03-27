@@ -27,11 +27,25 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import WebsitePreviewPanel from "@/components/dashboard/WebsitePreviewPanel";
-import { isValidHexColor, normalizeHexColor, type WebsiteBackgroundType } from "@/lib/libraryWebsiteTheme";
+import {
+  encodeHeaderConfig,
+  HEADER_CONFIG_PLACEHOLDER_IMAGE,
+  HEADER_CONFIG_SORT_ORDER,
+  isHeaderConfigCaption,
+  parseHeaderConfig,
+  type StoredHeaderConfig,
+} from "@/lib/libraryHeaderConfig";
+import {
+  isValidHexColor,
+  normalizeHexColor,
+  type HeaderCtaTextStyle,
+  type WebsiteBackgroundType,
+} from "@/lib/libraryWebsiteTheme";
 
 const MEDIA_BUCKET = "library-media";
 const DEFAULT_BRAND_COLOR = "#14b8a6";
 const DEFAULT_DARK_TEXT = "#0f172a";
+const DEFAULT_HEADER_COLOR = "#0f172a";
 const DEFAULT_LIGHT_TEXT = "#ffffff";
 const DEFAULT_LIGHT_SUBTEXT = "#e2e8f0";
 
@@ -114,6 +128,15 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
   const [ctaTitle, setCtaTitle] = useState("");
   const [ctaSubtitle, setCtaSubtitle] = useState("");
 
+  const [headerBackgroundType, setHeaderBackgroundType] = useState<"color" | "image">("color");
+  const [headerBackgroundColor, setHeaderBackgroundColor] = useState(DEFAULT_HEADER_COLOR);
+  const [headerOverlayOpacity, setHeaderOverlayOpacity] = useState(72);
+  const [headerTextColor, setHeaderTextColor] = useState(DEFAULT_LIGHT_TEXT);
+  const [headerCtaButtonColor, setHeaderCtaButtonColor] = useState(DEFAULT_BRAND_COLOR);
+  const [headerCtaButtonTextColor, setHeaderCtaButtonTextColor] = useState(DEFAULT_LIGHT_TEXT);
+  const [headerCtaTextStyle, setHeaderCtaTextStyle] = useState<HeaderCtaTextStyle>("bold");
+  const [persistedHeaderBackgroundUrl, setPersistedHeaderBackgroundUrl] = useState<string | null>(null);
+
   const [heroOverlayColor, setHeroOverlayColor] = useState(DEFAULT_BRAND_COLOR);
   const [heroOverlayOpacity, setHeroOverlayOpacity] = useState(70);
   const [heroNoFill, setHeroNoFill] = useState(false);
@@ -132,6 +155,7 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
   const [ctaButtonColor, setCtaButtonColor] = useState(DEFAULT_LIGHT_TEXT);
   const [ctaButtonTextColor, setCtaButtonTextColor] = useState(DEFAULT_DARK_TEXT);
 
+  const [headerBackgroundFile, setHeaderBackgroundFile] = useState<File | null>(null);
   const [heroBackgroundFile, setHeroBackgroundFile] = useState<File | null>(null);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [ctaBackgroundFile, setCtaBackgroundFile] = useState<File | null>(null);
@@ -142,6 +166,7 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
   const [reviewRating, setReviewRating] = useState("5");
   const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
 
+  const headerBackgroundPreviewUrl = useObjectUrl(headerBackgroundFile);
   const heroPreviewUrl = useObjectUrl(heroBackgroundFile);
   const logoPreviewUrl = useObjectUrl(logoFile);
   const ctaBackgroundPreviewUrl = useObjectUrl(ctaBackgroundFile);
@@ -174,6 +199,8 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
     setCtaSubtitleColor(library.cta_subtitle_color || library.cta_text_color || DEFAULT_LIGHT_TEXT);
     setCtaButtonColor(library.cta_button_color || DEFAULT_LIGHT_TEXT);
     setCtaButtonTextColor(library.cta_button_text_color || DEFAULT_DARK_TEXT);
+    setPersistedHeaderBackgroundUrl(library.header_background_url || null);
+    setHeaderBackgroundFile(null);
     setHeroBackgroundFile(null);
     setLogoFile(null);
     setCtaBackgroundFile(null);
@@ -194,6 +221,55 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
     },
     enabled: !!library?.id,
   });
+
+  const headerConfigRow = useMemo(
+    () => gallery.find((image: any) => isHeaderConfigCaption(image.caption)) ?? null,
+    [gallery],
+  );
+
+  const visibleGallery = useMemo(
+    () => gallery.filter((image: any) => !isHeaderConfigCaption(image.caption)),
+    [gallery],
+  );
+
+  const storedHeaderConfig = useMemo(
+    () => parseHeaderConfig(headerConfigRow?.caption),
+    [headerConfigRow?.caption],
+  );
+
+  useEffect(() => {
+    if (!library?.id) return;
+
+    const resolvedHeaderConfig = storedHeaderConfig ?? {
+      backgroundType: library.header_background_type === "image" ? "image" : "color",
+      backgroundColor: library.header_background_color || DEFAULT_HEADER_COLOR,
+      overlayOpacity:
+        typeof library.header_overlay_opacity === "number" ? Math.min(Math.max(library.header_overlay_opacity, 0), 100) : 72,
+      textColor: library.header_text_color || DEFAULT_LIGHT_TEXT,
+      ctaButtonColor: null,
+      ctaButtonTextColor: null,
+      ctaTextStyle: null,
+      backgroundUrl: library.header_background_url || null,
+    };
+
+    setHeaderBackgroundType(resolvedHeaderConfig.backgroundType);
+    setHeaderBackgroundColor(resolvedHeaderConfig.backgroundColor);
+    setHeaderOverlayOpacity(resolvedHeaderConfig.overlayOpacity);
+    setHeaderTextColor(resolvedHeaderConfig.textColor);
+    setHeaderCtaButtonColor(resolvedHeaderConfig.ctaButtonColor || library.primary_color || DEFAULT_BRAND_COLOR);
+    setHeaderCtaButtonTextColor(resolvedHeaderConfig.ctaButtonTextColor || DEFAULT_LIGHT_TEXT);
+    setHeaderCtaTextStyle(resolvedHeaderConfig.ctaTextStyle || "bold");
+    setPersistedHeaderBackgroundUrl(resolvedHeaderConfig.backgroundUrl);
+  }, [
+    library?.header_background_color,
+    library?.header_background_type,
+    library?.header_background_url,
+    library?.header_overlay_opacity,
+    library?.header_text_color,
+    library?.id,
+    library?.primary_color,
+    storedHeaderConfig,
+  ]);
 
   const { data: reviews = [] } = useQuery({
     queryKey: ["library-reviews", library?.id],
@@ -230,16 +306,14 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
     }
   };
 
-  const replaceLibraryAsset = async ({
-    field,
-    folder,
-    file,
+  const uploadLibraryMediaFile = async ({
     existingUrl,
+    file,
+    folder,
   }: {
-    field: "hero_background_url" | "logo_url" | "cta_background_image_url";
-    folder: "hero" | "logo" | "cta";
-    file: File;
     existingUrl?: string | null;
+    file: File;
+    folder: "header" | "hero" | "logo" | "cta" | "gallery";
   }) => {
     if (!library?.id) throw new Error("No library selected.");
     if (!user?.id) throw new Error("You must be signed in.");
@@ -255,35 +329,85 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
     if (uploadError) throw uploadError;
 
     const { data: publicData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
-    const publicUrl = publicData.publicUrl;
+    const previousStoragePath = existingUrl ? getStoragePathFromUrl(existingUrl) : null;
+
+    if (previousStoragePath && previousStoragePath !== path) {
+      const { error: removeError } = await supabase.storage.from(MEDIA_BUCKET).remove([previousStoragePath]);
+      if (removeError) throw removeError;
+    }
+
+    return publicData.publicUrl;
+  };
+
+  const removeLibraryMediaFile = async (existingUrl?: string | null) => {
+    const storagePath = existingUrl ? getStoragePathFromUrl(existingUrl) : null;
+    if (!storagePath) return;
+
+    const { error: removeError } = await supabase.storage.from(MEDIA_BUCKET).remove([storagePath]);
+    if (removeError) throw removeError;
+  };
+
+  const buildHeaderConfig = (backgroundUrl = persistedHeaderBackgroundUrl): StoredHeaderConfig => ({
+    backgroundColor: normalizeHexColor(headerBackgroundColor, DEFAULT_HEADER_COLOR),
+    backgroundType: headerBackgroundType,
+    backgroundUrl: backgroundUrl || null,
+    ctaButtonColor: normalizeHexColor(headerCtaButtonColor, primaryColor || DEFAULT_BRAND_COLOR),
+    ctaButtonTextColor: normalizeHexColor(headerCtaButtonTextColor, DEFAULT_LIGHT_TEXT),
+    ctaTextStyle: headerCtaTextStyle,
+    overlayOpacity: Math.min(Math.max(headerOverlayOpacity, 0), 100),
+    textColor: normalizeHexColor(headerTextColor, DEFAULT_LIGHT_TEXT),
+  });
+
+  const persistHeaderConfig = async (config: StoredHeaderConfig) => {
+    if (!library?.id) throw new Error("No library selected.");
+
+    const payload = {
+      caption: encodeHeaderConfig(config),
+      image_url: HEADER_CONFIG_PLACEHOLDER_IMAGE,
+      library_id: library.id,
+      sort_order: HEADER_CONFIG_SORT_ORDER,
+    };
+
+    if (headerConfigRow?.id) {
+      const { error } = await supabase.from("library_gallery_images" as never).update(payload as never).eq("id", headerConfigRow.id);
+      if (error) throw error;
+      return;
+    }
+
+    const { error } = await supabase.from("library_gallery_images" as never).insert(payload as never);
+    if (error) throw error;
+  };
+
+  const replaceLibraryAsset = async ({
+    field,
+    folder,
+    file,
+    existingUrl,
+  }: {
+    field: "header_background_url" | "hero_background_url" | "logo_url" | "cta_background_image_url";
+    folder: "header" | "hero" | "logo" | "cta";
+    file: File;
+    existingUrl?: string | null;
+  }) => {
+    if (!library?.id) throw new Error("No library selected.");
+    const publicUrl = await uploadLibraryMediaFile({ existingUrl, file, folder });
 
     const { error: updateError } = await supabase
       .from("libraries")
       .update({ [field]: publicUrl } as never)
       .eq("id", library.id);
     if (updateError) throw updateError;
-
-    const previousStoragePath = existingUrl ? getStoragePathFromUrl(existingUrl) : null;
-    if (previousStoragePath && previousStoragePath !== path) {
-      const { error: removeError } = await supabase.storage.from(MEDIA_BUCKET).remove([previousStoragePath]);
-      if (removeError) throw removeError;
-    }
   };
 
   const clearLibraryAsset = async ({
     field,
     existingUrl,
   }: {
-    field: "hero_background_url" | "logo_url" | "cta_background_image_url";
+    field: "header_background_url" | "hero_background_url" | "logo_url" | "cta_background_image_url";
     existingUrl?: string | null;
   }) => {
     if (!library?.id) throw new Error("No library selected.");
-
-    const storagePath = existingUrl ? getStoragePathFromUrl(existingUrl) : null;
-    if (storagePath) {
-      const { error: removeError } = await supabase.storage.from(MEDIA_BUCKET).remove([storagePath]);
-      if (removeError) throw removeError;
-    }
+    await removeLibraryMediaFile(existingUrl);
 
     const { error } = await supabase
       .from("libraries")
@@ -298,6 +422,10 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
 
       validateColorFields([
         { label: "Brand color", value: primaryColor },
+        { label: "Header background color", value: headerBackgroundColor },
+        { label: "Header text color", value: headerTextColor },
+        { label: "Header CTA button color", value: headerCtaButtonColor },
+        { label: "Header CTA text color", value: headerCtaButtonTextColor },
         { label: "Hero overlay color", value: heroOverlayColor },
         { label: "Hero title color", value: heroTitleColor },
         { label: "Hero subtitle color", value: heroSubtitleColor },
@@ -312,7 +440,7 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
         { label: "Section heading color", value: sectionHeadingColor },
       ]);
 
-      const payload: Database["public"]["Tables"]["libraries"]["Update"] = {
+      const basePayload: Database["public"]["Tables"]["libraries"]["Update"] = {
         phone: phone.trim() || null,
         whatsapp_number: whatsappNumber.trim() || null,
         primary_color: normalizeHexColor(primaryColor, DEFAULT_BRAND_COLOR),
@@ -338,8 +466,10 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
         section_heading_color: normalizeHexColor(sectionHeadingColor, DEFAULT_DARK_TEXT),
       };
 
-      const { error } = await supabase.from("libraries").update(payload).eq("id", library.id);
+      const { error } = await supabase.from("libraries").update(basePayload).eq("id", library.id);
       if (error) throw error;
+
+      await persistHeaderConfig(buildHeaderConfig());
     },
     onSuccess: () => {
       invalidateWebsiteQueries();
@@ -367,6 +497,43 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
     },
     onError: (error: any) => {
       toast({ title: "Unable to upload hero image", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const uploadHeaderBackgroundMutation = useMutation({
+    mutationFn: async () => {
+      if (!headerBackgroundFile) throw new Error("Please choose a header image.");
+      const publicUrl = await uploadLibraryMediaFile({
+        folder: "header",
+        file: headerBackgroundFile,
+        existingUrl: persistedHeaderBackgroundUrl,
+      });
+      await persistHeaderConfig(buildHeaderConfig(publicUrl));
+      return publicUrl;
+    },
+    onSuccess: (publicUrl) => {
+      setHeaderBackgroundFile(null);
+      setPersistedHeaderBackgroundUrl(publicUrl);
+      invalidateWebsiteQueries();
+      toast({ title: "Header background updated" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Unable to upload header image", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const removeHeaderBackgroundMutation = useMutation({
+    mutationFn: async () => {
+      await removeLibraryMediaFile(persistedHeaderBackgroundUrl);
+      await persistHeaderConfig(buildHeaderConfig(null));
+    },
+    onSuccess: () => {
+      setPersistedHeaderBackgroundUrl(null);
+      invalidateWebsiteQueries();
+      toast({ title: "Header background removed" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Unable to remove header image", description: error.message, variant: "destructive" });
     },
   });
 
@@ -462,24 +629,13 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
       if (!galleryFiles || galleryFiles.length === 0) throw new Error("Please choose images.");
 
       const files = Array.from(galleryFiles);
-      const baseSort = gallery.length;
+      const baseSort = visibleGallery.length;
       const rows: Array<{ library_id: string; image_url: string; caption: string | null; sort_order: number }> = [];
 
       for (const [index, file] of files.entries()) {
-        const ext = file.name.split(".").pop() || "jpg";
-        const baseName = file.name.endsWith(`.${ext}`) ? file.name.slice(0, -ext.length - 1) : file.name;
-        const fileName = `${Date.now()}-${index}-${sanitizeFileName(baseName)}.${ext}`;
-        const path = `${user.id}/${library.id}/gallery/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from(MEDIA_BUCKET)
-          .upload(path, file, { upsert: false, contentType: file.type || undefined });
-        if (uploadError) throw uploadError;
-
-        const { data: publicData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
         rows.push({
           library_id: library.id,
-          image_url: publicData.publicUrl,
+          image_url: await uploadLibraryMediaFile({ file, folder: "gallery" }),
           caption: file.name,
           sort_order: baseSort + index,
         });
@@ -589,6 +745,7 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
   });
 
   const disableUploads = useMemo(() => !library?.id || !user?.id, [library?.id, user?.id]);
+  const headerBackgroundDisplayUrl = headerBackgroundPreviewUrl || persistedHeaderBackgroundUrl || null;
   const logoDisplayUrl = logoPreviewUrl || library?.logo_url || null;
   const heroDisplayUrl = heroPreviewUrl || library?.hero_background_url || null;
   const ctaBackgroundDisplayUrl = ctaBackgroundPreviewUrl || library?.cta_background_image_url || null;
@@ -600,6 +757,14 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
       city: library?.city,
       phone,
       primary_color: primaryColor,
+      header_background_type: headerBackgroundType,
+      header_background_url: headerBackgroundDisplayUrl,
+      header_background_color: headerBackgroundColor,
+      header_cta_button_color: headerCtaButtonColor,
+      header_cta_button_text_color: headerCtaButtonTextColor,
+      header_cta_text_style: headerCtaTextStyle,
+      header_overlay_opacity: headerOverlayOpacity,
+      header_text_color: headerTextColor,
       logo_url: logoDisplayUrl,
       hero_background_url: heroDisplayUrl,
       hero_title: heroTitle,
@@ -629,6 +794,14 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
       library?.name,
       phone,
       primaryColor,
+      headerBackgroundType,
+      headerBackgroundDisplayUrl,
+      headerBackgroundColor,
+      headerCtaButtonColor,
+      headerCtaButtonTextColor,
+      headerCtaTextStyle,
+      headerOverlayOpacity,
+      headerTextColor,
       logoDisplayUrl,
       heroDisplayUrl,
       heroTitle,
@@ -796,6 +969,154 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
                 Remove Logo
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg font-display">Header / Navbar Style</CardTitle>
+            <CardDescription>Keep the top header separate from your hero so color and image can be controlled independently.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-3">
+              <Label>Header Background Type</Label>
+              <RadioGroup
+                value={headerBackgroundType}
+                onValueChange={(value) => setHeaderBackgroundType(value as "color" | "image")}
+                className="grid gap-3 md:grid-cols-2"
+              >
+                <label className="flex items-center gap-3 rounded-xl border border-border p-3">
+                  <RadioGroupItem value="color" />
+                  <span className="text-sm font-medium">Solid Color</span>
+                </label>
+                <label className="flex items-center gap-3 rounded-xl border border-border p-3">
+                  <RadioGroupItem value="image" />
+                  <span className="text-sm font-medium">Background Image</span>
+                </label>
+              </RadioGroup>
+            </div>
+
+            {headerBackgroundType === "image" ? (
+              <div className="space-y-4 rounded-2xl border border-border p-4">
+                {headerBackgroundDisplayUrl ? (
+                  <img src={headerBackgroundDisplayUrl} alt="Header background preview" className="h-32 w-full rounded-xl object-cover" />
+                ) : (
+                  <div
+                    className="flex h-32 items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted-foreground"
+                    style={{ backgroundColor: normalizeHexColor(headerBackgroundColor, DEFAULT_HEADER_COLOR) }}
+                  >
+                    Upload a separate image for the header bar
+                  </div>
+                )}
+
+                <Input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(event) => setHeaderBackgroundFile(event.target.files?.[0] || null)}
+                  disabled={disableUploads}
+                />
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Button
+                    onClick={() => uploadHeaderBackgroundMutation.mutate()}
+                    disabled={disableUploads || !headerBackgroundFile || uploadHeaderBackgroundMutation.isPending}
+                  >
+                    {uploadHeaderBackgroundMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="mr-2 h-4 w-4" />
+                    )}
+                    {persistedHeaderBackgroundUrl ? "Replace Header Image" : "Upload Header Image"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (headerBackgroundFile) {
+                        setHeaderBackgroundFile(null);
+                        return;
+                      }
+                      removeHeaderBackgroundMutation.mutate();
+                    }}
+                    disabled={removeHeaderBackgroundMutation.isPending || (!persistedHeaderBackgroundUrl && !headerBackgroundFile)}
+                  >
+                    {removeHeaderBackgroundMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Remove Image
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <ColorField
+                label="Header Background Color"
+                value={headerBackgroundColor}
+                onChange={setHeaderBackgroundColor}
+                helperText="This color controls the navbar background. It stays separate from hero overlay color."
+              />
+              <ColorField
+                label="Header Text Color"
+                value={headerTextColor}
+                onChange={setHeaderTextColor}
+                helperText="Used for menu labels, logo text, and icons inside the navbar."
+              />
+            </div>
+
+            <div className="rounded-2xl border border-border p-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <ColorField
+                  label="Book Seat Button Background"
+                  value={headerCtaButtonColor}
+                  onChange={setHeaderCtaButtonColor}
+                  helperText="Controls the background color of the navbar Book Seat button."
+                />
+                <ColorField
+                  label="Book Seat Text Color"
+                  value={headerCtaButtonTextColor}
+                  onChange={setHeaderCtaButtonTextColor}
+                  helperText="Controls the text and icon color inside the Book Seat button."
+                />
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <Label>Book Seat Text Style</Label>
+                <RadioGroup
+                  value={headerCtaTextStyle}
+                  onValueChange={(value) => setHeaderCtaTextStyle(value as HeaderCtaTextStyle)}
+                  className="grid gap-3 md:grid-cols-3"
+                >
+                  <label className="flex items-center gap-3 rounded-xl border border-border p-3">
+                    <RadioGroupItem value="default" />
+                    <span className="text-sm font-medium">Regular</span>
+                  </label>
+                  <label className="flex items-center gap-3 rounded-xl border border-border p-3">
+                    <RadioGroupItem value="bold" />
+                    <span className="text-sm font-medium">Bold</span>
+                  </label>
+                  <label className="flex items-center gap-3 rounded-xl border border-border p-3">
+                    <RadioGroupItem value="uppercase" />
+                    <span className="text-sm font-medium">Uppercase</span>
+                  </label>
+                </RadioGroup>
+                <p className="text-xs text-muted-foreground">Choose how the Book Seat text appears in the header CTA.</p>
+              </div>
+            </div>
+
+            {headerBackgroundType === "image" ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Header Image Overlay</Label>
+                  <span className="text-sm text-muted-foreground">{headerOverlayOpacity}%</span>
+                </div>
+                <Slider
+                  value={[headerOverlayOpacity]}
+                  min={0}
+                  max={100}
+                  step={1}
+                  onValueChange={(value) => setHeaderOverlayOpacity(value[0] || 0)}
+                />
+                <p className="text-xs text-muted-foreground">Adds readable color overlay on top of the header image.</p>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -1023,11 +1344,11 @@ const WebsiteCustomizationTab = ({ library }: WebsiteCustomizationTabProps) => {
               </Button>
             </div>
 
-            {gallery.length === 0 ? (
+            {visibleGallery.length === 0 ? (
               <p className="text-sm text-muted-foreground">No gallery images yet.</p>
             ) : (
               <div className="grid gap-4 md:grid-cols-4">
-                {gallery.map((image: any) => (
+                {visibleGallery.map((image: any) => (
                   <div key={image.id} className="overflow-hidden rounded-lg border border-border bg-card">
                     <img src={image.image_url} alt={image.caption || "Library gallery"} className="aspect-square w-full object-cover" />
                     <div className="space-y-2 p-2">

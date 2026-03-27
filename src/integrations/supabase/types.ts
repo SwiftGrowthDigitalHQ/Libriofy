@@ -14,6 +14,141 @@ export type Database = {
   }
   public: {
     Tables: {
+      affiliate_commissions: {
+        Row: {
+          affiliate_id: string
+          commission_earned: number
+          commission_rate: number
+          created_at: string
+          id: string
+          library_id: string
+          paid_at: string | null
+          status: string
+          subscription_payment_id: string | null
+          user_id: string
+        }
+        Insert: {
+          affiliate_id: string
+          commission_earned: number
+          commission_rate: number
+          created_at?: string
+          id?: string
+          library_id: string
+          paid_at?: string | null
+          status?: string
+          subscription_payment_id?: string | null
+          user_id: string
+        }
+        Update: {
+          affiliate_id?: string
+          commission_earned?: number
+          commission_rate?: number
+          created_at?: string
+          id?: string
+          library_id?: string
+          paid_at?: string | null
+          status?: string
+          subscription_payment_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "affiliate_commissions_affiliate_id_fkey"
+            columns: ["affiliate_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "affiliate_commissions_affiliate_id_fkey"
+            columns: ["affiliate_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "affiliate_commissions_affiliate_id_fkey"
+            columns: ["affiliate_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+          {
+            foreignKeyName: "affiliate_commissions_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "affiliate_commissions_subscription_payment_id_fkey"
+            columns: ["subscription_payment_id"]
+            isOneToOne: true
+            referencedRelation: "subscription_payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      affiliates: {
+        Row: {
+          bank_details: Json
+          city: string | null
+          code: string
+          commission_rate: number
+          created_at: string
+          email: string
+          experience: string | null
+          id: string
+          is_active: boolean
+          name: string
+          payout_method: string | null
+          phone: string | null
+          total_commission: number
+          total_sales: number
+          updated_at: string
+          upi_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          bank_details?: Json
+          city?: string | null
+          code?: string
+          commission_rate?: number
+          created_at?: string
+          email: string
+          experience?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          payout_method?: string | null
+          phone?: string | null
+          total_commission?: number
+          total_sales?: number
+          updated_at?: string
+          upi_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          bank_details?: Json
+          city?: string | null
+          code?: string
+          commission_rate?: number
+          created_at?: string
+          email?: string
+          experience?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          payout_method?: string | null
+          phone?: string | null
+          total_commission?: number
+          total_sales?: number
+          updated_at?: string
+          upi_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       attendance_logs: {
         Row: {
           check_in: string
@@ -59,6 +194,230 @@ export type Database = {
           },
         ]
       }
+      automated_calls: {
+        Row: {
+          answered_at: string | null
+          audio_bucket: string | null
+          audio_path: string | null
+          call_provider: string
+          call_status: string
+          called_phone: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          error_message: string | null
+          estimated_recovery_impact: number
+          id: string
+          ivr_action: string | null
+          ivr_choice: string | null
+          library_id: string
+          library_name_snapshot: string
+          metadata: Json
+          overdue_days_snapshot: number
+          payment_status_snapshot: string
+          pending_amount_snapshot: number
+          pickup_status: string
+          provider_call_sid: string | null
+          recovery_stage_label: string | null
+          script_text: string
+          status_callback_payload: Json
+          student_id: string | null
+          student_name_snapshot: string
+          trigger_source: string
+          tts_provider: string
+          twiml_requested_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          answered_at?: string | null
+          audio_bucket?: string | null
+          audio_path?: string | null
+          call_provider?: string
+          call_status?: string
+          called_phone?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          error_message?: string | null
+          estimated_recovery_impact?: number
+          id?: string
+          ivr_action?: string | null
+          ivr_choice?: string | null
+          library_id: string
+          library_name_snapshot: string
+          metadata?: Json
+          overdue_days_snapshot?: number
+          payment_status_snapshot?: string
+          pending_amount_snapshot?: number
+          pickup_status?: string
+          provider_call_sid?: string | null
+          recovery_stage_label?: string | null
+          script_text: string
+          status_callback_payload?: Json
+          student_id?: string | null
+          student_name_snapshot: string
+          trigger_source?: string
+          tts_provider?: string
+          twiml_requested_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          answered_at?: string | null
+          audio_bucket?: string | null
+          audio_path?: string | null
+          call_provider?: string
+          call_status?: string
+          called_phone?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          error_message?: string | null
+          estimated_recovery_impact?: number
+          id?: string
+          ivr_action?: string | null
+          ivr_choice?: string | null
+          library_id?: string
+          library_name_snapshot?: string
+          metadata?: Json
+          overdue_days_snapshot?: number
+          payment_status_snapshot?: string
+          pending_amount_snapshot?: number
+          pickup_status?: string
+          provider_call_sid?: string | null
+          recovery_stage_label?: string | null
+          script_text?: string
+          status_callback_payload?: Json
+          student_id?: string | null
+          student_name_snapshot?: string
+          trigger_source?: string
+          tts_provider?: string
+          twiml_requested_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automated_calls_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automated_calls_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coupon_redemptions: {
+        Row: {
+          captured_at: string | null
+          code: string
+          coupon_id: string
+          created_at: string
+          discount_amount: number
+          id: string
+          library_id: string
+          razorpay_order_id: string
+          status: string
+          subscription_payment_id: string | null
+          user_id: string
+        }
+        Insert: {
+          captured_at?: string | null
+          code: string
+          coupon_id: string
+          created_at?: string
+          discount_amount?: number
+          id?: string
+          library_id: string
+          razorpay_order_id: string
+          status?: string
+          subscription_payment_id?: string | null
+          user_id: string
+        }
+        Update: {
+          captured_at?: string | null
+          code?: string
+          coupon_id?: string
+          created_at?: string
+          discount_amount?: number
+          id?: string
+          library_id?: string
+          razorpay_order_id?: string
+          status?: string
+          subscription_payment_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coupon_redemptions_coupon_id_fkey"
+            columns: ["coupon_id"]
+            isOneToOne: false
+            referencedRelation: "admin_coupon_dashboard"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_redemptions_coupon_id_fkey"
+            columns: ["coupon_id"]
+            isOneToOne: false
+            referencedRelation: "coupons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_redemptions_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_redemptions_subscription_payment_id_fkey"
+            columns: ["subscription_payment_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coupons: {
+        Row: {
+          code: string
+          created_at: string
+          discount_type: string
+          discount_value: number
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          max_uses: number | null
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          discount_type: string
+          discount_value: number
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          discount_type?: string
+          discount_value?: number
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       domain_requests: {
         Row: {
           created_at: string
@@ -103,11 +462,126 @@ export type Database = {
           },
         ]
       }
+      expenses: {
+        Row: {
+          amount: number
+          category: string
+          created_at: string | null
+          date: string
+          id: string
+          library_id: string
+          notes: string | null
+        }
+        Insert: {
+          amount: number
+          category: string
+          created_at?: string | null
+          date: string
+          id?: string
+          library_id: string
+          notes?: string | null
+        }
+        Update: {
+          amount?: number
+          category?: string
+          created_at?: string | null
+          date?: string
+          id?: string
+          library_id?: string
+          notes?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expenses_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      leads: {
+        Row: {
+          city: string | null
+          converted_at: string | null
+          created_at: string
+          id: string
+          library_id: string | null
+          library_name: string
+          notes: string | null
+          owner_name: string
+          partner_id: string
+          phone: string
+          seats: number | null
+          status: Database["public"]["Enums"]["lead_status"]
+          updated_at: string
+        }
+        Insert: {
+          city?: string | null
+          converted_at?: string | null
+          created_at?: string
+          id?: string
+          library_id?: string | null
+          library_name: string
+          notes?: string | null
+          owner_name: string
+          partner_id: string
+          phone: string
+          seats?: number | null
+          status?: Database["public"]["Enums"]["lead_status"]
+          updated_at?: string
+        }
+        Update: {
+          city?: string | null
+          converted_at?: string | null
+          created_at?: string
+          id?: string
+          library_id?: string | null
+          library_name?: string
+          notes?: string | null
+          owner_name?: string
+          partner_id?: string
+          phone?: string
+          seats?: number | null
+          status?: Database["public"]["Enums"]["lead_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "leads_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+        ]
+      }
       libraries: {
         Row: {
+          about_text: string | null
           active_students: number
           address: string | null
-          about_text: string | null
           city: string | null
           country: string
           created_at: string
@@ -126,8 +600,12 @@ export type Database = {
           custom_domain: string | null
           district: string | null
           enabled: boolean
+          header_background_color: string | null
+          header_background_type: string
+          header_background_url: string | null
+          header_overlay_opacity: number
+          header_text_color: string | null
           hero_background_url: string | null
-          id: string
           hero_overlay_color: string | null
           hero_overlay_disabled: boolean
           hero_overlay_opacity: number
@@ -135,8 +613,11 @@ export type Database = {
           hero_subtitle_color: string | null
           hero_title: string | null
           hero_title_color: string | null
-          library_name: string
+          id: string
+          library_name: string | null
           logo_url: string | null
+          max_lockers: number
+          max_seats: number
           monthly_revenue: number
           name: string
           opening_hours: string | null
@@ -149,14 +630,14 @@ export type Database = {
           state: string | null
           total_lockers: number
           total_seats: number
-          upi_id: string | null
           updated_at: string
+          upi_id: string | null
           whatsapp_number: string | null
         }
         Insert: {
+          about_text?: string | null
           active_students?: number
           address?: string | null
-          about_text?: string | null
           city?: string | null
           country?: string
           created_at?: string
@@ -175,8 +656,12 @@ export type Database = {
           custom_domain?: string | null
           district?: string | null
           enabled?: boolean
+          header_background_color?: string | null
+          header_background_type?: string
+          header_background_url?: string | null
+          header_overlay_opacity?: number
+          header_text_color?: string | null
           hero_background_url?: string | null
-          id?: string
           hero_overlay_color?: string | null
           hero_overlay_disabled?: boolean
           hero_overlay_opacity?: number
@@ -184,7 +669,11 @@ export type Database = {
           hero_subtitle_color?: string | null
           hero_title?: string | null
           hero_title_color?: string | null
+          id?: string
+          library_name?: string | null
           logo_url?: string | null
+          max_lockers?: number
+          max_seats?: number
           monthly_revenue?: number
           name: string
           opening_hours?: string | null
@@ -197,14 +686,14 @@ export type Database = {
           state?: string | null
           total_lockers?: number
           total_seats?: number
-          upi_id?: string | null
           updated_at?: string
+          upi_id?: string | null
           whatsapp_number?: string | null
         }
         Update: {
+          about_text?: string | null
           active_students?: number
           address?: string | null
-          about_text?: string | null
           city?: string | null
           country?: string
           created_at?: string
@@ -223,8 +712,12 @@ export type Database = {
           custom_domain?: string | null
           district?: string | null
           enabled?: boolean
+          header_background_color?: string | null
+          header_background_type?: string
+          header_background_url?: string | null
+          header_overlay_opacity?: number
+          header_text_color?: string | null
           hero_background_url?: string | null
-          id?: string
           hero_overlay_color?: string | null
           hero_overlay_disabled?: boolean
           hero_overlay_opacity?: number
@@ -232,7 +725,11 @@ export type Database = {
           hero_subtitle_color?: string | null
           hero_title?: string | null
           hero_title_color?: string | null
+          id?: string
+          library_name?: string | null
           logo_url?: string | null
+          max_lockers?: number
+          max_seats?: number
           monthly_revenue?: number
           name?: string
           opening_hours?: string | null
@@ -245,65 +742,146 @@ export type Database = {
           state?: string | null
           total_lockers?: number
           total_seats?: number
-          upi_id?: string | null
           updated_at?: string
+          upi_id?: string | null
           whatsapp_number?: string | null
         }
         Relationships: []
       }
-      lockers: {
+      library_acquisition: {
         Row: {
-          column: number
+          affiliate_id: string | null
+          created_at: string
+          library_id: string
+          owner_id: string
+          referral_code: string | null
+          referred_by: string | null
+        }
+        Insert: {
+          affiliate_id?: string | null
+          created_at?: string
+          library_id: string
+          owner_id: string
+          referral_code?: string | null
+          referred_by?: string | null
+        }
+        Update: {
+          affiliate_id?: string | null
+          created_at?: string
+          library_id?: string
+          owner_id?: string
+          referral_code?: string | null
+          referred_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_acquisition_affiliate_id_fkey"
+            columns: ["affiliate_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "library_acquisition_affiliate_id_fkey"
+            columns: ["affiliate_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "library_acquisition_affiliate_id_fkey"
+            columns: ["affiliate_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+          {
+            foreignKeyName: "library_acquisition_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: true
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      library_gallery_images: {
+        Row: {
+          caption: string | null
           created_at: string
           id: string
+          image_url: string
           library_id: string
-          locker_number: string
-          monthly_price: number
-          payment_due_date: string | null
-          row: number
-          status: string
-          student_id: string | null
+          sort_order: number
           updated_at: string
         }
         Insert: {
-          column: number
+          caption?: string | null
           created_at?: string
           id?: string
+          image_url: string
           library_id: string
-          locker_number: string
-          monthly_price?: number
-          payment_due_date?: string | null
-          row: number
-          status?: string
-          student_id?: string | null
+          sort_order?: number
           updated_at?: string
         }
         Update: {
-          column?: number
+          caption?: string | null
           created_at?: string
           id?: string
+          image_url?: string
           library_id?: string
-          locker_number?: string
-          monthly_price?: number
-          payment_due_date?: string | null
-          row?: number
-          status?: string
-          student_id?: string | null
+          sort_order?: number
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "lockers_library_id_fkey"
+            foreignKeyName: "library_gallery_images_library_id_fkey"
             columns: ["library_id"]
             isOneToOne: false
             referencedRelation: "libraries"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      library_reviews: {
+        Row: {
+          created_at: string
+          id: string
+          is_published: boolean
+          library_id: string
+          rating: number
+          review_text: string
+          reviewer_name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          library_id: string
+          rating?: number
+          review_text: string
+          reviewer_name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          library_id?: string
+          rating?: number
+          review_text?: string
+          reviewer_name?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
           {
-            foreignKeyName: "lockers_student_id_fkey"
-            columns: ["student_id"]
+            foreignKeyName: "library_reviews_library_id_fkey"
+            columns: ["library_id"]
             isOneToOne: false
-            referencedRelation: "students"
+            referencedRelation: "libraries"
             referencedColumns: ["id"]
           },
         ]
@@ -316,11 +894,17 @@ export type Database = {
           id: string
           library_id: string
           lockers_limit: number | null
+          payment_status: string
+          plan_expiry_date: string | null
           plan_name: string
+          plan_price: number | null
+          plan_start_date: string | null
           price: number
           seats_limit: number
           started_at: string
           status: string
+          trial_end_date: string | null
+          trial_start_date: string | null
           updated_at: string
         }
         Insert: {
@@ -330,11 +914,17 @@ export type Database = {
           id?: string
           library_id: string
           lockers_limit?: number | null
+          payment_status?: string
+          plan_expiry_date?: string | null
           plan_name?: string
+          plan_price?: number | null
+          plan_start_date?: string | null
           price?: number
           seats_limit?: number
           started_at?: string
           status?: string
+          trial_end_date?: string | null
+          trial_start_date?: string | null
           updated_at?: string
         }
         Update: {
@@ -344,11 +934,17 @@ export type Database = {
           id?: string
           library_id?: string
           lockers_limit?: number | null
+          payment_status?: string
+          plan_expiry_date?: string | null
           plan_name?: string
+          plan_price?: number | null
+          plan_start_date?: string | null
           price?: number
           seats_limit?: number
           started_at?: string
           status?: string
+          trial_end_date?: string | null
+          trial_start_date?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -360,6 +956,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      lockers: {
+        Row: {
+          col: number | null
+          col_position: number | null
+          column: number | null
+          created_at: string | null
+          id: string
+          library_id: string | null
+          locker_number: string | null
+          monthly_price: number | null
+          payment_due_date: string | null
+          row: number | null
+          row_position: number | null
+          status: string | null
+          student_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          col?: number | null
+          col_position?: number | null
+          column?: number | null
+          created_at?: string | null
+          id?: string
+          library_id?: string | null
+          locker_number?: string | null
+          monthly_price?: number | null
+          payment_due_date?: string | null
+          row?: number | null
+          row_position?: number | null
+          status?: string | null
+          student_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          col?: number | null
+          col_position?: number | null
+          column?: number | null
+          created_at?: string | null
+          id?: string
+          library_id?: string | null
+          locker_number?: string | null
+          monthly_price?: number | null
+          payment_due_date?: string | null
+          row?: number | null
+          row_position?: number | null
+          status?: string | null
+          student_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       notifications: {
         Row: {
@@ -511,6 +1158,130 @@ export type Database = {
           },
         ]
       }
+      payouts: {
+        Row: {
+          amount: number
+          approved_at: string | null
+          created_at: string
+          id: string
+          note: string | null
+          paid_at: string | null
+          partner_id: string
+          payout_destination: string | null
+          payout_method: string | null
+          requested_at: string
+          status: Database["public"]["Enums"]["payout_status"]
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          approved_at?: string | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          paid_at?: string | null
+          partner_id: string
+          payout_destination?: string | null
+          payout_method?: string | null
+          requested_at?: string
+          status?: Database["public"]["Enums"]["payout_status"]
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          approved_at?: string | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          paid_at?: string | null
+          partner_id?: string
+          payout_destination?: string | null
+          payout_method?: string | null
+          requested_at?: string
+          status?: Database["public"]["Enums"]["payout_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payouts_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "payouts_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payouts_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+        ]
+      }
+      photo_upload_logs: {
+        Row: {
+          error_message: string | null
+          final_original_path: string | null
+          final_thumbnail_path: string | null
+          id: string
+          library_id: string
+          status: string
+          student_id: string
+          temp_original_path: string | null
+          temp_thumbnail_path: string | null
+          uploaded_at: string
+          uploaded_by: string
+        }
+        Insert: {
+          error_message?: string | null
+          final_original_path?: string | null
+          final_thumbnail_path?: string | null
+          id?: string
+          library_id: string
+          status: string
+          student_id: string
+          temp_original_path?: string | null
+          temp_thumbnail_path?: string | null
+          uploaded_at?: string
+          uploaded_by: string
+        }
+        Update: {
+          error_message?: string | null
+          final_original_path?: string | null
+          final_thumbnail_path?: string | null
+          id?: string
+          library_id?: string
+          status?: string
+          student_id?: string
+          temp_original_path?: string | null
+          temp_thumbnail_path?: string | null
+          uploaded_at?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "photo_upload_logs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "photo_upload_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       plans: {
         Row: {
           created_at: string
@@ -588,6 +1359,130 @@ export type Database = {
         }
         Relationships: []
       }
+      referral_rewards: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          library_id: string
+          paid_at: string | null
+          referred_user_id: string
+          referrer_user_id: string
+          status: string
+          subscription_payment_id: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          library_id: string
+          paid_at?: string | null
+          referred_user_id: string
+          referrer_user_id: string
+          status?: string
+          subscription_payment_id?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          library_id?: string
+          paid_at?: string | null
+          referred_user_id?: string
+          referrer_user_id?: string
+          status?: string
+          subscription_payment_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_rewards_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_rewards_subscription_payment_id_fkey"
+            columns: ["subscription_payment_id"]
+            isOneToOne: true
+            referencedRelation: "subscription_payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reminder_logs: {
+        Row: {
+          created_at: string | null
+          delivery_channel: string | null
+          error_message: string | null
+          id: string
+          library_id: string | null
+          message: string | null
+          notification_id: string | null
+          phone: string | null
+          reminder_date: string | null
+          reminder_type: string | null
+          sent_at: string | null
+          status: string | null
+          student_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          delivery_channel?: string | null
+          error_message?: string | null
+          id?: string
+          library_id?: string | null
+          message?: string | null
+          notification_id?: string | null
+          phone?: string | null
+          reminder_date?: string | null
+          reminder_type?: string | null
+          sent_at?: string | null
+          status?: string | null
+          student_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          delivery_channel?: string | null
+          error_message?: string | null
+          id?: string
+          library_id?: string | null
+          message?: string | null
+          notification_id?: string | null
+          phone?: string | null
+          reminder_date?: string | null
+          reminder_type?: string | null
+          sent_at?: string | null
+          status?: string | null
+          student_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reminder_logs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminder_logs_notification_id_fkey"
+            columns: ["notification_id"]
+            isOneToOne: false
+            referencedRelation: "notifications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminder_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       seats: {
         Row: {
           created_at: string
@@ -623,68 +1518,145 @@ export type Database = {
           },
         ]
       }
+      student_slot_assignments: {
+        Row: {
+          created_at: string
+          id: string
+          library_id: string
+          seat_id: string | null
+          slot_id: string
+          student_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          library_id: string
+          seat_id?: string | null
+          slot_id: string
+          student_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          library_id?: string
+          seat_id?: string | null
+          slot_id?: string
+          student_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_slot_assignments_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_slot_assignments_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_slot_assignments_slot_id_fkey"
+            columns: ["slot_id"]
+            isOneToOne: false
+            referencedRelation: "time_slots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_slot_assignments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       students: {
         Row: {
+          aadhaar_photo_path: string | null
           created_at: string
           email: string | null
           expiry_date: string | null
           full_name: string
+          gender: Database["public"]["Enums"]["student_gender"] | null
           id: string
           last_check_in: string | null
-          library_id: string
-          no_show_days: number
-          plan_id: string | null
-          phone: string | null
+            library_id: string
+            no_show_days: number
+            phone: string | null
+            photo_version: number | null
+            photo_storage_path: string | null
+            photo_thumbnail_path: string | null
+            photo_url: string | null
           plan: string | null
+          plan_id: string | null
           qr_code: string
           seat_id: string | null
           seat_number: string | null
-          slot_id: string | null
           slot: string | null
+          slot_id: string | null
           start_date: string
           status: string
           updated_at: string
           user_id: string | null
         }
         Insert: {
+          aadhaar_photo_path?: string | null
           created_at?: string
           email?: string | null
           expiry_date?: string | null
           full_name: string
+          gender?: Database["public"]["Enums"]["student_gender"] | null
           id?: string
           last_check_in?: string | null
-          library_id: string
-          no_show_days?: number
-          plan_id?: string | null
-          phone?: string | null
+            library_id: string
+            no_show_days?: number
+            phone?: string | null
+            photo_version?: number | null
+            photo_storage_path?: string | null
+            photo_thumbnail_path?: string | null
+            photo_url?: string | null
           plan?: string | null
+          plan_id?: string | null
           qr_code?: string
           seat_id?: string | null
           seat_number?: string | null
-          slot_id?: string | null
           slot?: string | null
+          slot_id?: string | null
           start_date?: string
           status?: string
           updated_at?: string
           user_id?: string | null
         }
         Update: {
+          aadhaar_photo_path?: string | null
           created_at?: string
           email?: string | null
           expiry_date?: string | null
           full_name?: string
+          gender?: Database["public"]["Enums"]["student_gender"] | null
           id?: string
           last_check_in?: string | null
-          library_id?: string
-          no_show_days?: number
-          plan_id?: string | null
-          phone?: string | null
+            library_id?: string
+            no_show_days?: number
+            phone?: string | null
+            photo_version?: number | null
+            photo_storage_path?: string | null
+            photo_thumbnail_path?: string | null
+            photo_url?: string | null
           plan?: string | null
+          plan_id?: string | null
           qr_code?: string
           seat_id?: string | null
           seat_number?: string | null
-          slot_id?: string | null
           slot?: string | null
+          slot_id?: string | null
           start_date?: string
           status?: string
           updated_at?: string
@@ -720,6 +1692,124 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      subscription_payments: {
+        Row: {
+          amount: number
+          created_at: string
+          currency: string
+          id: string
+          library_id: string
+          metadata: Json
+          months_purchased: number
+          paid_at: string | null
+          razorpay_order_id: string
+          razorpay_payment_id: string | null
+          razorpay_signature: string | null
+          status: string
+          subscription_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          currency?: string
+          id?: string
+          library_id: string
+          metadata?: Json
+          months_purchased?: number
+          paid_at?: string | null
+          razorpay_order_id: string
+          razorpay_payment_id?: string | null
+          razorpay_signature?: string | null
+          status?: string
+          subscription_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          currency?: string
+          id?: string
+          library_id?: string
+          metadata?: Json
+          months_purchased?: number
+          paid_at?: string | null
+          razorpay_order_id?: string
+          razorpay_payment_id?: string | null
+          razorpay_signature?: string | null
+          status?: string
+          subscription_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscription_payments_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_payments_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "library_subscriptions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_payments_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subscription_plans: {
+        Row: {
+          code: string
+          created_at: string
+          description: string | null
+          features: Json
+          id: string
+          is_active: boolean
+          lockers_limit: number | null
+          name: string
+          price: number
+          seats_limit: number | null
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string | null
+          features?: Json
+          id?: string
+          is_active?: boolean
+          lockers_limit?: number | null
+          name: string
+          price: number
+          seats_limit?: number | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string | null
+          features?: Json
+          id?: string
+          is_active?: boolean
+          lockers_limit?: number | null
+          name?: string
+          price?: number
+          seats_limit?: number | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       support_tickets: {
         Row: {
@@ -815,6 +1905,27 @@ export type Database = {
           },
         ]
       }
+      user_referrals: {
+        Row: {
+          created_at: string
+          referral_code: string
+          referred_by: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          referral_code: string
+          referred_by?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          referral_code?: string
+          referred_by?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           id: string
@@ -838,10 +1949,12 @@ export type Database = {
       }
       waiting_list: {
         Row: {
+          aadhaar_photo_path: string | null
           confirmation_deadline: string | null
           confirmed_at: string | null
           created_at: string
           email: string | null
+          gender: Database["public"]["Enums"]["student_gender"] | null
           id: string
           library_id: string
           notes: string | null
@@ -855,10 +1968,12 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          aadhaar_photo_path?: string | null
           confirmation_deadline?: string | null
           confirmed_at?: string | null
           created_at?: string
           email?: string | null
+          gender?: Database["public"]["Enums"]["student_gender"] | null
           id?: string
           library_id: string
           notes?: string | null
@@ -872,10 +1987,12 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          aadhaar_photo_path?: string | null
           confirmation_deadline?: string | null
           confirmed_at?: string | null
           created_at?: string
           email?: string | null
+          gender?: Database["public"]["Enums"]["student_gender"] | null
           id?: string
           library_id?: string
           notes?: string | null
@@ -900,47 +2017,343 @@ export type Database = {
       }
     }
     Views: {
+      admin_affiliate_dashboard: {
+        Row: {
+          affiliate_id: string | null
+          city: string | null
+          code: string | null
+          commission_rate: number | null
+          created_at: string | null
+          email: string | null
+          is_active: boolean | null
+          name: string | null
+          pending_payouts: number | null
+          phone: string | null
+          total_earnings: number | null
+          total_referrals: number | null
+          updated_at: string | null
+        }
+        Relationships: []
+      }
       admin_city_analytics: {
         Row: {
-          city: string
-          libraries: number
-          state: string
+          city: string | null
+          libraries: number | null
+          state: string | null
         }
+        Relationships: []
+      }
+      admin_coupon_dashboard: {
+        Row: {
+          code: string | null
+          created_at: string | null
+          discount_type: string | null
+          discount_value: number | null
+          expires_at: string | null
+          id: string | null
+          is_active: boolean | null
+          max_uses: number | null
+          updated_at: string | null
+          uses_captured: number | null
+          uses_reserved: number | null
+        }
+        Relationships: []
       }
       admin_district_analytics: {
         Row: {
-          district: string
-          libraries: number
-          state: string
+          district: string | null
+          libraries: number | null
+          state: string | null
         }
-      }
-      admin_state_analytics: {
-        Row: {
-          libraries: number
-          state: string
-        }
+        Relationships: []
       }
       admin_platform_coverage: {
         Row: {
-          active_cities: number
-          active_districts: number
-          india_market_penetration_percent: number
-          states_covered: number
-          total_libraries: number
+          active_cities: number | null
+          active_districts: number | null
+          india_market_penetration_percent: number | null
+          states_covered: number | null
+          total_libraries: number | null
         }
+        Relationships: []
+      }
+      admin_state_analytics: {
+        Row: {
+          libraries: number | null
+          state: string | null
+        }
+        Relationships: []
+      }
+      attendance: {
+        Row: {
+          check_in: string | null
+          check_out: string | null
+          created_at: string | null
+          date: string | null
+          id: string | null
+          library_id: string | null
+          student_id: string | null
+        }
+        Insert: {
+          check_in?: string | null
+          check_out?: string | null
+          created_at?: string | null
+          date?: string | null
+          id?: string | null
+          library_id?: string | null
+          student_id?: string | null
+        }
+        Update: {
+          check_in?: string | null
+          check_out?: string | null
+          created_at?: string | null
+          date?: string | null
+          id?: string | null
+          library_id?: string | null
+          student_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendance_logs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commissions: {
+        Row: {
+          commission_amount: number | null
+          created_at: string | null
+          id: string | null
+          library_id: string | null
+          partner_id: string | null
+          partner_uuid: string | null
+          sale_amount: number | null
+          status: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "affiliate_commissions_affiliate_id_fkey"
+            columns: ["partner_uuid"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "affiliate_commissions_affiliate_id_fkey"
+            columns: ["partner_uuid"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "affiliate_commissions_affiliate_id_fkey"
+            columns: ["partner_uuid"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+          {
+            foreignKeyName: "affiliate_commissions_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partners: {
+        Row: {
+          city: string | null
+          commission_rate: number | null
+          created_at: string | null
+          email: string | null
+          id: string | null
+          name: string | null
+          partner_uuid: string | null
+          phone: string | null
+          total_commission: number | null
+          total_sales: number | null
+        }
+        Insert: {
+          city?: string | null
+          commission_rate?: number | null
+          created_at?: string | null
+          email?: string | null
+          id?: string | null
+          name?: string | null
+          partner_uuid?: string | null
+          phone?: string | null
+          total_commission?: number | null
+          total_sales?: number | null
+        }
+        Update: {
+          city?: string | null
+          commission_rate?: number | null
+          created_at?: string | null
+          email?: string | null
+          id?: string | null
+          name?: string | null
+          partner_uuid?: string | null
+          phone?: string | null
+          total_commission?: number | null
+          total_sales?: number | null
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          created_at: string | null
+          expires_at: string | null
+          id: string | null
+          library_id: string | null
+          payment_status: string | null
+          plan: string | null
+          plan_expiry_date: string | null
+          plan_price: number | null
+          plan_start_date: string | null
+          price: number | null
+          seat_limit: number | null
+          started_at: string | null
+          status: string | null
+          trial_end_date: string | null
+          trial_start_date: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string | null
+          library_id?: string | null
+          payment_status?: string | null
+          plan?: string | null
+          plan_expiry_date?: string | null
+          plan_price?: never
+          plan_start_date?: string | null
+          price?: never
+          seat_limit?: number | null
+          started_at?: string | null
+          status?: string | null
+          trial_end_date?: string | null
+          trial_start_date?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string | null
+          library_id?: string | null
+          payment_status?: string | null
+          plan?: string | null
+          plan_expiry_date?: string | null
+          plan_price?: never
+          plan_start_date?: string | null
+          price?: never
+          seat_limit?: number | null
+          started_at?: string | null
+          status?: string | null
+          trial_end_date?: string | null
+          trial_start_date?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_subscriptions_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: true
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      users: {
+        Row: {
+          created_at: string | null
+          email: string | null
+          id: string | null
+          is_phone_verified: boolean | null
+          name: string | null
+          phone: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          email?: string | null
+          id?: string | null
+          is_phone_verified?: boolean | null
+          name?: string | null
+          phone?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          email?: string | null
+          id?: string | null
+          is_phone_verified?: boolean | null
+          name?: string | null
+          phone?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
       }
     }
     Functions: {
-      add_to_waiting_list: {
-        Args: {
-          p_email?: string
-          p_library_id: string
-          p_phone?: string
-          p_preferred_plan?: string
-          p_preferred_slot?: string
-          p_student_name: string
-        }
-        Returns: Json
+      add_to_waiting_list:
+        | {
+            Args: {
+              p_email?: string
+              p_library_id: string
+              p_phone?: string
+              p_preferred_plan?: string
+              p_preferred_slot?: string
+              p_student_name: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_aadhaar_photo_path?: string
+              p_email?: string
+              p_library_id: string
+              p_phone?: string
+              p_preferred_plan?: string
+              p_preferred_slot?: string
+              p_student_name: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_aadhaar_photo_path?: string
+              p_email?: string
+              p_gender?: Database["public"]["Enums"]["student_gender"]
+              p_library_id: string
+              p_phone?: string
+              p_preferred_plan?: string
+              p_preferred_slot?: string
+              p_student_name: string
+            }
+            Returns: Json
+          }
+      admin_approve_partner_payout: {
+        Args: { p_payout_id: string }
+        Returns: undefined
+      }
+      admin_mark_partner_payout_paid: {
+        Args: { p_payout_id: string }
+        Returns: undefined
       }
       assign_locker: {
         Args: {
@@ -950,14 +2363,30 @@ export type Database = {
         }
         Returns: Json
       }
+      can_access_library: {
+        Args: { _library_id: string; _user_id: string }
+        Returns: boolean
+      }
       confirm_waiting_list: { Args: { p_entry_id: string }; Returns: Json }
+      derive_student_original_photo_path: {
+        Args: { p_thumbnail_path: string }
+        Returns: string
+      }
       detect_no_shows: { Args: never; Returns: undefined }
+      extract_student_photo_path_from_url: {
+        Args: { p_photo_url: string }
+        Returns: string
+      }
+      format_compact_time: { Args: { p_time: string }; Returns: string }
+      generate_affiliate_code: { Args: never; Returns: string }
+      generate_partner_code: { Args: never; Returns: string }
+      generate_referral_code: { Args: never; Returns: string }
       get_library_public: {
         Args: { p_identifier: string }
         Returns: {
+          about_text: string | null
           active_students: number
           address: string | null
-          about_text: string | null
           city: string | null
           country: string
           created_at: string
@@ -976,8 +2405,12 @@ export type Database = {
           custom_domain: string | null
           district: string | null
           enabled: boolean
+          header_background_color: string | null
+          header_background_type: string
+          header_background_url: string | null
+          header_overlay_opacity: number
+          header_text_color: string | null
           hero_background_url: string | null
-          id: string
           hero_overlay_color: string | null
           hero_overlay_disabled: boolean
           hero_overlay_opacity: number
@@ -985,11 +2418,16 @@ export type Database = {
           hero_subtitle_color: string | null
           hero_title: string | null
           hero_title_color: string | null
+          id: string
+          library_name: string | null
           logo_url: string | null
+          max_lockers: number
+          max_seats: number
           monthly_revenue: number
           name: string
           opening_hours: string | null
           owner_id: string
+          owner_name: string | null
           phone: string | null
           primary_color: string | null
           section_heading_color: string | null
@@ -998,6 +2436,7 @@ export type Database = {
           total_lockers: number
           total_seats: number
           updated_at: string
+          upi_id: string | null
           whatsapp_number: string | null
         }[]
         SetofOptions: {
@@ -1006,6 +2445,16 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      get_partner_leaderboard: {
+        Args: { p_limit?: number }
+        Returns: {
+          city: string
+          partner_code: string
+          partner_name: string
+          rank: number
+          total_sales: number
+        }[]
       }
       get_slot_availability: {
         Args: { p_library_id: string }
@@ -1028,8 +2477,65 @@ export type Database = {
         }
         Returns: boolean
       }
+      library_locker_plan_limit: {
+        Args: { p_library_id: string }
+        Returns: number
+      }
+      library_seat_plan_limit: {
+        Args: { p_library_id: string }
+        Returns: number
+      }
       locker_label_from_index: { Args: { p_index: number }; Returns: string }
+      log_student_photo_upload_failure: {
+        Args: {
+          p_error_message?: string
+          p_final_photo_storage_path?: string
+          p_final_photo_thumbnail_path?: string
+          p_student_id: string
+          p_temp_original_path?: string
+          p_temp_thumbnail_path?: string
+        }
+        Returns: Json
+      }
+      normalize_lookup_text: { Args: { p_text: string }; Returns: string }
+      normalize_seat_number: { Args: { p_text: string }; Returns: string }
+      notification_category_for_event: {
+        Args: { p_type: string }
+        Returns: Database["public"]["Enums"]["notification_category"]
+      }
+      notify_library_users: {
+        Args: {
+          p_category?: Database["public"]["Enums"]["notification_category"]
+          p_library_id: string
+          p_message: string
+          p_metadata?: Json
+          p_student_id?: string
+          p_title: string
+          p_type: string
+        }
+        Returns: number
+      }
       notify_next_in_queue: { Args: { p_library_id: string }; Returns: Json }
+      notify_super_admins: {
+        Args: {
+          p_category?: Database["public"]["Enums"]["notification_category"]
+          p_library_id: string
+          p_message: string
+          p_metadata?: Json
+          p_student_id?: string
+          p_title: string
+          p_type: string
+        }
+        Returns: number
+      }
+        prepare_student_photo_upload: {
+          Args: {
+            p_student_id: string
+            p_temp_original_path: string
+          }
+          Returns: Json
+        }
+      process_library_subscription_renewals: { Args: never; Returns: Json }
       process_locker_renewals: { Args: never; Returns: Json }
       process_renewals: { Args: never; Returns: Json }
       process_waiting_list_timeouts: { Args: never; Returns: Json }
@@ -1037,14 +2543,35 @@ export type Database = {
         Args: { p_library_id: string; p_qr_code: string }
         Returns: Json
       }
+      recalculate_affiliate_totals: {
+        Args: { p_affiliate_id: string }
+        Returns: undefined
+      }
       release_locker: { Args: { p_locker_id: string }; Returns: Json }
       renew_student: {
         Args: { p_amount?: number; p_months?: number; p_student_id: string }
         Returns: Json
       }
-      sync_library_lockers: {
-        Args: { p_columns?: number; p_library_id: string; p_total_lockers: number }
-        Returns: undefined
+      request_partner_payout: {
+        Args: { p_amount?: number; p_payout_method?: string }
+        Returns: string
+      }
+      run_renewal_reminder_scan: {
+        Args: { p_library_id?: string }
+        Returns: Json
+      }
+      seat_label_from_index: {
+        Args: { p_columns?: number; p_index: number }
+        Returns: string
+      }
+      slot_lookup_matches: {
+        Args: {
+          p_end: string
+          p_input: string
+          p_name: string
+          p_start: string
+        }
+        Returns: boolean
       }
       submit_renewal_payment: {
         Args: {
@@ -1054,11 +2581,60 @@ export type Database = {
         }
         Returns: Json
       }
+      sync_library_lockers: {
+        Args: {
+          p_columns?: number
+          p_library_id: string
+          p_total_lockers: number
+        }
+        Returns: undefined
+      }
+      sync_library_seats: {
+        Args: {
+          p_columns?: number
+          p_library_id: string
+          p_total_seats: number
+        }
+        Returns: undefined
+      }
+      trigger_daily_renewal_reminder_scan: { Args: never; Returns: number }
+      trigger_student_photo_cleanup: { Args: never; Returns: number }
+        update_student_photo_url: {
+          Args: {
+            p_expected_photo_storage_path?: string
+            p_expected_photo_thumbnail_path?: string
+            p_final_photo_storage_path: string
+            p_final_photo_thumbnail_path: string
+            p_photo_version?: number
+            p_photo_url: string
+            p_student_id: string
+            p_temp_original_path?: string
+            p_temp_thumbnail_path?: string
+          }
+        Returns: Json
+      }
+      user_can_access_library: {
+        Args: { _library_id: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      app_role: "super_admin" | "library_owner" | "staff" | "student"
-      notification_category: "payment" | "renewal" | "support" | "system" | "affiliate"
+      app_role:
+        | "super_admin"
+        | "library_owner"
+        | "staff"
+        | "student"
+        | "partner"
+      lead_status: "new" | "contacted" | "demo_done" | "converted" | "rejected"
+      notification_category:
+        | "payment"
+        | "renewal"
+        | "support"
+        | "system"
+        | "affiliate"
       notification_role: "admin" | "library"
+      payout_status: "pending" | "approved" | "paid" | "rejected"
+      student_gender: "male" | "female"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1186,9 +2762,18 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["super_admin", "library_owner", "staff", "student"],
-      notification_category: ["payment", "renewal", "support", "system", "affiliate"],
+      app_role: ["super_admin", "library_owner", "staff", "student", "partner"],
+      lead_status: ["new", "contacted", "demo_done", "converted", "rejected"],
+      notification_category: [
+        "payment",
+        "renewal",
+        "support",
+        "system",
+        "affiliate",
+      ],
       notification_role: ["admin", "library"],
+      payout_status: ["pending", "approved", "paid", "rejected"],
+      student_gender: ["male", "female"],
     },
   },
 } as const

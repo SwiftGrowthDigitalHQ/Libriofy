@@ -69,6 +69,7 @@ type SubscriptionPlanRow = {
   description: string | null;
   price: number | string;
   seats_limit: number | null;
+  lockers_limit: number | null;
   features: unknown;
   is_active: boolean;
 };
@@ -188,6 +189,7 @@ serve(async (req) => {
 
     const planPriceFromMeta = safeNumber(metadata.plan_price, NaN);
     const planSeatsLimitFromMeta = metadata.plan_seats_limit === null ? null : safeNumber(metadata.plan_seats_limit, NaN);
+    const planLockersLimitFromMeta = metadata.plan_lockers_limit === null ? null : safeNumber(metadata.plan_lockers_limit, NaN);
     const planFeaturesFromMeta = safeStringArray(metadata.plan_features);
     const planNameFromMeta = String(metadata.plan_name ?? planCode).trim();
     const planDescriptionFromMeta = metadata.plan_description === null ? null : String(metadata.plan_description ?? "").trim() || null;
@@ -196,11 +198,12 @@ serve(async (req) => {
     if (
       !Number.isFinite(planPriceFromMeta) ||
       !Number.isFinite(planSeatsLimitFromMeta as number) ||
+      !Number.isFinite(planLockersLimitFromMeta as number) ||
       planFeaturesFromMeta.length === 0
     ) {
       const { data: planRow, error: planError } = await supabase
         .from("subscription_plans")
-        .select("code, name, description, price, seats_limit, features, is_active")
+        .select("code, name, description, price, seats_limit, lockers_limit, features, is_active")
         .eq("code", planCode)
         .maybeSingle();
       if (planError) throw planError;
@@ -214,6 +217,12 @@ serve(async (req) => {
         : Number.isFinite(planSeatsLimitFromMeta as number)
           ? (planSeatsLimitFromMeta as number)
           : planFallback?.seats_limit ?? null;
+    const planLockersLimit =
+      planLockersLimitFromMeta === null
+        ? null
+        : Number.isFinite(planLockersLimitFromMeta as number)
+          ? (planLockersLimitFromMeta as number)
+          : planFallback?.lockers_limit ?? null;
     const planFeatures = planFeaturesFromMeta.length > 0 ? planFeaturesFromMeta : safeStringArray(planFallback?.features ?? []);
 
     const currentPlanExpiry = subscriptionRow.plan_expiry_date ?? subscriptionRow.expires_at;
@@ -227,6 +236,7 @@ serve(async (req) => {
     const paymentCapturedAt = new Date().toISOString();
 
     const planSeatsLimitNormalized = planSeatsLimit == null ? 0 : Number(planSeatsLimit);
+    const planLockersLimitNormalized = planLockersLimit == null ? 0 : Number(planLockersLimit);
 
     const rewardAndCommissionPromises: Array<Promise<{ error: unknown }>> = [];
 
@@ -250,6 +260,7 @@ serve(async (req) => {
             payment_status: "paid",
             price: planPrice,
             seats_limit: planSeatsLimitNormalized,
+            lockers_limit: planLockersLimitNormalized,
             features: planFeatures,
             status: "active",
             started_at: activatedAt,

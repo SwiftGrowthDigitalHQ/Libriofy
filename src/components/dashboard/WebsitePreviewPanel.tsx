@@ -1,7 +1,8 @@
 import { ChevronRight, MapPin, Phone } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { resolveWebsiteTheme, type WebsiteThemeInput } from "@/lib/libraryWebsiteTheme";
+import { Button } from "@/components/ui/button";
+import { getHeaderCtaTextClassName, hexToRgba, resolveWebsiteTheme, type WebsiteThemeInput } from "@/lib/libraryWebsiteTheme";
 
 interface WebsitePreviewPanelProps {
   preview: WebsiteThemeInput & {
@@ -29,6 +30,52 @@ const WebsitePreviewPanel = ({ preview }: WebsitePreviewPanelProps) => {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-2xl border border-border overflow-hidden bg-background shadow-sm">
+          <div className="border-b border-white/10 px-5 py-4" style={theme.headerBackgroundStyle}>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                {preview.logo_url ? (
+                  <img src={preview.logo_url} alt={theme.heroTitle} className="h-11 w-11 rounded-2xl object-cover shadow-md" />
+                ) : (
+                  <div
+                    className="flex h-11 w-11 items-center justify-center rounded-2xl text-sm font-bold shadow-sm"
+                    style={{ backgroundColor: "rgba(255,255,255,0.12)", color: theme.headerTextColor }}
+                  >
+                    {theme.heroTitle.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <p className="font-semibold font-display" style={{ color: theme.headerTextColor }}>
+                    {theme.heroTitle}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-[0.18em]" style={{ color: hexToRgba(theme.headerTextColor, 0.7) }}>
+                    Premium Header Preview
+                  </p>
+                </div>
+              </div>
+
+              <div className="hidden items-center gap-2 sm:flex">
+                {["Home", "Plans", "Facilities", "Contact"].map((item) => (
+                  <span
+                    key={item}
+                    className="rounded-full px-3 py-1.5 text-xs font-medium"
+                    style={{ color: hexToRgba(theme.headerTextColor, 0.82), backgroundColor: "rgba(255,255,255,0.08)" }}
+                  >
+                    {item}
+                  </span>
+                ))}
+                <Button
+                  type="button"
+                  size="sm"
+                  className={`rounded-full px-4 shadow-sm ${getHeaderCtaTextClassName(theme.headerCtaTextStyle)}`}
+                  style={{ backgroundColor: theme.headerCtaButtonColor, color: theme.headerCtaButtonTextColor }}
+                >
+                  Book Seat
+                  <ChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+
           <div className="p-6 sm:p-7" style={theme.heroBackgroundStyle}>
             <div className={`rounded-2xl p-5 ${heroContentClass}`}>
               {preview.logo_url ? (

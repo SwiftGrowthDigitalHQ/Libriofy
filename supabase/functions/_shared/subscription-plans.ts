@@ -4,6 +4,7 @@ export type SubscriptionPlan = {
   name: SubscriptionPlanName;
   price: number;
   seatsLimit: number | null;
+  lockersLimit: number | null;
   features: string[];
 };
 
@@ -15,18 +16,21 @@ export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanName, SubscriptionPlan> 
     name: "starter",
     price: 2999,
     seatsLimit: 50,
+    lockersLimit: 30,
     features: ["seat_management", "basic_analytics", "notifications"],
   },
   growth: {
     name: "growth",
     price: 4999,
     seatsLimit: 150,
+    lockersLimit: 80,
     features: ["seat_management", "advanced_analytics", "notifications", "export"],
   },
   pro: {
     name: "pro",
     price: 9999,
-    seatsLimit: null,
+    seatsLimit: 500,
+    lockersLimit: 200,
     features: ["seat_management", "advanced_analytics", "notifications", "export", "custom_domain", "priority_support"],
   },
 };

@@ -20,3 +20,12 @@ verify_jwt = false
 
 [functions.verify-razorpay-payment]
 verify_jwt = false
+
+[functions.start-payment-recovery-calls]
+verify_jwt = false
+
+[functions.payment-recovery-call-status]
+verify_jwt = false
+
+[functions.cleanup-student-photo-assets]
+verify_jwt = false

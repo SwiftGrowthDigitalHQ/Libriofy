@@ -13,6 +13,7 @@ type SubscriptionPlanRow = {
   description: string | null;
   price: number | string;
   seats_limit: number | null;
+  lockers_limit: number | null;
   features: unknown;
   is_active: boolean;
 };
@@ -28,6 +29,10 @@ type CouponRow = {
 };
 
 type UserRoleRow = { role: string; library_id: string | null };
+type LibraryCapacityRow = {
+  total_seats: number | null;
+  total_lockers: number | null;
+};
 
 const normalizePlanCode = (value: string | null | undefined) => String(value ?? "").trim().toLowerCase();
 const normalizeCouponCode = (value: string | null | undefined) => String(value ?? "").trim().toUpperCase();
@@ -41,6 +46,32 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number) =>
 const safeNumber = (value: unknown, fallback: number) => {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const exceedsPlanLimit = (currentUsage: number, planLimit: number | null | undefined) =>
+  typeof planLimit === "number" && planLimit > 0 && currentUsage > planLimit;
+
+const buildCapacityLimitError = ({
+  currentLockers,
+  currentSeats,
+  plan,
+}: {
+  currentLockers: number;
+  currentSeats: number;
+  plan: SubscriptionPlanRow;
+}) => {
+  const messages: string[] = [];
+
+  if (exceedsPlanLimit(currentSeats, plan.seats_limit)) {
+    messages.push(`${currentSeats} configured seats exceed the ${plan.seats_limit} seat limit`);
+  }
+
+  if (exceedsPlanLimit(currentLockers, plan.lockers_limit)) {
+    messages.push(`${currentLockers} configured lockers exceed the ${plan.lockers_limit} locker limit`);
+  }
+
+  if (messages.length === 0) return null;
+  return `Reduce capacity before switching to ${plan.name}: ${messages.join(" and ")}.`;
 };
 
 const computeCouponDiscount = (subtotal: number, coupon: CouponRow) => {
@@ -141,7 +172,7 @@ serve(async (req) => {
 
     const { data: planRow, error: planError } = await supabase
       .from("subscription_plans")
-      .select("code, name, description, price, seats_limit, features, is_active")
+      .select("code, name, description, price, seats_limit, lockers_limit, features, is_active")
       .eq("code", requestedPlanCode)
       .maybeSingle();
     if (planError) throw planError;
@@ -156,6 +187,25 @@ serve(async (req) => {
     const canPurchaseInactive = isSuperAdmin || requestedPlanCode === currentPlanCode;
     if (!plan.is_active && !canPurchaseInactive) {
       return new Response(JSON.stringify({ error: "This plan is currently disabled" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { data: libraryRow, error: libraryError } = await supabase
+      .from("libraries")
+      .select("total_seats, total_lockers")
+      .eq("id", libraryId)
+      .single();
+    if (libraryError) throw libraryError;
+
+    const capacityError = buildCapacityLimitError({
+      currentLockers: Math.max(0, Number((libraryRow as LibraryCapacityRow | null)?.total_lockers ?? 0)),
+      currentSeats: Math.max(0, Number((libraryRow as LibraryCapacityRow | null)?.total_seats ?? 0)),
+      plan,
+    });
+    if (capacityError) {
+      return new Response(JSON.stringify({ error: capacityError }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -248,6 +298,7 @@ serve(async (req) => {
           description: plan.description,
           price: unitPrice,
           seats_limit: plan.seats_limit,
+          lockers_limit: plan.lockers_limit,
           features: plan.features,
           is_active: plan.is_active,
         },

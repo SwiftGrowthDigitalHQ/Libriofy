@@ -4,11 +4,21 @@ const DEFAULT_BRAND_COLOR = "#14b8a6";
 const DEFAULT_DARK_TEXT = "#0f172a";
 const DEFAULT_LIGHT_TEXT = "#ffffff";
 const DEFAULT_LIGHT_SUBTEXT = "#e2e8f0";
+const DEFAULT_HEADER_COLOR = "#0f172a";
 
 export type WebsiteBackgroundType = "color" | "image" | "gradient";
+export type HeaderCtaTextStyle = "default" | "bold" | "uppercase";
 
 export interface WebsiteThemeInput {
   name?: string | null;
+  header_background_type?: string | null;
+  header_background_url?: string | null;
+  header_background_color?: string | null;
+  header_overlay_opacity?: number | null;
+  header_text_color?: string | null;
+  header_cta_button_color?: string | null;
+  header_cta_button_text_color?: string | null;
+  header_cta_text_style?: string | null;
   hero_background_url?: string | null;
   hero_overlay_color?: string | null;
   hero_overlay_disabled?: boolean | null;
@@ -37,6 +47,15 @@ export interface WebsiteThemeInput {
 
 export interface ResolvedWebsiteTheme {
   brandColor: string;
+  headerBackgroundType: "color" | "image";
+  headerBackgroundColor: string;
+  headerBackgroundUrl: string | null;
+  headerOverlayOpacity: number;
+  headerTextColor: string;
+  headerBackgroundStyle: CSSProperties;
+  headerCtaButtonColor: string;
+  headerCtaButtonTextColor: string;
+  headerCtaTextStyle: HeaderCtaTextStyle;
   heroTitle: string;
   heroSubtitle: string;
   heroTitleColor: string;
@@ -93,8 +112,43 @@ const shiftHexColor = (hex: string, amount: number) => {
     .join("")}`;
 };
 
+export const resolveHeaderCtaTextStyle = (value?: string | null): HeaderCtaTextStyle => {
+  if (value === "uppercase") return "uppercase";
+  if (value === "default") return "default";
+  return "bold";
+};
+
+export const getHeaderCtaTextClassName = (value: HeaderCtaTextStyle) => {
+  switch (value) {
+    case "default":
+      return "font-medium normal-case tracking-normal";
+    case "uppercase":
+      return "font-semibold uppercase tracking-[0.14em]";
+    case "bold":
+    default:
+      return "font-semibold normal-case tracking-normal";
+  }
+};
+
 export const resolveWebsiteTheme = (input?: WebsiteThemeInput | null): ResolvedWebsiteTheme => {
   const brandColor = normalizeHexColor(input?.primary_color, DEFAULT_BRAND_COLOR);
+  const headerBackgroundColor = normalizeHexColor(input?.header_background_color, DEFAULT_HEADER_COLOR);
+  const headerBackgroundType =
+    input?.header_background_type === "image" && input?.header_background_url ? "image" : "color";
+  const headerOverlayOpacity = clamp(Number(input?.header_overlay_opacity ?? 72), 0, 100) / 100;
+  const headerBackgroundStyle: CSSProperties =
+    headerBackgroundType === "image" && input?.header_background_url
+      ? {
+          backgroundImage: `linear-gradient(135deg, ${hexToRgba(headerBackgroundColor, headerOverlayOpacity)}, ${hexToRgba(
+            shiftHexColor(headerBackgroundColor, -18),
+            Math.min(headerOverlayOpacity + 0.08, 0.98),
+          )}), url(${input.header_background_url})`,
+          backgroundPosition: "center",
+          backgroundSize: "cover",
+        }
+      : {
+          background: `linear-gradient(135deg, ${headerBackgroundColor}, ${shiftHexColor(headerBackgroundColor, -20)})`,
+        };
   const heroBackgroundColor = normalizeHexColor(input?.hero_overlay_color, brandColor);
   const heroOverlayOpacity = clamp(Number(input?.hero_overlay_opacity ?? 70), 0, 100) / 100;
   const heroHasImage = !!input?.hero_background_url;
@@ -143,6 +197,15 @@ export const resolveWebsiteTheme = (input?: WebsiteThemeInput | null): ResolvedW
 
   return {
     brandColor,
+    headerBackgroundType,
+    headerBackgroundColor,
+    headerBackgroundUrl: input?.header_background_url || null,
+    headerOverlayOpacity,
+    headerTextColor: normalizeHexColor(input?.header_text_color, DEFAULT_LIGHT_TEXT),
+    headerBackgroundStyle,
+    headerCtaButtonColor: normalizeHexColor(input?.header_cta_button_color, brandColor),
+    headerCtaButtonTextColor: normalizeHexColor(input?.header_cta_button_text_color, DEFAULT_LIGHT_TEXT),
+    headerCtaTextStyle: resolveHeaderCtaTextStyle(input?.header_cta_text_style),
     heroTitle: input?.hero_title?.trim() || input?.name?.trim() || "Your Library Name",
     heroSubtitle: input?.hero_subtitle?.trim() || "Premium Study Space for Focused Learning",
     heroTitleColor: normalizeHexColor(input?.hero_title_color, DEFAULT_LIGHT_TEXT),

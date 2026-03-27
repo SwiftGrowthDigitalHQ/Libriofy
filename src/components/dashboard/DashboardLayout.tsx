@@ -12,6 +12,7 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useIsSuperAdmin } from "@/hooks/useUserRole";
 import { evaluateSubscriptionAccess, useLibrarySubscription } from "@/hooks/useLibrarySubscription";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import InstallAppButton from "@/components/pwa/InstallAppButton";
 
 const baseLibraryNavItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
@@ -76,7 +77,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
     : libraryNavItems.filter((item) => item.path === "/dashboard/billing");
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex h-[100dvh] min-h-[100dvh] bg-background overflow-hidden">
       {/* Sidebar */}
       <aside className={`${collapsed ? "w-16" : "w-64"} bg-sidebar flex flex-col border-r border-sidebar-border transition-all duration-300 hidden lg:flex`}>
         <div className="flex items-center gap-2 px-4 h-16 border-b border-sidebar-border">
@@ -169,6 +170,9 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
             <h1 className="text-lg font-semibold font-display text-foreground">Library Dashboard</h1>
           </div>
           <div className="flex items-center gap-3">
+            <InstallAppButton size="sm" variant="outline" className="hidden sm:inline-flex">
+              Install App
+            </InstallAppButton>
             <NotificationBell notificationsPath="/dashboard/notifications" />
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary">
               LA

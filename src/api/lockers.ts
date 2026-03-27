@@ -175,10 +175,26 @@ const insertLockerWithFallbacks = async ({
   if (lastError) throw lastError;
 };
 
-const updateLibraryLockerCapacityMetadata = async (libraryId: string, totalLockers: number) => {
+const updateLibraryLockerCapacityMetadata = async ({
+  libraryId,
+  planLimit,
+  totalLockers,
+}: {
+  libraryId: string;
+  planLimit?: number | null;
+  totalLockers: number;
+}) => {
+  const updates: Database["public"]["Tables"]["libraries"]["Update"] = {
+    total_lockers: totalLockers,
+  };
+
+  if (typeof planLimit === "number" && Number.isFinite(planLimit) && planLimit >= 0) {
+    updates.max_lockers = planLimit;
+  }
+
   const { error } = await supabase
     .from("libraries")
-    .update({ total_lockers: totalLockers } as never)
+    .update(updates as never)
     .eq("id", libraryId);
 
   if (!error) {
@@ -290,10 +306,12 @@ const reconcileLockerCapacityRows = async ({
 
 export const syncLockerCapacity = async ({
   libraryId,
+  planLimit,
   targetCapacity,
   existingLockers,
 }: {
   libraryId: string;
+  planLimit?: number | null;
   targetCapacity: number;
   existingLockers: LockerCapacityInventoryRecord[];
 }) => {
@@ -307,7 +325,11 @@ export const syncLockerCapacity = async ({
     );
   }
 
-  const metadataWasUpdated = await updateLibraryLockerCapacityMetadata(libraryId, target);
+  const metadataWasUpdated = await updateLibraryLockerCapacityMetadata({
+    libraryId,
+    planLimit,
+    totalLockers: target,
+  });
 
   let syncedInventory = await fetchLockerCapacityInventory(libraryId).catch(() => latestInventory);
 

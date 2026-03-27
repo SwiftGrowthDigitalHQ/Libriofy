@@ -10,6 +10,14 @@ export type SubscriptionPlan = {
   features: string[];
 };
 
+export type SubscriptionPlanCatalogRecord = {
+  code: string;
+  name: string | null;
+  price: number | null;
+  seats_limit: number | null;
+  lockers_limit: number | null;
+};
+
 export type LibrarySubscriptionRecord = {
   id: string;
   library_id: string;
@@ -33,6 +41,7 @@ export type LibrarySubscriptionRecord = {
     enabled: boolean;
     name: string | null;
   } | null;
+  current_plan?: SubscriptionPlanCatalogRecord | null;
 };
 
 export type SubscriptionAccessState = {
@@ -61,27 +70,27 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     label: "Starter",
     price: 2999,
     seatsLimit: 50,
-    lockersLimit: 10,
+    lockersLimit: 30,
     description: "For libraries getting started with paid operations.",
-    features: ["Up to 50 seats", "Seat management", "Notifications"],
+    features: ["Up to 50 seats", "Up to 30 lockers", "Seat management", "Notifications"],
   },
   {
     name: "growth",
     label: "Growth",
     price: 4999,
     seatsLimit: 150,
-    lockersLimit: 40,
+    lockersLimit: 80,
     description: "For growing libraries that need higher seat capacity.",
-    features: ["Up to 150 seats", "Seat management", "Advanced analytics", "Notifications", "Export"],
+    features: ["Up to 150 seats", "Up to 80 lockers", "Seat management", "Advanced analytics", "Notifications", "Export"],
   },
   {
     name: "pro",
     label: "Pro",
     price: 9999,
-    seatsLimit: null,
-    lockersLimit: 150,
+    seatsLimit: 500,
+    lockersLimit: 200,
     description: "For large operations that need full flexibility.",
-    features: ["Unlimited seats", "All features", "Custom domain", "Priority support"],
+    features: ["Up to 500 seats", "Up to 200 lockers", "All features", "Custom domain", "Priority support"],
   },
 ];
 
@@ -123,13 +132,29 @@ export const formatLockerLimit = (lockersLimit: number | null | undefined) => {
 
 export const getPlanLockerLimit = (value: string | null | undefined) => {
   const normalized = normalizeStatus(value);
-  if (normalized === "premium") return 150;
+  if (normalized === "premium") return 200;
   return PLAN_MAP.get(normalized as SubscriptionPlanName)?.lockersLimit ?? null;
 };
 
 export const resolveSubscriptionLockerLimit = (
   subscription: LibrarySubscriptionRecord | null | undefined,
-) => getPlanLockerLimit(subscription?.plan_name) ?? subscription?.lockers_limit ?? null;
+) =>
+  subscription?.current_plan?.lockers_limit ??
+  getPlanLockerLimit(subscription?.current_plan?.code ?? subscription?.plan_name) ??
+  subscription?.lockers_limit ??
+  null;
+
+export const resolveSubscriptionSeatLimit = (
+  subscription: LibrarySubscriptionRecord | null | undefined,
+) =>
+  subscription?.current_plan?.seats_limit ??
+  getSubscriptionPlan(subscription?.current_plan?.code ?? subscription?.plan_name)?.seatsLimit ??
+  subscription?.seats_limit ??
+  null;
+
+export const resolveSubscriptionPlanLabel = (
+  subscription: LibrarySubscriptionRecord | null | undefined,
+) => subscription?.current_plan?.name ?? getSubscriptionPlan(subscription?.plan_name)?.label ?? subscription?.plan_name ?? null;
 
 export const evaluateSubscriptionAccess = (
   subscription: LibrarySubscriptionRecord | null | undefined,

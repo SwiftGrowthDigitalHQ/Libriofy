@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import InstallAppButton from "@/components/pwa/InstallAppButton";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
@@ -28,7 +29,7 @@ const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
   const location = useLocation();
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex h-[100dvh] min-h-[100dvh] bg-background overflow-hidden">
       {/* Sidebar */}
       <aside className={`${collapsed ? "w-16" : "w-64"} bg-sidebar flex flex-col border-r border-sidebar-border transition-all duration-300 hidden lg:flex`}>
         <div className="flex items-center gap-2 px-4 h-16 border-b border-sidebar-border">
@@ -95,6 +96,9 @@ const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
             <h1 className="text-lg font-semibold font-display text-foreground">Platform Administration</h1>
           </div>
           <div className="flex items-center gap-3">
+            <InstallAppButton size="sm" variant="outline" className="hidden sm:inline-flex">
+              Install App
+            </InstallAppButton>
             <NotificationBell notificationsPath="/admin/notifications" showLibraryName />
             <div className="w-8 h-8 rounded-full bg-destructive/20 flex items-center justify-center text-xs font-medium text-destructive">
               SA

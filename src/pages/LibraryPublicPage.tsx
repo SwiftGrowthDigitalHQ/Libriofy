@@ -3,14 +3,16 @@ import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { MapPin, Clock, Users, Check, ChevronRight, Loader2 } from "lucide-react";
+import { MapPin, Clock, Users, Check, ChevronRight, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import ImageSlider from "@/components/library-public/ImageSlider";
 import FacilitiesSection from "@/components/library-public/FacilitiesSection";
 import GallerySection from "@/components/library-public/GallerySection";
@@ -19,13 +21,31 @@ import AboutSection from "@/components/library-public/AboutSection";
 import CTASection from "@/components/library-public/CTASection";
 import ContactSection from "@/components/library-public/ContactSection";
 import LibraryFooter from "@/components/library-public/LibraryFooter";
+import LibraryNavbar from "@/components/library-public/LibraryNavbar";
 import WhatsAppButton from "@/components/library-public/WhatsAppButton";
+import { isHeaderConfigCaption, parseHeaderConfig, toHeaderThemeInput } from "@/lib/libraryHeaderConfig";
 import { resolveWebsiteTheme } from "@/lib/libraryWebsiteTheme";
+import { STUDENT_GENDER_OPTIONS, type StudentGender } from "@/lib/studentGender";
+import { buildAadhaarDocumentPath, STUDENT_DOCUMENTS_BUCKET } from "@/lib/studentDocuments";
 
 interface LibraryPublicPageProps {
-  domainLibrary?: any;
+  domainLibrary?: PublicLibraryRow | null;
 }
 
+type PublicLibraryRow = Database["public"]["Functions"]["get_library_public"]["Returns"][number];
+type GalleryImageRow = {
+  caption: string | null;
+  id: string;
+  image_url: string;
+  sort_order: number;
+};
+type PublishedReviewRow = {
+  id: string;
+  rating: number;
+  review_text: string;
+  reviewer_name: string;
+  sort_order: number;
+};
 type SlotAvailabilityRow = {
   available_seats: number;
   occupied_seats: number;
@@ -33,6 +53,8 @@ type SlotAvailabilityRow = {
   slot_name: string;
   total_seats: number;
 };
+
+const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : "Something went wrong");
 
 const normalizeWhatsAppNumber = (raw?: string | null): string => {
   const digits = (raw || "").replace(/\D/g, "");
@@ -45,22 +67,44 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
   const { slug } = useParams<{ slug: string }>();
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
+  const [formGender, setFormGender] = useState<StudentGender | "">("");
   const [formPhone, setFormPhone] = useState("");
   const [formEmail, setFormEmail] = useState("");
   const [formPlan, setFormPlan] = useState("");
   const [formSlot, setFormSlot] = useState("");
+  const [formAadhaarFile, setFormAadhaarFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!formName.trim() || !library?.id) return;
+    if (!formName.trim() || !formGender || !library?.id) return;
     setSubmitting(true);
+    let uploadedAadhaarPath: string | null = null;
     try {
+      if (formAadhaarFile) {
+        uploadedAadhaarPath = buildAadhaarDocumentPath({
+          fileName: formAadhaarFile.name,
+          libraryId: library.id,
+        });
+
+        const { error: uploadError } = await supabase.storage
+          .from(STUDENT_DOCUMENTS_BUCKET)
+          .upload(uploadedAadhaarPath, formAadhaarFile, {
+            cacheControl: "3600",
+            contentType: formAadhaarFile.type || "image/png",
+            upsert: false,
+          });
+
+        if (uploadError) throw uploadError;
+      }
+
       const { data, error } = await supabase.rpc("add_to_waiting_list", {
+        p_aadhaar_photo_path: uploadedAadhaarPath || undefined,
         p_library_id: library.id,
         p_student_name: formName.trim(),
+        p_gender: formGender,
         p_phone: formPhone.trim() || undefined,
         p_email: formEmail.trim() || undefined,
         p_preferred_plan: formPlan || undefined,
@@ -71,10 +115,15 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       if (result.success) {
         setQueuePosition(result.position);
         setSubmitted(true);
+        setFormAadhaarFile(null);
+        setFormGender("");
         toast.success("You've been added to the waiting list!");
       }
-    } catch (err: any) {
-      toast.error(err.message || "Something went wrong");
+    } catch (err: unknown) {
+      if (uploadedAadhaarPath) {
+        await supabase.storage.from(STUDENT_DOCUMENTS_BUCKET).remove([uploadedAadhaarPath]);
+      }
+      toast.error(getErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -86,8 +135,9 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       if (domainLibrary) return domainLibrary;
       const { data, error } = await supabase.rpc("get_library_public", { p_identifier: slug! });
       if (error) throw error;
-      if (!data || (data as any[]).length === 0) return null;
-      return (data as any[])[0];
+      const publicLibraries = (data ?? []) as PublicLibraryRow[];
+      if (publicLibraries.length === 0) return null;
+      return publicLibraries[0];
     },
     enabled: !!domainLibrary || !!slug,
     initialData: domainLibrary || undefined,
@@ -129,13 +179,13 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     queryKey: ["public-gallery", libraryId],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("library_gallery_images" as any)
+        .from("library_gallery_images" as never)
         .select("id, image_url, caption, sort_order")
         .eq("library_id", libraryId!)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
       if (error) throw error;
-      return data as Array<{ id: string; image_url: string; caption: string | null; sort_order: number }>;
+      return (data ?? []) as unknown as GalleryImageRow[];
     },
     enabled: !!libraryId,
   });
@@ -144,14 +194,14 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
     queryKey: ["public-reviews", libraryId],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("library_reviews" as any)
+        .from("library_reviews" as never)
         .select("id, reviewer_name, review_text, rating, sort_order")
         .eq("library_id", libraryId!)
         .eq("is_published", true)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as Array<{ id: string; reviewer_name: string; review_text: string; rating: number; sort_order: number }>;
+      return (data ?? []) as unknown as PublishedReviewRow[];
     },
     enabled: !!libraryId,
   });
@@ -224,16 +274,26 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
   const displayPlans = plans.length > 0 ? plans : (isDemo ? demoPlans : []);
   const displaySlots = slots.length > 0 ? slots : (isDemo ? demoSlots : []);
   const displayAvailability = Object.keys(availabilityMap).length > 0 ? availabilityMap : (isDemo ? demoAvailability : {});
+  const headerConfig = parseHeaderConfig(galleryImages.find((image) => isHeaderConfigCaption(image.caption))?.caption);
+  const visibleGalleryImages = galleryImages.filter((image) => !isHeaderConfigCaption(image.caption));
   const galleryForSections =
-    galleryImages.length > 0
-      ? galleryImages.map((image) => ({ src: image.image_url, alt: image.caption || displayLibrary.name }))
+    visibleGalleryImages.length > 0
+      ? visibleGalleryImages.map((image) => ({ src: image.image_url, alt: image.caption || displayLibrary.name }))
       : (isDemo ? demoGalleryImages : []);
   const testimonialsForSection =
     publishedReviews.length > 0
       ? publishedReviews.map((review) => ({ name: review.reviewer_name, text: review.review_text, rating: review.rating }))
       : (isDemo ? demoTestimonials : []);
-  const websiteTheme = resolveWebsiteTheme(displayLibrary);
+  const websiteTheme = resolveWebsiteTheme(headerConfig ? { ...displayLibrary, ...toHeaderThemeInput(headerConfig) } : displayLibrary);
   const brandColor = websiteTheme.brandColor;
+  const headerBackgroundType = websiteTheme.headerBackgroundType;
+  const headerBackgroundColor = websiteTheme.headerBackgroundColor;
+  const headerBackgroundUrl = websiteTheme.headerBackgroundUrl;
+  const headerOverlayOpacity = websiteTheme.headerOverlayOpacity;
+  const headerTextColor = websiteTheme.headerTextColor;
+  const headerCtaButtonColor = websiteTheme.headerCtaButtonColor;
+  const headerCtaButtonTextColor = websiteTheme.headerCtaButtonTextColor;
+  const headerCtaTextStyle = websiteTheme.headerCtaTextStyle;
   const heroTitle = websiteTheme.heroTitle;
   const heroSubtitle = websiteTheme.heroSubtitle;
   const aboutText = displayLibrary.about_text || "";
@@ -280,9 +340,25 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
         </div>
       )}
 
+      <LibraryNavbar
+        brandColor={brandColor}
+        libraryName={displayLibrary.name}
+        logoUrl={displayLibrary.logo_url}
+        headerBackgroundType={headerBackgroundType}
+        headerBackgroundColor={headerBackgroundColor}
+        headerBackgroundUrl={headerBackgroundUrl}
+        headerOverlayOpacity={headerOverlayOpacity}
+        headerTextColor={headerTextColor}
+        headerCtaButtonColor={headerCtaButtonColor}
+        headerCtaButtonTextColor={headerCtaButtonTextColor}
+        headerCtaTextStyle={headerCtaTextStyle}
+        onBookSeat={scrollToForm}
+      />
+
       {/* Hero */}
       <header
-        className="relative text-primary-foreground py-20 sm:py-32 overflow-hidden"
+        id="home"
+        className="relative overflow-hidden pb-20 pt-28 text-primary-foreground sm:pb-32 sm:pt-36"
         style={heroBackgroundStyle}
       >
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 20% 50%, white 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
@@ -414,7 +490,9 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
       )}
 
       {/* Facilities */}
-      <FacilitiesSection headingColor={websiteTheme.sectionHeadingColor} />
+      <div id="facilities">
+        <FacilitiesSection headingColor={websiteTheme.sectionHeadingColor} />
+      </div>
 
       {/* Gallery */}
       <GallerySection images={galleryForSections} headingColor={websiteTheme.sectionHeadingColor} />
@@ -479,12 +557,53 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                       <Input placeholder="Enter your name" className="mt-1" value={formName} onChange={(e) => setFormName(e.target.value)} required />
                     </div>
                     <div>
+                      <Label>Gender *</Label>
+                      <RadioGroup value={formGender} onValueChange={(value) => setFormGender(value as StudentGender)} className="mt-3 grid gap-3 sm:grid-cols-2">
+                        {STUDENT_GENDER_OPTIONS.map((option) => {
+                          const inputId = `public-waiting-gender-${option.value}`;
+
+                          return (
+                            <label
+                              key={option.value}
+                              htmlFor={inputId}
+                              className="flex cursor-pointer items-center gap-3 rounded-xl border border-border px-4 py-3 transition-colors hover:bg-secondary/50"
+                            >
+                              <RadioGroupItem id={inputId} value={option.value} />
+                              <span className="text-sm font-medium text-foreground">{option.label}</span>
+                            </label>
+                          );
+                        })}
+                      </RadioGroup>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        This helps us allocate suitable seating and improve comfort.
+                      </p>
+                    </div>
+                    <div>
                       <Label>Phone Number</Label>
                       <Input placeholder="10-digit number" className="mt-1" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} />
                     </div>
                     <div>
                       <Label>Email</Label>
                       <Input type="email" placeholder="your@email.com" className="mt-1" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label htmlFor="aadhaar-photo">Upload Aadhaar Photo</Label>
+                      <Input
+                        id="aadhaar-photo"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="mt-1"
+                        onChange={(event) => setFormAadhaarFile(event.target.files?.[0] ?? null)}
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Optional. Upload a clear Aadhaar image so the library can verify it from the students panel.
+                      </p>
+                      {formAadhaarFile ? (
+                        <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                          <Upload className="h-3.5 w-3.5" />
+                          {formAadhaarFile.name}
+                        </p>
+                      ) : null}
                     </div>
                     {displayPlans.length > 0 && (
                       <div>
@@ -512,7 +631,7 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
                         </Select>
                       </div>
                     )}
-                    <Button type="submit" disabled={submitting || !formName.trim()} className="w-full mt-2">
+                    <Button type="submit" disabled={submitting || !formName.trim() || !formGender} className="w-full mt-2">
                       {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                       {submitting ? "Submitting..." : "Join Waiting List"}
                     </Button>
