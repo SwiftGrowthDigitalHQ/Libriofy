@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +34,7 @@ const StudentQRCard = ({ studentName, qrCode, seatNumber, plan, status }: Studen
   };
 
   return (
-    <Card className="text-center">
+    <Card className="h-full text-center">
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-display">{studentName}</CardTitle>
       </CardHeader>
@@ -65,4 +66,4 @@ const StudentQRCard = ({ studentName, qrCode, seatNumber, plan, status }: Studen
   );
 };
 
-export default StudentQRCard;
+export default memo(StudentQRCard);

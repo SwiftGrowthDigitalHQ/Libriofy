@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 import {
   ListOrdered,
@@ -8,8 +8,8 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  AlertTriangle,
   Trash2,
+  Search,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -27,11 +27,32 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useAuth } from "@/hooks/useAuth";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { STUDENT_GENDER_OPTIONS, formatStudentGender, getStudentGenderBadgeClassName, type StudentGender } from "@/lib/studentGender";
 
 type WaitingEntry = Database["public"]["Tables"]["waiting_list"]["Row"];
 type TimeSlotOption = Pick<Database["public"]["Tables"]["time_slots"]["Row"], "id" | "name">;
 type PlanOption = Pick<Database["public"]["Tables"]["plans"]["Row"], "id" | "name">;
+type WaitingListStatusFilter = "all" | "waiting" | "notified" | "confirmed" | "expired";
+
+type WaitingListOverviewResponse = {
+  confirmedCount: number;
+  expiredCount: number;
+  inQueueCount: number;
+  notifiedCount: number;
+};
+
+type WaitingListPageResponse = {
+  data: WaitingEntry[];
+  page: number;
+  total: number;
+  totalPages: number;
+};
+
+const WAITING_LIST_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+type WaitingListPageSize = (typeof WAITING_LIST_PAGE_SIZE_OPTIONS)[number];
+const DEFAULT_PAGE_SIZE: WaitingListPageSize = 10;
 
 type QueueResult = {
   success?: boolean;
@@ -44,9 +65,128 @@ type QueueResult = {
   slot_names?: string[] | null;
 };
 
-const getErrorMessage = (error: unknown): string => {
-  if (!error || typeof error !== "object") return "Unknown error";
-  return (error as { message?: string }).message || "Unknown error";
+const getErrorMessage = (error: unknown): string => getSafeErrorMessage(error);
+
+const buildPageItems = (currentPage: number, totalPages: number) => {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "ellipsis", totalPages] as const;
+  }
+
+  if (currentPage >= totalPages - 3) {
+    return [1, "ellipsis", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages] as const;
+  }
+
+  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages] as const;
+};
+
+const escapeIlikeValue = (value: string) => value.replace(/[%_]/g, (character) => `\\${character}`);
+
+const fetchWaitingListPage = async ({
+  filter,
+  libraryId,
+  limit,
+  page,
+  search,
+}: {
+  filter: WaitingListStatusFilter;
+  libraryId: string | null;
+  limit: number;
+  page: number;
+  search: string;
+}): Promise<WaitingListPageResponse> => {
+  if (!libraryId) {
+    return {
+      data: [],
+      page: 1,
+      total: 0,
+      totalPages: 1,
+    };
+  }
+
+  const safeLimit = Math.max(1, limit);
+  const safePage = Math.max(1, page);
+  const from = (safePage - 1) * safeLimit;
+  const to = from + safeLimit - 1;
+
+  let query = supabase.from("waiting_list").select("*", { count: "exact" }).eq("library_id", libraryId);
+
+  if (filter !== "all") {
+    query = query.eq("status", filter);
+  }
+
+  const trimmedSearch = search.trim();
+  if (trimmedSearch) {
+    const pattern = `%${escapeIlikeValue(trimmedSearch)}%`;
+    query = query.or(`student_name.ilike.${pattern},phone.ilike.${pattern}`);
+  }
+
+  const { data, error, count } = await query.order("created_at", { ascending: true }).range(from, to);
+
+  if (error) {
+    throw error;
+  }
+
+  const total = count ?? 0;
+
+  return {
+    data: data ?? [],
+    page: safePage,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+  };
+};
+
+const fetchWaitingListOverview = async (libraryId: string | null): Promise<WaitingListOverviewResponse> => {
+  if (!libraryId) {
+    return {
+      confirmedCount: 0,
+      expiredCount: 0,
+      inQueueCount: 0,
+      notifiedCount: 0,
+    };
+  }
+
+  const [waitingResult, notifiedResult, confirmedResult, expiredResult] = await Promise.all([
+    supabase.from("waiting_list").select("id", { count: "exact", head: true }).eq("library_id", libraryId).eq("status", "waiting"),
+    supabase.from("waiting_list").select("id", { count: "exact", head: true }).eq("library_id", libraryId).eq("status", "notified"),
+    supabase.from("waiting_list").select("id", { count: "exact", head: true }).eq("library_id", libraryId).eq("status", "confirmed"),
+    supabase.from("waiting_list").select("id", { count: "exact", head: true }).eq("library_id", libraryId).eq("status", "expired"),
+  ]);
+
+  if (waitingResult.error) throw waitingResult.error;
+  if (notifiedResult.error) throw notifiedResult.error;
+  if (confirmedResult.error) throw confirmedResult.error;
+  if (expiredResult.error) throw expiredResult.error;
+
+  return {
+    confirmedCount: confirmedResult.count ?? 0,
+    expiredCount: expiredResult.count ?? 0,
+    inQueueCount: waitingResult.count ?? 0,
+    notifiedCount: notifiedResult.count ?? 0,
+  };
+};
+
+const fetchNotifiedEntries = async (libraryId: string | null): Promise<WaitingEntry[]> => {
+  if (!libraryId) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("waiting_list")
+    .select("*")
+    .eq("library_id", libraryId)
+    .eq("status", "notified")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
 };
 
 const WaitingListPage = () => {
@@ -55,6 +195,11 @@ const WaitingListPage = () => {
   const { user } = useAuth();
   const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
 
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<WaitingListStatusFilter>("all");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WaitingListPageSize>(DEFAULT_PAGE_SIZE);
+  const [totalCount, setTotalCount] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({
     student_name: "",
@@ -64,6 +209,9 @@ const WaitingListPage = () => {
     preferred_slot: "",
     preferred_plan: "",
   });
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const tableTopRef = useRef<HTMLDivElement | null>(null);
+  const hasMountedPaginationRef = useRef(false);
 
   const { data: fallbackLibraries = [], isLoading: fallbackLoading } = useQuery({
     queryKey: ["my-libraries-fallback", user?.id],
@@ -83,25 +231,36 @@ const WaitingListPage = () => {
 
   const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
 
-  const {
-    data: entries = [],
-    isLoading: entriesLoading,
-    isError: entriesError,
-    error: entriesQueryError,
-  } = useQuery({
-    queryKey: ["waiting-list", resolvedLibraryId],
-    queryFn: async (): Promise<WaitingEntry[]> => {
-      if (!resolvedLibraryId) return [];
-      const { data, error } = await supabase
-        .from("waiting_list")
-        .select("*")
-        .eq("library_id", resolvedLibraryId)
-        .order("position", { ascending: true });
-      if (error) throw error;
-      return data;
-    },
+  const overviewQuery = useQuery({
+    queryKey: ["waiting-list-overview", resolvedLibraryId],
+    queryFn: () => fetchWaitingListOverview(resolvedLibraryId),
     enabled: !!resolvedLibraryId,
+    staleTime: 30_000,
+    refetchInterval: 15_000,
+  });
+
+  const entriesQuery = useQuery({
+    queryKey: ["waiting-list", resolvedLibraryId, page, limit, debouncedSearch, statusFilter],
+    queryFn: () =>
+      fetchWaitingListPage({
+        filter: statusFilter,
+        libraryId: resolvedLibraryId,
+        limit,
+        page,
+        search: debouncedSearch,
+      }),
+    enabled: !!resolvedLibraryId,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
     refetchInterval: 15000,
+  });
+
+  const notifiedEntriesQuery = useQuery({
+    queryKey: ["waiting-list-notified", resolvedLibraryId],
+    queryFn: () => fetchNotifiedEntries(resolvedLibraryId),
+    enabled: !!resolvedLibraryId,
+    staleTime: 15_000,
+    refetchInterval: 15_000,
   });
 
   const { data: slots = [] } = useQuery({
@@ -136,6 +295,34 @@ const WaitingListPage = () => {
     enabled: !!resolvedLibraryId,
   });
 
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, limit, statusFilter]);
+
+  useEffect(() => {
+    setTotalCount(entriesQuery.data?.total ?? 0);
+  }, [entriesQuery.data?.total]);
+
+  useEffect(() => {
+    if (page <= (entriesQuery.data?.totalPages ?? 1)) {
+      return;
+    }
+
+    setPage(entriesQuery.data?.totalPages ?? 1);
+  }, [entriesQuery.data?.totalPages, page]);
+
+  useEffect(() => {
+    if (!hasMountedPaginationRef.current) {
+      hasMountedPaginationRef.current = true;
+      return;
+    }
+
+    tableTopRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [page]);
+
   const addMutation = useMutation({
     mutationFn: async () => {
       if (!resolvedLibraryId) throw new Error("Library not linked for this account.");
@@ -157,6 +344,8 @@ const WaitingListPage = () => {
         setDialogOpen(false);
         setForm({ student_name: "", gender: "", phone: "", email: "", preferred_slot: "", preferred_plan: "" });
         queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
+        queryClient.invalidateQueries({ queryKey: ["waiting-list-overview", resolvedLibraryId] });
+        queryClient.invalidateQueries({ queryKey: ["waiting-list-notified", resolvedLibraryId] });
       } else {
         toast({ title: "Failed", description: result?.error || "Unknown error", variant: "destructive" });
       }
@@ -180,6 +369,8 @@ const WaitingListPage = () => {
         toast({ title: "Queue empty", description: result?.error, variant: "destructive" });
       }
       queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list-overview", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list-notified", resolvedLibraryId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -212,6 +403,8 @@ const WaitingListPage = () => {
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview", resolvedLibraryId] });
       queryClient.invalidateQueries({ queryKey: ["analytics-overview", resolvedLibraryId] });
       queryClient.invalidateQueries({ queryKey: ["plans-page-student-count", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list-overview", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list-notified", resolvedLibraryId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -225,6 +418,8 @@ const WaitingListPage = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["waiting-list", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list-overview", resolvedLibraryId] });
+      queryClient.invalidateQueries({ queryKey: ["waiting-list-notified", resolvedLibraryId] });
       toast({ title: "Removed from queue" });
     },
     onError: (error: Error) => {
@@ -232,16 +427,24 @@ const WaitingListPage = () => {
     },
   });
 
-  const waiting = useMemo(() => entries.filter((entry) => entry.status === "waiting"), [entries]);
-  const notified = useMemo(() => entries.filter((entry) => entry.status === "notified"), [entries]);
-  const confirmed = useMemo(() => entries.filter((entry) => entry.status === "confirmed"), [entries]);
-  const expired = useMemo(() => entries.filter((entry) => entry.status === "expired"), [entries]);
+  const entries = entriesQuery.data?.data ?? [];
+  const notifiedEntries = notifiedEntriesQuery.data ?? [];
+  const overview = overviewQuery.data ?? {
+    confirmedCount: 0,
+    expiredCount: 0,
+    inQueueCount: 0,
+    notifiedCount: 0,
+  };
+  const totalPages = entriesQuery.data?.totalPages ?? 1;
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * limit + 1;
+  const rangeEnd = totalCount === 0 ? 0 : Math.min(page * limit, totalCount);
+  const pageItems = useMemo(() => buildPageItems(page, totalPages), [page, totalPages]);
 
   const getStatusBadge = (entry: WaitingEntry) => {
     if (entry.status === "waiting") {
       return (
         <Badge variant="secondary">
-          <Clock className="w-3 h-3 mr-1" /> #{entry.position} Waiting
+          <Clock className="w-3 h-3 mr-1" /> Queue #{entry.position}
         </Badge>
       );
     }
@@ -289,7 +492,18 @@ const WaitingListPage = () => {
     return <span className="text-xs text-warning font-medium">{formatDistanceToNow(deadlineDate, { addSuffix: false })} left</span>;
   };
 
-  const loading = roleLibraryLoading || fallbackLoading || entriesLoading;
+  const handlePageChange = (nextPage: number) => {
+    if (nextPage < 1 || nextPage > totalPages || nextPage === page) {
+      return;
+    }
+
+    setPage(nextPage);
+  };
+
+  const loading = roleLibraryLoading || fallbackLoading || entriesQuery.isLoading;
+  const tableUpdating = entriesQuery.isFetching && !entriesQuery.isLoading;
+  const entriesError = entriesQuery.isError;
+  const entriesQueryError = entriesQuery.error;
 
   return (
     <DashboardLayout>
@@ -303,7 +517,7 @@ const WaitingListPage = () => {
             <Button
               variant="outline"
               onClick={() => notifyMutation.mutate()}
-              disabled={notifyMutation.isPending || waiting.length === 0 || !resolvedLibraryId}
+              disabled={notifyMutation.isPending || overview.inQueueCount === 0 || !resolvedLibraryId}
             >
               <Bell className="w-4 h-4 mr-1.5" />
               {notifyMutation.isPending ? "Notifying..." : "Notify Next"}
@@ -406,13 +620,36 @@ const WaitingListPage = () => {
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatsCard icon={ListOrdered} title="In Queue" value={String(waiting.length)} trend="up" />
-          <StatsCard icon={Bell} title="Notified" value={String(notified.length)} trend="up" iconColor="text-warning" />
-          <StatsCard icon={CheckCircle} title="Confirmed" value={String(confirmed.length)} trend="up" iconColor="text-success" />
-          <StatsCard icon={XCircle} title="Expired" value={String(expired.length)} trend="down" iconColor="text-destructive" />
+          <StatsCard
+            icon={ListOrdered}
+            title="In Queue"
+            value={overviewQuery.isLoading && resolvedLibraryId ? "--" : String(overview.inQueueCount)}
+            trend="up"
+          />
+          <StatsCard
+            icon={Bell}
+            title="Notified"
+            value={overviewQuery.isLoading && resolvedLibraryId ? "--" : String(overview.notifiedCount)}
+            trend="up"
+            iconColor="text-warning"
+          />
+          <StatsCard
+            icon={CheckCircle}
+            title="Confirmed"
+            value={overviewQuery.isLoading && resolvedLibraryId ? "--" : String(overview.confirmedCount)}
+            trend="up"
+            iconColor="text-success"
+          />
+          <StatsCard
+            icon={XCircle}
+            title="Expired"
+            value={overviewQuery.isLoading && resolvedLibraryId ? "--" : String(overview.expiredCount)}
+            trend="down"
+            iconColor="text-destructive"
+          />
         </div>
 
-        {notified.length > 0 && (
+        {notifiedEntries.length > 0 && (
           <Card className="border-warning/30 bg-warning/5">
             <CardContent className="py-4">
               <div className="flex items-center gap-3 mb-3">
@@ -420,7 +657,7 @@ const WaitingListPage = () => {
                 <span className="font-semibold font-display text-foreground">Awaiting Confirmation</span>
               </div>
               <div className="space-y-2">
-                {notified.map((entry) => (
+                {notifiedEntries.map((entry) => (
                   <div key={entry.id} className="flex items-center justify-between bg-card rounded-lg p-3 border">
                     <div>
                       <p className="font-medium text-foreground">{entry.student_name}</p>
@@ -450,7 +687,55 @@ const WaitingListPage = () => {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg font-display">Full Queue</CardTitle>
+            <div ref={tableTopRef} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <CardTitle className="text-lg font-display">Full Queue</CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Oldest entries stay first to preserve FIFO order
+                    {tableUpdating ? " - refreshing current page..." : ""}
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                  <div className="relative w-full lg:w-72">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search by name or phone"
+                      className="pl-9"
+                    />
+                  </div>
+
+                  <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as WaitingListStatusFilter)}>
+                    <SelectTrigger className="w-full lg:w-[160px]">
+                      <SelectValue placeholder="All entries" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All entries</SelectItem>
+                      <SelectItem value="waiting">In Queue</SelectItem>
+                      <SelectItem value="notified">Notified</SelectItem>
+                      <SelectItem value="confirmed">Confirmed</SelectItem>
+                      <SelectItem value="expired">Expired</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={String(limit)} onValueChange={(value) => setLimit(Number(value) as WaitingListPageSize)}>
+                    <SelectTrigger className="w-full lg:w-[120px]">
+                      <SelectValue placeholder="10 rows" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {WAITING_LIST_PAGE_SIZE_OPTIONS.map((pageSize) => (
+                        <SelectItem key={pageSize} value={String(pageSize)}>
+                          {pageSize} rows
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {!resolvedLibraryId && !loading ? (
@@ -462,78 +747,123 @@ const WaitingListPage = () => {
             ) : entries.length === 0 ? (
               <div className="py-12 text-center">
                 <ListOrdered className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-                <p className="text-muted-foreground">Waiting list is empty. Add someone to get started.</p>
+                <p className="text-muted-foreground">No students in waiting list</p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">#</TableHead>
-                    <TableHead>Student</TableHead>
-                    <TableHead className="hidden sm:table-cell">Contact</TableHead>
-                    <TableHead className="hidden md:table-cell">Preference</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Countdown</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {entries.map((entry) => (
-                    <TableRow key={entry.id} className={entry.status === "notified" ? "bg-warning/5" : ""}>
-                      <TableCell className="font-mono text-muted-foreground">{entry.position}</TableCell>
-                      <TableCell>
-                        <p className="font-medium text-foreground">{entry.student_name}</p>
-                        {entry.gender ? (
-                          <Badge variant="outline" className={`mt-1 rounded-full px-2.5 py-0.5 text-[11px] ${getStudentGenderBadgeClassName(entry.gender)}`}>
-                            {formatStudentGender(entry.gender)}
-                          </Badge>
-                        ) : null}
-                        <p className="text-xs text-muted-foreground sm:hidden">{entry.phone || entry.email || ""}</p>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">
-                        {entry.phone && <p>{entry.phone}</p>}
-                        {entry.email && <p className="truncate max-w-[150px]">{entry.email}</p>}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        <div className="flex gap-1">
-                          {entry.preferred_slot && (
-                            <Badge variant="outline" className="text-xs">
-                              {entry.preferred_slot}
-                            </Badge>
-                          )}
-                          {entry.preferred_plan && (
-                            <Badge variant="secondary" className="text-xs">
-                              {entry.preferred_plan}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>{getStatusBadge(entry)}</TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        {entry.status === "notified" && entry.confirmation_deadline
-                          ? getCountdown(entry.confirmation_deadline)
-                          : entry.confirmed_at
-                            ? <span className="text-xs text-muted-foreground">{format(new Date(entry.confirmed_at), "dd MMM, hh:mm a")}</span>
-                            : "-"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {entry.status === "notified" && (
-                            <Button size="sm" variant="ghost" onClick={() => confirmMutation.mutate(entry.id)}>
-                              <CheckCircle className="w-4 h-4 text-success" />
-                            </Button>
-                          )}
-                          {(entry.status === "waiting" || entry.status === "notified") && (
-                            <Button size="sm" variant="ghost" onClick={() => cancelMutation.mutate(entry.id)}>
-                              <Trash2 className="w-4 h-4 text-destructive" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
+              <div className="space-y-5">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">#</TableHead>
+                      <TableHead>Student</TableHead>
+                      <TableHead className="hidden sm:table-cell">Contact</TableHead>
+                      <TableHead className="hidden md:table-cell">Preference</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="hidden md:table-cell">Countdown</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {entries.map((entry, index) => {
+                      const rowNumber = (page - 1) * limit + index + 1;
+
+                      return (
+                        <TableRow key={entry.id} className={entry.status === "notified" ? "bg-warning/5" : ""}>
+                          <TableCell className="font-mono text-muted-foreground">{rowNumber}</TableCell>
+                          <TableCell>
+                            <p className="font-medium text-foreground">{entry.student_name}</p>
+                            {entry.gender ? (
+                              <Badge variant="outline" className={`mt-1 rounded-full px-2.5 py-0.5 text-[11px] ${getStudentGenderBadgeClassName(entry.gender)}`}>
+                                {formatStudentGender(entry.gender)}
+                              </Badge>
+                            ) : null}
+                            <p className="text-xs text-muted-foreground sm:hidden">{entry.phone || entry.email || ""}</p>
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">
+                            {entry.phone && <p>{entry.phone}</p>}
+                            {entry.email && <p className="truncate max-w-[150px]">{entry.email}</p>}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            <div className="flex gap-1">
+                              {entry.preferred_slot && (
+                                <Badge variant="outline" className="text-xs">
+                                  {entry.preferred_slot}
+                                </Badge>
+                              )}
+                              {entry.preferred_plan && (
+                                <Badge variant="secondary" className="text-xs">
+                                  {entry.preferred_plan}
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>{getStatusBadge(entry)}</TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            {entry.status === "notified" && entry.confirmation_deadline
+                              ? getCountdown(entry.confirmation_deadline)
+                              : entry.confirmed_at
+                                ? <span className="text-xs text-muted-foreground">{format(new Date(entry.confirmed_at), "dd MMM, hh:mm a")}</span>
+                                : "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              {entry.status === "notified" && (
+                                <Button size="sm" variant="ghost" onClick={() => confirmMutation.mutate(entry.id)}>
+                                  <CheckCircle className="w-4 h-4 text-success" />
+                                </Button>
+                              )}
+                              {(entry.status === "waiting" || entry.status === "notified") && (
+                                <Button size="sm" variant="ghost" onClick={() => cancelMutation.mutate(entry.id)}>
+                                  <Trash2 className="w-4 h-4 text-destructive" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+
+                <div className="border-t border-border/70 pt-5">
+                  <div className="flex flex-col items-center gap-4 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Showing <span className="font-semibold text-foreground">{rangeStart}-{rangeEnd}</span> of{" "}
+                      <span className="font-semibold text-foreground">{totalCount.toLocaleString("en-IN")}</span> entries
+                    </p>
+
+                    {totalPages > 1 ? (
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        <Button type="button" variant="outline" disabled={page <= 1} onClick={() => handlePageChange(page - 1)}>
+                          Previous
+                        </Button>
+
+                        {pageItems.map((item, index) =>
+                          item === "ellipsis" ? (
+                            <span key={`ellipsis-${index}`} className="px-1 text-sm text-muted-foreground">
+                              ...
+                            </span>
+                          ) : (
+                            <Button
+                              key={item}
+                              type="button"
+                              variant={item === page ? "default" : "outline"}
+                              className="min-w-10 px-3"
+                              onClick={() => handlePageChange(item)}
+                            >
+                              {item}
+                            </Button>
+                          ),
+                        )}
+
+                        <Button type="button" variant="outline" disabled={page >= totalPages} onClick={() => handlePageChange(page + 1)}>
+                          Next
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>

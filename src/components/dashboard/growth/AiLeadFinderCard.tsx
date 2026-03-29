@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 
 type LeadFinderLead = {
   name: string;
@@ -89,9 +90,7 @@ const AiLeadFinderCard = () => {
           <div className="space-y-2 py-2">
             <div className="text-sm text-muted-foreground">Lead finder unavailable.</div>
             <div className="text-xs text-muted-foreground">
-              {error instanceof Error
-                ? error.message
-                : "Ensure the edge function is deployed and GOOGLE_MAPS_API_KEY is configured."}
+              {getSafeErrorMessage(error, "Lead discovery is unavailable right now.")}
             </div>
           </div>
         ) : !submittedCity ? (
@@ -151,4 +150,3 @@ const AiLeadFinderCard = () => {
 };
 
 export default AiLeadFinderCard;
-

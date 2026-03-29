@@ -23,6 +23,7 @@ import ContactSection from "@/components/library-public/ContactSection";
 import LibraryFooter from "@/components/library-public/LibraryFooter";
 import LibraryNavbar from "@/components/library-public/LibraryNavbar";
 import WhatsAppButton from "@/components/library-public/WhatsAppButton";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { isHeaderConfigCaption, parseHeaderConfig, toHeaderThemeInput } from "@/lib/libraryHeaderConfig";
 import { resolveWebsiteTheme } from "@/lib/libraryWebsiteTheme";
 import { STUDENT_GENDER_OPTIONS, type StudentGender } from "@/lib/studentGender";
@@ -54,7 +55,7 @@ type SlotAvailabilityRow = {
   total_seats: number;
 };
 
-const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : "Something went wrong");
+const getErrorMessage = (error: unknown) => getSafeErrorMessage(error);
 
 const normalizeWhatsAppNumber = (raw?: string | null): string => {
   const digits = (raw || "").replace(/\D/g, "");

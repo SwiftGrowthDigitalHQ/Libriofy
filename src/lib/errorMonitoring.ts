@@ -1,0 +1,57 @@
+import { supabase } from "@/integrations/supabase/client";
+import { classifyAppError, extractErrorMessage } from "@/lib/errorHandling";
+
+type LogAppErrorInput = {
+  error: unknown;
+  metadata?: Record<string, unknown>;
+  route: string;
+  source: "query" | "react_boundary" | "unhandled_rejection" | "window_error";
+  userId?: string | null;
+};
+
+const resolveUserId = async (userId?: string | null) => {
+  if (userId !== undefined) {
+    return userId;
+  }
+
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+};
+
+export const logAppError = async ({
+  error,
+  metadata,
+  route,
+  source,
+  userId,
+}: LogAppErrorInput) => {
+  try {
+    const resolvedUserId = await resolveUserId(userId);
+    const { kind } = classifyAppError(error);
+    const rawMessage = extractErrorMessage(error) || "Unexpected client error";
+
+    const { error: insertError } = await supabase.from("app_error_logs").insert({
+      error_message: rawMessage.slice(0, 1200),
+      error_type: kind,
+      metadata: {
+        ...(metadata ?? {}),
+        timestamp: new Date().toISOString(),
+      },
+      route: route || "/",
+      source,
+      user_id: resolvedUserId,
+    });
+
+    if (insertError) {
+      console.warn("[error-monitoring] Failed to store error log", insertError);
+    }
+  } catch (loggingError) {
+    console.warn("[error-monitoring] Unexpected logging failure", loggingError);
+  }
+};

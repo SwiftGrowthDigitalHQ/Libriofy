@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import AttendanceLog from "@/components/dashboard/AttendanceLog";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useAuth } from "@/hooks/useAuth";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 
 interface CheckInResult {
   success: boolean;
@@ -111,7 +112,7 @@ const AttendancePage = () => {
       }
     },
     onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      toast({ title: "Error", description: getSafeErrorMessage(err), variant: "destructive" });
     },
   });
 
@@ -207,11 +208,7 @@ const AttendancePage = () => {
       }
     }
 
-    if (error instanceof Error && error.message) {
-      return error.message;
-    }
-
-    return "Camera permission denied or camera unavailable.";
+    return getSafeErrorMessage(error, "Camera permission denied or camera unavailable.");
   };
 
   const startCamera = async () => {

@@ -28,6 +28,7 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { buildAadhaarDocumentPath, getStudentAadhaarValidationError, STUDENT_DOCUMENTS_BUCKET } from "@/lib/studentDocuments";
 import { type StudentGenderFilter } from "@/lib/studentGender";
 import { finalizeStudentPhotoUpload, getStudentPhotoValidationError, uploadStudentPhotoDraftAssets } from "@/lib/studentPhotos";
@@ -81,7 +82,7 @@ const getPhotoUploadErrorMessage = (error: unknown) => {
     return "Too many uploads, please wait a minute before trying again.";
   }
 
-  return rawMessage;
+  return getSafeErrorMessage(error, "Photo upload could not be completed. Try again in a moment.");
 };
 
 const getAadhaarUploadErrorMessage = (error: unknown) => {
@@ -108,7 +109,7 @@ const getAadhaarUploadErrorMessage = (error: unknown) => {
     return "Aadhaar upload permission is blocked for this account. Apply the latest student document storage migration and retry.";
   }
 
-  return rawMessage;
+  return getSafeErrorMessage(error, "Aadhaar upload could not be completed. Try again in a moment.");
 };
 
 const DEFAULT_TABLE_STATE: StudentTableState = {
@@ -752,12 +753,7 @@ const StudentsPage = () => {
     [clearAadhaarJob, isStudentAadhaarBusy, setAadhaarJobStatus, toast],
   );
 
-  const errorMessage =
-    studentsQuery.error instanceof Error
-      ? studentsQuery.error.message
-      : typeof (studentsQuery.error as { message?: unknown } | null)?.message === "string"
-        ? String((studentsQuery.error as { message: string }).message)
-        : "Unable to load students right now.";
+  const errorMessage = getSafeErrorMessage(studentsQuery.error, "Unable to load students right now.");
 
   return (
     <DashboardLayout>

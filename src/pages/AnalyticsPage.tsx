@@ -11,6 +11,7 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { STUDENT_GENDER_OPTIONS, formatStudentGender, type StudentGender, type StudentGenderFilter } from "@/lib/studentGender";
 import { isSuccessfulPaymentStatus } from "@/lib/payments";
 
@@ -73,10 +74,7 @@ const genderColors: Record<StudentGender, string> = {
   male: "hsl(206, 90%, 62%)",
 };
 
-const getErrorMessage = (error: unknown): string => {
-  if (!error || typeof error !== "object") return "Unknown error";
-  return (error as { message?: string }).message || "Unknown error";
-};
+const getErrorMessage = (error: unknown): string => getSafeErrorMessage(error);
 
 const normalizeText = (value: string | null | undefined) => (value || "").replace(/\s+/g, "").toLowerCase();
 

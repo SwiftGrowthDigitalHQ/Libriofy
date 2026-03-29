@@ -149,6 +149,39 @@ export type Database = {
         }
         Relationships: []
       }
+      app_error_logs: {
+        Row: {
+          created_at: string
+          error_message: string
+          error_type: string
+          id: string
+          metadata: Json
+          route: string
+          source: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_message: string
+          error_type?: string
+          id?: string
+          metadata?: Json
+          route: string
+          source?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_message?: string
+          error_type?: string
+          id?: string
+          metadata?: Json
+          route?: string
+          source?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       attendance_logs: {
         Row: {
           check_in: string
@@ -888,6 +921,7 @@ export type Database = {
       }
       library_subscriptions: {
         Row: {
+          ai_call_enabled: boolean
           created_at: string
           expires_at: string | null
           features: Json
@@ -897,6 +931,7 @@ export type Database = {
           payment_status: string
           plan_expiry_date: string | null
           plan_name: string
+          plan_type: string
           plan_price: number | null
           plan_start_date: string | null
           price: number
@@ -906,8 +941,10 @@ export type Database = {
           trial_end_date: string | null
           trial_start_date: string | null
           updated_at: string
+          whatsapp_enabled: boolean
         }
         Insert: {
+          ai_call_enabled?: boolean
           created_at?: string
           expires_at?: string | null
           features?: Json
@@ -917,6 +954,7 @@ export type Database = {
           payment_status?: string
           plan_expiry_date?: string | null
           plan_name?: string
+          plan_type?: string
           plan_price?: number | null
           plan_start_date?: string | null
           price?: number
@@ -926,8 +964,10 @@ export type Database = {
           trial_end_date?: string | null
           trial_start_date?: string | null
           updated_at?: string
+          whatsapp_enabled?: boolean
         }
         Update: {
+          ai_call_enabled?: boolean
           created_at?: string
           expires_at?: string | null
           features?: Json
@@ -937,6 +977,7 @@ export type Database = {
           payment_status?: string
           plan_expiry_date?: string | null
           plan_name?: string
+          plan_type?: string
           plan_price?: number | null
           plan_start_date?: string | null
           price?: number
@@ -946,6 +987,7 @@ export type Database = {
           trial_end_date?: string | null
           trial_start_date?: string | null
           updated_at?: string
+          whatsapp_enabled?: boolean
         }
         Relationships: [
           {
@@ -2084,6 +2126,27 @@ export type Database = {
         }
         Relationships: []
       }
+      recovery_queue: {
+        Row: {
+          amount_due: number | null
+          amount_paid: number | null
+          due_date: string | null
+          last_payment_date: string | null
+          library_id: string | null
+          overdue_days: number | null
+          phone: string | null
+          plan_name: string | null
+          queue_status: string | null
+          recovery_urgency_label: string | null
+          seat_number: string | null
+          slot_label: string | null
+          student_id: string | null
+          student_name: string | null
+          successful_payment_count: number | null
+          total_fees: number | null
+        }
+        Relationships: []
+      }
       attendance: {
         Row: {
           check_in: string | null
@@ -2212,6 +2275,7 @@ export type Database = {
       }
       subscriptions: {
         Row: {
+          ai_call_enabled: boolean | null
           created_at: string | null
           expires_at: string | null
           id: string | null
@@ -2219,6 +2283,7 @@ export type Database = {
           payment_status: string | null
           plan: string | null
           plan_expiry_date: string | null
+          plan_type: string | null
           plan_price: number | null
           plan_start_date: string | null
           price: number | null
@@ -2228,8 +2293,10 @@ export type Database = {
           trial_end_date: string | null
           trial_start_date: string | null
           updated_at: string | null
+          whatsapp_enabled: boolean | null
         }
         Insert: {
+          ai_call_enabled?: boolean | null
           created_at?: string | null
           expires_at?: string | null
           id?: string | null
@@ -2237,6 +2304,7 @@ export type Database = {
           payment_status?: string | null
           plan?: string | null
           plan_expiry_date?: string | null
+          plan_type?: string | null
           plan_price?: never
           plan_start_date?: string | null
           price?: never
@@ -2246,8 +2314,10 @@ export type Database = {
           trial_end_date?: string | null
           trial_start_date?: string | null
           updated_at?: string | null
+          whatsapp_enabled?: boolean | null
         }
         Update: {
+          ai_call_enabled?: boolean | null
           created_at?: string | null
           expires_at?: string | null
           id?: string | null
@@ -2255,6 +2325,7 @@ export type Database = {
           payment_status?: string | null
           plan?: string | null
           plan_expiry_date?: string | null
+          plan_type?: string | null
           plan_price?: never
           plan_start_date?: string | null
           price?: never
@@ -2264,6 +2335,7 @@ export type Database = {
           trial_end_date?: string | null
           trial_start_date?: string | null
           updated_at?: string | null
+          whatsapp_enabled?: boolean | null
         }
         Relationships: [
           {

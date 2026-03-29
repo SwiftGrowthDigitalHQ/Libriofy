@@ -18,10 +18,13 @@ export type SubscriptionPlanCatalogRecord = {
   lockers_limit: number | null;
 };
 
+export type SubscriptionAutomationFeature = "ai_call" | "whatsapp";
+
 export type LibrarySubscriptionRecord = {
   id: string;
   library_id: string;
   plan_name: string | null;
+  plan_type?: SubscriptionPlanName | null;
   plan_price: number | null;
   plan_start_date: string | null;
   plan_expiry_date: string | null;
@@ -31,6 +34,8 @@ export type LibrarySubscriptionRecord = {
   price: number;
   seats_limit: number;
   lockers_limit?: number | null;
+  whatsapp_enabled?: boolean | null;
+  ai_call_enabled?: boolean | null;
   features: string[];
   status: string;
   started_at: string;
@@ -81,7 +86,15 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     seatsLimit: 150,
     lockersLimit: 80,
     description: "For growing libraries that need higher seat capacity.",
-    features: ["Up to 150 seats", "Up to 80 lockers", "Seat management", "Advanced analytics", "Notifications", "Export"],
+    features: [
+      "Up to 150 seats",
+      "Up to 80 lockers",
+      "Seat management",
+      "Advanced analytics",
+      "Notifications",
+      "Export",
+      "WhatsApp Payment Reminders (Automated)",
+    ],
   },
   {
     name: "pro",
@@ -90,11 +103,24 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     seatsLimit: 500,
     lockersLimit: 200,
     description: "For large operations that need full flexibility.",
-    features: ["Up to 500 seats", "Up to 200 lockers", "All features", "Custom domain", "Priority support"],
+    features: [
+      "Up to 500 seats",
+      "Up to 200 lockers",
+      "AI Calling Reminders (Auto voice calls)",
+      "WhatsApp Reminders (Advanced automation)",
+      "All features",
+      "Custom domain",
+      "Priority support",
+    ],
   },
 ];
 
 const PLAN_MAP = new Map(SUBSCRIPTION_PLANS.map((plan) => [plan.name, plan]));
+const PLAN_RANK: Record<SubscriptionPlanName, number> = {
+  starter: 0,
+  growth: 1,
+  pro: 2,
+};
 
 export const TRIAL_EXPIRED_MESSAGE = "Your trial has expired. Please activate a plan to continue using Libriofy.";
 export const SUBSCRIPTION_EXPIRED_MESSAGE = "Your subscription has expired. Please renew your plan to continue.";
@@ -111,6 +137,15 @@ const parseDate = (value: string | null | undefined): Date | null => {
 export const getSubscriptionPlan = (value: string | null | undefined): SubscriptionPlan | null => {
   if (!value) return null;
   return PLAN_MAP.get(normalizeStatus(value) as SubscriptionPlanName) ?? null;
+};
+
+export const normalizeSubscriptionPlanName = (
+  value: string | null | undefined,
+): SubscriptionPlanName | null => {
+  const normalized = normalizeStatus(value);
+  return normalized === "starter" || normalized === "growth" || normalized === "pro"
+    ? normalized
+    : null;
 };
 
 export const formatInr = (amount: number | null | undefined) =>
@@ -155,6 +190,48 @@ export const resolveSubscriptionSeatLimit = (
 export const resolveSubscriptionPlanLabel = (
   subscription: LibrarySubscriptionRecord | null | undefined,
 ) => subscription?.current_plan?.name ?? getSubscriptionPlan(subscription?.plan_name)?.label ?? subscription?.plan_name ?? null;
+
+export const resolveSubscriptionPlanCode = (
+  subscription: LibrarySubscriptionRecord | null | undefined,
+): SubscriptionPlanName =>
+  normalizeSubscriptionPlanName(subscription?.plan_type) ??
+  normalizeSubscriptionPlanName(subscription?.current_plan?.code) ??
+  normalizeSubscriptionPlanName(subscription?.plan_name) ??
+  "starter";
+
+export const getPlanAutomationAccess = (plan: SubscriptionPlanName) => ({
+  aiCallEnabled: plan === "pro",
+  whatsappEnabled: plan === "growth" || plan === "pro",
+});
+
+export const resolveAutomationAccess = (subscription: LibrarySubscriptionRecord | null | undefined) => {
+  const planCode = resolveSubscriptionPlanCode(subscription);
+  const defaults = getPlanAutomationAccess(planCode);
+
+  return {
+    aiCallEnabled: subscription?.ai_call_enabled ?? defaults.aiCallEnabled,
+    planCode,
+    whatsappEnabled: subscription?.whatsapp_enabled ?? defaults.whatsappEnabled,
+  };
+};
+
+export const canUseWhatsAppAutomation = (subscription: LibrarySubscriptionRecord | null | undefined): boolean =>
+  resolveAutomationAccess(subscription).whatsappEnabled;
+
+export const canUseAiCallingAutomation = (subscription: LibrarySubscriptionRecord | null | undefined): boolean =>
+  resolveAutomationAccess(subscription).aiCallEnabled;
+
+export const getRequiredPlanForAutomationFeature = (
+  feature: SubscriptionAutomationFeature,
+): SubscriptionPlanName => (feature === "ai_call" ? "pro" : "growth");
+
+export const isPlanAtLeast = (
+  currentPlan: SubscriptionPlanName | null | undefined,
+  minimumPlan: SubscriptionPlanName,
+): boolean => {
+  const normalizedCurrentPlan = normalizeSubscriptionPlanName(currentPlan) ?? "starter";
+  return PLAN_RANK[normalizedCurrentPlan] >= PLAN_RANK[minimumPlan];
+};
 
 export const evaluateSubscriptionAccess = (
   subscription: LibrarySubscriptionRecord | null | undefined,

@@ -14,15 +14,13 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { getSupportWhatsAppUrl } from "@/lib/supportContact";
 
 type TicketRow = Database["public"]["Tables"]["support_tickets"]["Row"];
 type TicketInsert = Database["public"]["Tables"]["support_tickets"]["Insert"];
 
-const getErrorMessage = (error: unknown): string => {
-  if (!error || typeof error !== "object") return "Unknown error";
-  return (error as { message?: string }).message || "Unknown error";
-};
+const getErrorMessage = (error: unknown): string => getSafeErrorMessage(error);
 
 const formatStatus = (status: string) =>
   status

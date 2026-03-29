@@ -44,6 +44,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { comparePaymentSummaryRisk, createPlanPriceLookup, derivePaymentSummary, groupPaymentsByStudent } from "@/lib/paymentRecovery";
 import { isPendingPaymentStatus, isSuccessfulPaymentStatus } from "@/lib/payments";
 import { isMissingRelationError } from "@/lib/studentSlotUtils";
@@ -255,10 +256,7 @@ const EMPTY_DASHBOARD_DATA: DashboardData = {
   studentsConvertedToday: 0,
 };
 
-const getErrorMessage = (error: unknown): string => {
-  if (!error || typeof error !== "object") return "Unknown error";
-  return (error as { message?: string }).message || "Unknown error";
-};
+const getErrorMessage = (error: unknown): string => getSafeErrorMessage(error);
 
 const parseMs = (value: string): number => {
   const ms = Date.parse(value);

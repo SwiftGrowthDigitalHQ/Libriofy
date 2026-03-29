@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { format } from "date-fns";
 import { Clock, LogIn, LogOut } from "lucide-react";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 
 interface AttendanceLogProps {
   libraryId?: string | null;
@@ -57,7 +58,7 @@ const AttendanceLog = ({ libraryId }: AttendanceLogProps) => {
           <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>
         ) : error ? (
           <p className="text-sm text-destructive py-8 text-center">
-            Unable to load attendance logs: {error.message}
+            Unable to load attendance logs: {getSafeErrorMessage(error)}
           </p>
         ) : !libraryId ? (
           <p className="text-sm text-muted-foreground py-8 text-center">Library not linked for this account.</p>

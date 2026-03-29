@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 
 export type AiMarketInsightContext = {
   totalLibraries: number;
@@ -79,7 +80,7 @@ const AiMarketInsightCard = ({
           <div className="space-y-2 py-2">
             <div className="text-sm text-muted-foreground">AI insight unavailable.</div>
             <div className="text-xs text-muted-foreground">
-              {error instanceof Error ? error.message : "Unable to generate insight. Ensure the edge function is deployed and secrets are configured."}
+              {getSafeErrorMessage(error, "Unable to generate insight right now.")}
             </div>
           </div>
         ) : data?.insight ? (
@@ -98,4 +99,3 @@ const AiMarketInsightCard = ({
 };
 
 export default AiMarketInsightCard;
-

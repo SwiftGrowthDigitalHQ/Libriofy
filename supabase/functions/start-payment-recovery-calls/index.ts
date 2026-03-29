@@ -12,6 +12,11 @@ import {
   type RecoveryPlanRow,
   type RecoveryStudentRow,
 } from "../_shared/payment-recovery.ts";
+import {
+  getUpgradeMessageForFeature,
+  hasAutomationAccess,
+  type LibrarySubscriptionAccessRow,
+} from "../_shared/subscription-access.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -348,8 +353,13 @@ serve(async (req) => {
       return json({ error: "Forbidden" }, 403);
     }
 
-    const [libraryRes, studentsRes, plansRes, paymentsRes] = await Promise.all([
+    const [libraryRes, subscriptionRes, studentsRes, plansRes, paymentsRes] = await Promise.all([
       supabase.from("libraries").select("id, name, owner_id").eq("id", libraryId).maybeSingle(),
+      supabase
+        .from("library_subscriptions")
+        .select("plan_name, plan_type, whatsapp_enabled, ai_call_enabled")
+        .eq("library_id", libraryId)
+        .maybeSingle(),
       supabase
         .from("students")
         .select("id, expiry_date, full_name, phone, plan, plan_id, seat_number, slot, start_date, status")
@@ -364,6 +374,7 @@ serve(async (req) => {
     ]);
 
     if (libraryRes.error) throw libraryRes.error;
+    if (subscriptionRes.error) throw subscriptionRes.error;
     if (studentsRes.error) throw studentsRes.error;
     if (plansRes.error) throw plansRes.error;
     if (paymentsRes.error) throw paymentsRes.error;
@@ -371,6 +382,18 @@ serve(async (req) => {
     const library = libraryRes.data as LibraryRow | null;
     if (!library) {
       return json({ error: "Library not found" }, 404);
+    }
+
+    const subscription = (subscriptionRes.data ?? null) as LibrarySubscriptionAccessRow | null;
+    if (!hasAutomationAccess(subscription, "ai_call")) {
+      return json(
+        {
+          error: "Upgrade to access this feature",
+          feature: "ai_call",
+          hint: getUpgradeMessageForFeature("ai_call"),
+        },
+        403,
+      );
     }
 
     const students = (studentsRes.data ?? []) as RecoveryStudentRow[];

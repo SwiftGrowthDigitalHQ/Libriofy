@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUserRole } from "@/hooks/useUserRole";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { getSafeErrorMessage } from "@/lib/errorHandling";
 import {
   getEdgeFunctionAuthHeaders,
   isFunctionUnavailableError,
@@ -389,7 +390,7 @@ const BillingPage = () => {
 
       razorpay.open();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to start checkout.";
+      const message = getSafeErrorMessage(error, "Unable to start checkout.");
       toast({
         title: "Checkout failed",
         description: message,
