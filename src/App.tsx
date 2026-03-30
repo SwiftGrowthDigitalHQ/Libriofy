@@ -38,6 +38,7 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const WaitingListPage = lazy(() => import("./pages/WaitingListPage"));
 const SupportPage = lazy(() => import("./pages/SupportPage"));
 const StudentRenewalPage = lazy(() => import("./pages/StudentRenewalPage"));
+const StudentIdProfilePage = lazy(() => import("./pages/StudentIdProfilePage"));
 const BillingPage = lazy(() => import("./pages/BillingPage"));
 const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -343,6 +344,7 @@ const App = () => (
                     />
                     <Route path="/library/:slug" element={<LibraryPublicPage />} />
                     <Route path="/renew/:token" element={<StudentRenewalPage />} />
+                    <Route path="/student/:qr" element={<StudentIdProfilePage />} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </DomainRouter>

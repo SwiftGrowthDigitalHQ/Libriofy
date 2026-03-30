@@ -32,6 +32,28 @@ type BarcodeDetectorInstance = {
 
 type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
 
+const normalizeQrInput = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  try {
+    const url = new URL(trimmed);
+    const match = url.pathname.match(/\/student\/([^/]+)/i);
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  } catch {
+    // Not a URL, fall back to raw input.
+  }
+
+  const fallbackMatch = trimmed.match(/\/student\/([^/]+)/i);
+  if (fallbackMatch?.[1]) {
+    return decodeURIComponent(fallbackMatch[1]);
+  }
+
+  return trimmed;
+};
+
 const AttendancePage = () => {
   const queryClient = useQueryClient();
   const [qrInput, setQrInput] = useState("");
@@ -171,9 +193,10 @@ const AttendancePage = () => {
         const scannedValue = await readQrCodeFromFrame();
         if (scannedValue) {
           scanLockRef.current = true;
-          setQrInput(scannedValue);
+          const normalized = normalizeQrInput(scannedValue);
+          setQrInput(normalized || scannedValue);
           stopCamera();
-          checkInMutation.mutate(scannedValue);
+          checkInMutation.mutate(normalized || scannedValue);
           return;
         }
       } catch {
@@ -276,8 +299,9 @@ const AttendancePage = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!qrInput.trim()) return;
-    checkInMutation.mutate(qrInput.trim());
+    const normalized = normalizeQrInput(qrInput);
+    if (!normalized) return;
+    checkInMutation.mutate(normalized);
   };
 
   return (

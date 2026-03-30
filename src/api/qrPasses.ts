@@ -7,7 +7,25 @@ export type QrPassStatusFilter = "all" | "active" | "expired";
 
 export type QrPassListItem = Pick<
   Database["public"]["Tables"]["students"]["Row"],
-  "full_name" | "id" | "no_show_days" | "phone" | "plan" | "qr_code" | "seat_number" | "status"
+  | "expiry_date"
+  | "full_name"
+  | "id"
+  | "no_show_days"
+  | "phone"
+  | "plan"
+  | "photo_thumbnail_path"
+  | "photo_url"
+  | "photo_version"
+  | "qr_code"
+  | "seat_number"
+  | "slot"
+  | "slot_id"
+  | "status"
+>;
+
+export type LibraryCardBrand = Pick<
+  Database["public"]["Tables"]["libraries"]["Row"],
+  "id" | "logo_url" | "name" | "library_name" | "primary_color"
 >;
 
 export type QrPassesPageParams = {
@@ -57,7 +75,7 @@ export const fetchQrPassesPage = async ({
 
   let query = supabase
     .from("students")
-    .select("id, full_name, phone, qr_code, seat_number, plan, status, no_show_days", {
+    .select("id, full_name, phone, qr_code, seat_number, plan, status, no_show_days, slot, slot_id, expiry_date, photo_thumbnail_path, photo_version, photo_url", {
       count: "exact",
     })
     .eq("library_id", libraryId)
@@ -113,4 +131,63 @@ export const fetchQrPassesSummary = async (libraryId: string | null): Promise<Qr
     noShowCount: noShowResult.count ?? 0,
     totalStudents: totalResult.count ?? 0,
   };
+};
+
+export const fetchQrPassesAll = async ({
+  libraryId,
+  search,
+  status,
+  batchSize = 500,
+}: {
+  libraryId: string | null;
+  search: string;
+  status: QrPassStatusFilter;
+  batchSize?: number;
+}): Promise<QrPassListItem[]> => {
+  if (!libraryId) return [];
+
+  const trimmedSearch = search.trim();
+  const collected: QrPassListItem[] = [];
+  let offset = 0;
+
+  while (true) {
+    let query = supabase
+      .from("students")
+      .select("id, full_name, phone, qr_code, seat_number, plan, status, no_show_days, slot, slot_id, expiry_date, photo_thumbnail_path, photo_version, photo_url")
+      .eq("library_id", libraryId)
+      .order("full_name", { ascending: true })
+      .range(offset, offset + batchSize - 1);
+
+    if (trimmedSearch) {
+      const pattern = `%${escapeIlikeValue(trimmedSearch)}%`;
+      query = query.or(`full_name.ilike.${pattern},phone.ilike.${pattern}`);
+    }
+
+    if (status !== "all") {
+      query = query.eq("status", status);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const rows = (data ?? []) as QrPassListItem[];
+    collected.push(...rows);
+    if (rows.length < batchSize) break;
+    offset += batchSize;
+  }
+
+  return collected;
+};
+
+export const fetchLibraryCardBrand = async (libraryId: string | null): Promise<LibraryCardBrand | null> => {
+  if (!libraryId) return null;
+
+  const { data, error } = await supabase
+    .from("libraries")
+    .select("id, logo_url, name, library_name, primary_color")
+    .eq("id", libraryId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ?? null;
 };

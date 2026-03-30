@@ -20,7 +20,7 @@ const baseLibraryNavItems = [
   { icon: Archive, label: "Locker Map", path: "/dashboard/lockers" },
   { icon: Users, label: "Students", path: "/dashboard/students" },
   { icon: ScanLine, label: "Attendance", path: "/dashboard/attendance" },
-  { icon: QrCode, label: "QR Passes", path: "/dashboard/qr-codes" },
+  { icon: QrCode, label: "Student IDs", path: "/dashboard/qr-codes" },
   { icon: RefreshCw, label: "Renewals", path: "/dashboard/renewals" },
   { icon: ListOrdered, label: "Waiting List", path: "/dashboard/waitlist" },
   { icon: CreditCard, label: "Billing", path: "/dashboard/billing" },
