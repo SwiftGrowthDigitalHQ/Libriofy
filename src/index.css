@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Sora:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -107,6 +107,149 @@
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
+  }
+  body.kiosk-mode {
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  body.kiosk-mode #root {
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+  body.kiosk-mode img,
+  body.kiosk-mode svg,
+  body.kiosk-mode video,
+  body.kiosk-mode button {
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  #libriofy-smart-entry-scanner,
+  #libriofy-smart-entry-scanner > div {
+    width: 100%;
+    height: 100%;
+  }
+  #libriofy-smart-entry-scanner video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 1.5rem;
+    image-rendering: auto;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: transform;
+  }
+  #libriofy-smart-entry-scanner canvas {
+    display: none !important;
+  }
+  #libriofy-smart-entry-scanner #qr-shaded-region {
+    border-width: 0 !important;
+    background: transparent !important;
+  }
+  #libriofy-smart-entry-scanner #qr-shaded-region > div {
+    opacity: 0 !important;
+  }
+}
+
+@layer components {
+  .scan-kiosk-shell {
+    width: 100%;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding:
+      max(env(safe-area-inset-top), clamp(12px, 3vw, 40px))
+      max(env(safe-area-inset-right), clamp(12px, 3vw, 40px))
+      max(env(safe-area-inset-bottom), clamp(12px, 3vw, 40px))
+      max(env(safe-area-inset-left), clamp(12px, 3vw, 40px));
+  }
+
+  .scan-kiosk-container {
+    width: 100%;
+    max-width: 1100px;
+    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .scan-kiosk-card {
+    width: 100%;
+    max-width: 1100px;
+    margin-inline: auto;
+    border-radius: 24px;
+    padding: clamp(12px, 2.5vw, 28px);
+  }
+
+  .scan-kiosk-title {
+    font-size: clamp(22px, 4vw, 40px);
+    line-height: 1;
+  }
+
+  .scan-kiosk-helper {
+    font-size: clamp(14px, 2vw, 18px);
+    line-height: 1.45;
+  }
+
+  .scan-kiosk-small {
+    font-size: clamp(12px, 1.5vw, 14px);
+    line-height: 1.35;
+  }
+
+  .scan-kiosk-frame {
+    width: min(88vw, 600px);
+    max-width: 600px;
+    aspect-ratio: 1 / 1;
+    flex-shrink: 0;
+  }
+
+  .scan-kiosk-rabbit {
+    position: fixed;
+    right: max(env(safe-area-inset-right), clamp(10px, 3vw, 30px));
+    bottom: max(env(safe-area-inset-bottom), clamp(10px, 3vh, 30px));
+    z-index: 15;
+    pointer-events: none;
+    transform-origin: bottom right;
+    --rabbit-scale: 0.46;
+    transform: scale(var(--rabbit-scale));
+  }
+
+  @media (max-width: 480px) {
+    .scan-kiosk-frame {
+      width: min(92vw, 420px);
+    }
+
+    .scan-kiosk-rabbit {
+      --rabbit-scale: 0.4;
+    }
+  }
+
+  @media (min-width: 481px) and (max-width: 1024px) {
+    .scan-kiosk-frame {
+      width: min(82vw, 560px);
+    }
+
+    .scan-kiosk-rabbit {
+      --rabbit-scale: 0.58;
+    }
+  }
+
+  @media (min-width: 1025px) {
+    .scan-kiosk-frame {
+      width: min(64vw, 600px);
+    }
+
+    .scan-kiosk-rabbit {
+      --rabbit-scale: 0.74;
+    }
   }
 }
 

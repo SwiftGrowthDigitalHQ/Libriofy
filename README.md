@@ -32,6 +32,44 @@ npm run dev
 
 Runs on `http://localhost:8080`.
 
+## Maintenance mode
+
+Libriofy now includes a global maintenance lock that keeps the dashboard, kiosk scanner, and admin area in sync.
+
+- The flag is stored in `public.platform_settings` under the key `maintenance_mode`.
+- The frontend checks `/api/settings` first, then falls back to the database row if needed.
+- When maintenance is enabled, the app redirects to `/maintenance` and writes are blocked at the database layer.
+- To force maintenance from environment variables, set `MAINTENANCE_MODE=true`.
+
+Apply the latest migration before using it:
+
+```bash
+npx supabase db push
+```
+
+## Kiosk device setup
+
+The QR scanner now uses a one-time device binding flow:
+
+- Open `/setup-device` on the kiosk to bind it to a `library_id`.
+- The binding is saved in `localStorage` and validated server-side through `/api/device-setup`.
+- New student QR payloads include `library_id`, so `/scan` can reject mismatched cards before submitting attendance.
+- To rebind the kiosk, long-press the top-right corner of `/scan` for 5 seconds and enter `VITE_SCAN_ADMIN_PIN`.
+
+Useful scanner env vars:
+
+```bash
+VITE_SCAN_DEVICE_ID=LIB_GATE_01
+VITE_SCAN_DEVICE_NAME=Front Desk Scanner
+VITE_DEVICE_SETUP_API_URL=/api/device-setup
+VITE_SCAN_ADMIN_PIN=123456
+STUDENT_QR_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----..."
+VITE_QR_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----..."
+VITE_STUDENT_QR_API_URL=/api/student-qr
+```
+
+The student QR cards are now signed tokens. The dashboard signs them through `/api/student-qr`, and the scanner verifies the token before it ever reaches attendance persistence.
+
 ## Build
 
 ```bash

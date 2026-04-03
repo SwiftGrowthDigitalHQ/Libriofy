@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
+import LibraryAccessKeyCard from "@/components/settings/LibraryAccessKeyCard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,21 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, CreditCard, Clock, Building2, LayoutGrid, Globe, Copy, Send, CheckCircle, Loader2, Palette } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  CreditCard,
+  Clock,
+  Building2,
+  LayoutGrid,
+  Globe,
+  Copy,
+  Send,
+  CheckCircle,
+  Loader2,
+  Palette,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
@@ -209,6 +224,8 @@ const LibrarySettingsTab = ({
   }
   return (
     <div className="space-y-6">
+      <LibraryAccessKeyCard libraryId={library.id} />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-lg font-display">Library Information</CardTitle>

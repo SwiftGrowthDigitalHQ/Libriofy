@@ -13,7 +13,22 @@ interface StudentQRCardProps {
   status: string;
 }
 
+const resolveQrErrorLevel = (value: string) => {
+  const normalized = value.trim();
+
+  if (normalized.length > 280) {
+    return "L" as const;
+  }
+
+  if (normalized.length > 140) {
+    return "M" as const;
+  }
+
+  return "H" as const;
+};
+
 const StudentQRCard = ({ studentName, qrCode, seatNumber, plan, status }: StudentQRCardProps) => {
+  const qrErrorLevel = resolveQrErrorLevel(qrCode);
   const handleDownload = () => {
     const svg = document.getElementById(`qr-${qrCode}`);
     if (!svg) return;
@@ -44,7 +59,7 @@ const StudentQRCard = ({ studentName, qrCode, seatNumber, plan, status }: Studen
             id={`qr-${qrCode}`}
             value={qrCode}
             size={160}
-            level="H"
+            level={qrErrorLevel}
             includeMargin
             bgColor="transparent"
             fgColor="hsl(200, 50%, 10%)"

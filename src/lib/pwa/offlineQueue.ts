@@ -1,3 +1,9 @@
+import {
+  readBrowserStorageItem,
+  removeBrowserStorageItem,
+  writeBrowserStorageItem,
+} from "@/lib/browserStorage";
+
 export type OfflineQueueFeature = "attendance";
 
 export interface OfflineQueueEntry<TPayload = unknown> {
@@ -17,7 +23,7 @@ const readQueue = (): OfflineQueueEntry[] => {
   if (!isBrowser()) return [];
 
   try {
-    const rawQueue = window.localStorage.getItem(STORAGE_KEY);
+    const rawQueue = readBrowserStorageItem("local", STORAGE_KEY);
     if (!rawQueue) return [];
 
     const parsedQueue = JSON.parse(rawQueue);
@@ -29,7 +35,7 @@ const readQueue = (): OfflineQueueEntry[] => {
 
 const writeQueue = (entries: OfflineQueueEntry[]) => {
   if (!isBrowser()) return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  writeBrowserStorageItem("local", STORAGE_KEY, JSON.stringify(entries));
 };
 
 export const createOfflineQueueEntry = <TPayload,>(
@@ -60,6 +66,6 @@ export const offlineMutationQueue = {
   },
   clear: () => {
     if (!isBrowser()) return;
-    window.localStorage.removeItem(STORAGE_KEY);
+    removeBrowserStorageItem("local", STORAGE_KEY);
   },
 };

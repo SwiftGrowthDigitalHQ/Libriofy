@@ -10,6 +10,7 @@ const LibraryPublicPage = lazy(() => import("@/pages/LibraryPublicPage"));
  */
 const DomainRouter = ({ children }: { children: ReactNode }) => {
   const { data: domainLibrary, isLoading, isError } = useDomainLibrary();
+  const pathname = window.location.pathname;
 
   // If we're on the main app domain, render normal routes
   const hostname = window.location.hostname;
@@ -19,6 +20,8 @@ const DomainRouter = ({ children }: { children: ReactNode }) => {
     hostname === "libriofy.com" ||
     hostname === "partner.libriofy.com" ||
     hostname === "www.libriofy.com";
+
+  if (pathname === "/scan") return <>{children}</>;
 
   if (isAppDomain) return <>{children}</>;
 

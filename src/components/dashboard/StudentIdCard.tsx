@@ -23,6 +23,19 @@ export type StudentIdCardProps = {
 };
 
 const defaultBrand = "#0ea5e9";
+const resolveQrErrorLevel = (value: string) => {
+  const normalized = value.trim();
+
+  if (normalized.length > 280) {
+    return "L" as const;
+  }
+
+  if (normalized.length > 140) {
+    return "M" as const;
+  }
+
+  return "H" as const;
+};
 
 const formatStatusLabel = (value: string) =>
   value
@@ -114,6 +127,8 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
         .map((part) => part[0]?.toUpperCase())
         .join("") || "LB";
     const accent = brandColor || defaultBrand;
+    const qrErrorLevel = resolveQrErrorLevel(qrValue);
+    const qrSize = qrErrorLevel === "H" ? 60 : qrErrorLevel === "M" ? 72 : 78;
 
     return (
       <div
@@ -183,7 +198,7 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
             </Badge>
           </div>
 
-          <div className="grid min-h-0 grid-cols-[64px_minmax(0,1fr)_72px] gap-3">
+          <div className="grid min-h-0 grid-cols-[64px_minmax(0,1fr)_90px] gap-3">
             <div className="relative flex items-start justify-center pt-1">
               <div className={cn("absolute inset-1 rounded-full blur-2xl", statusStyles.photoGlowClassName)} />
               {photoUrl ? (
@@ -255,11 +270,14 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
                   <div className="pointer-events-none absolute inset-0 rounded-[12px] bg-[linear-gradient(145deg,rgba(255,255,255,0.18),rgba(255,255,255,0.06))]" />
                   <div className="pointer-events-none absolute inset-[5px] rounded-[8px] bg-white/92" />
                   <div className="pointer-events-none absolute inset-[1px] rounded-[11px] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),inset_0_-10px_20px_rgba(2,8,23,0.08)]" />
-                  <div className="qr-img relative flex h-[60px] w-[60px] items-center justify-center">
+                  <div
+                    className="qr-img relative flex items-center justify-center"
+                    style={{ width: qrSize, height: qrSize }}
+                  >
                     <QRCodeSVG
                       value={qrValue}
-                      size={60}
-                      level="H"
+                      size={qrSize}
+                      level={qrErrorLevel}
                       includeMargin={false}
                       bgColor="transparent"
                       fgColor="#000000"

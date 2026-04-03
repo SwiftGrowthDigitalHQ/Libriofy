@@ -1,4 +1,4 @@
-const VERSION = "2026-03-23-01";
+const VERSION = "2026-03-31-01";
 const CORE_CACHE = `libriofy-core-${VERSION}`;
 const PAGE_CACHE = `libriofy-pages-${VERSION}`;
 const ASSET_CACHE = `libriofy-assets-${VERSION}`;
@@ -13,15 +13,18 @@ const buildAppUrl = (path) => {
 };
 
 const OFFLINE_FALLBACK_URL = buildAppUrl("/offline.html");
+const SCAN_URL = buildAppUrl("/scan");
 const DASHBOARD_URL = buildAppUrl("/dashboard");
 const AUTH_URL = buildAppUrl("/auth");
 const HOME_URL = buildAppUrl("/");
 const PRECACHE_URLS = [
   HOME_URL,
+  SCAN_URL,
   AUTH_URL,
   DASHBOARD_URL,
   OFFLINE_FALLBACK_URL,
   buildAppUrl("/manifest.webmanifest"),
+  buildAppUrl("/scan-manifest.webmanifest"),
   buildAppUrl("/favicon.svg"),
   buildAppUrl("/icons/pwa-192x192.png"),
   buildAppUrl("/icons/pwa-512x512.png"),
@@ -81,6 +84,7 @@ self.addEventListener("fetch", (event) => {
 
 async function handleNavigationRequest(request) {
   const pageCache = await caches.open(PAGE_CACHE);
+  const requestUrl = new URL(request.url);
 
   try {
     const networkResponse = await fetch(request);
@@ -93,6 +97,13 @@ async function handleNavigationRequest(request) {
     const cachedPage = await pageCache.match(request);
     if (cachedPage) {
       return cachedPage;
+    }
+
+    if (requestUrl.pathname.startsWith(SCAN_URL)) {
+      const scanShell = await caches.match(SCAN_URL);
+      if (scanShell) {
+        return scanShell;
+      }
     }
 
     const lastVisitedPage = await pageCache.match(LAST_VISITED_PAGE_KEY);

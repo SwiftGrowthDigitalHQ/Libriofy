@@ -2,7 +2,7 @@ import { Component, type ErrorInfo, type ReactNode, Suspense, lazy, useEffect, u
 import { Loader2 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { buildIssueReportHref } from "@/lib/errorHandling";
+import { buildIssueReportHref, extractErrorMessage } from "@/lib/errorHandling";
 import { logAppError } from "@/lib/errorMonitoring";
 
 const PremiumCrashScreen = lazy(() => import("@/components/error/PremiumCrashScreen"));
@@ -23,6 +23,15 @@ const CrashScreenFallback = () => (
     <Loader2 className="h-8 w-8 animate-spin text-sky-300" />
   </div>
 );
+
+const isBenignMediaPlaybackAbortError = (error: unknown) => {
+  const message = extractErrorMessage(error).toLowerCase();
+  return (
+    message.includes("the play() request was interrupted because the media was removed from the document") ||
+    message.includes("the play request was interrupted because the media was removed from the document") ||
+    (message.includes("aborterror") && message.includes("media was removed from the document"))
+  );
+};
 
 const renderCrashScreen = ({
   error,
@@ -55,6 +64,7 @@ class ReactRuntimeBoundary extends Component<BoundaryProps, BoundaryState> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("[GlobalErrorBoundary] React error boundary caught:", error, errorInfo);
     void logAppError({
       error,
       metadata: {
@@ -120,6 +130,18 @@ export const GlobalErrorBoundary = ({ children }: { children: ReactNode }) => {
         ? event.error
         : new Error(event.message || "Unexpected runtime error");
 
+      if (isBenignMediaPlaybackAbortError(error)) {
+        event.preventDefault();
+        console.warn("[GlobalErrorBoundary] Ignored benign media playback abort:", error);
+        return;
+      }
+
+      console.error("[GlobalErrorBoundary] window error:", error, {
+        filename: event.filename || null,
+        lineNumber: event.lineno || null,
+        columnNumber: event.colno || null,
+      });
+
       setExternalError(error);
       void logAppError({
         error,
@@ -139,6 +161,14 @@ export const GlobalErrorBoundary = ({ children }: { children: ReactNode }) => {
         : new Error(typeof event.reason === "string" ? event.reason : "Unhandled promise rejection");
 
       event.preventDefault();
+      if (isBenignMediaPlaybackAbortError(error)) {
+        console.warn("[GlobalErrorBoundary] Ignored benign media playback abort:", error);
+        return;
+      }
+
+      console.error("[GlobalErrorBoundary] unhandled rejection:", error, {
+        reasonType: typeof event.reason,
+      });
       setExternalError(error);
       void logAppError({
         error,

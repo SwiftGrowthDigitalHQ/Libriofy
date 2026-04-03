@@ -49,6 +49,11 @@ export const logAppError = async ({
     });
 
     if (insertError) {
+      const insertMessage = (insertError.message || "").toLowerCase();
+      if (insertMessage.includes("app_error_logs") || insertMessage.includes("not found") || insertMessage.includes("404")) {
+        return;
+      }
+
       console.warn("[error-monitoring] Failed to store error log", insertError);
     }
   } catch (loggingError) {

@@ -189,6 +189,8 @@ export type Database = {
           created_at: string
           date: string
           id: string
+          entry_id: string | null
+          device_id: string | null
           library_id: string
           student_id: string
         }
@@ -198,6 +200,8 @@ export type Database = {
           created_at?: string
           date?: string
           id?: string
+          entry_id?: string | null
+          device_id?: string | null
           library_id: string
           student_id: string
         }
@@ -207,6 +211,8 @@ export type Database = {
           created_at?: string
           date?: string
           id?: string
+          entry_id?: string | null
+          device_id?: string | null
           library_id?: string
           student_id?: string
         }
@@ -781,6 +787,187 @@ export type Database = {
         }
         Relationships: []
       }
+      device_setup_attempts: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          device_id: string
+          first_failed_at: string | null
+          last_access_key_suffix: string | null
+          last_failed_at: string | null
+          locked_until: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          created_at?: string
+          device_id: string
+          first_failed_at?: string | null
+          last_access_key_suffix?: string | null
+          last_failed_at?: string | null
+          locked_until?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          device_id?: string
+          first_failed_at?: string | null
+          last_access_key_suffix?: string | null
+          last_failed_at?: string | null
+          locked_until?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      entry_devices: {
+        Row: {
+          created_at: string
+          device_id: string
+          device_name: string | null
+          id: string
+          is_active: boolean
+          last_seen_at: string | null
+          library_id: string
+          metadata: Json
+          secret_token_hash: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          device_id: string
+          device_name?: string | null
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string | null
+          library_id: string
+          metadata?: Json
+          secret_token_hash?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          device_id?: string
+          device_name?: string | null
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string | null
+          library_id?: string
+          metadata?: Json
+          secret_token_hash?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entry_devices_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_commands: {
+        Row: {
+          acknowledged_at: string | null
+          completed_at: string | null
+          command_type: string
+          device_id: string
+          error_message: string | null
+          failed_at: string | null
+          id: string
+          library_id: string
+          metadata: Json
+          payload: Json
+          requested_at: string
+          requested_by: string | null
+          requested_by_role: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          completed_at?: string | null
+          command_type: string
+          device_id: string
+          error_message?: string | null
+          failed_at?: string | null
+          id?: string
+          library_id: string
+          metadata?: Json
+          payload?: Json
+          requested_at?: string
+          requested_by?: string | null
+          requested_by_role?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          completed_at?: string | null
+          command_type?: string
+          device_id?: string
+          error_message?: string | null
+          failed_at?: string | null
+          id?: string
+          library_id?: string
+          metadata?: Json
+          payload?: Json
+          requested_at?: string
+          requested_by?: string | null
+          requested_by_role?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_commands_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "entry_devices"
+            referencedColumns: ["device_id"]
+          },
+          {
+            foreignKeyName: "device_commands_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      library_access_keys: {
+        Row: {
+          access_key: string
+          created_at: string
+          library_id: string
+          rotated_at: string
+          updated_at: string
+        }
+        Insert: {
+          access_key: string
+          created_at?: string
+          library_id: string
+          rotated_at?: string
+          updated_at?: string
+        }
+        Update: {
+          access_key?: string
+          created_at?: string
+          library_id?: string
+          rotated_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_access_keys_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: true
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       library_acquisition: {
         Row: {
           affiliate_id: string | null
@@ -1199,6 +1386,30 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      platform_settings: {
+        Row: {
+          created_at: string
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          created_at?: string
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
+        }
+        Update: {
+          created_at?: string
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
+        }
+        Relationships: []
       }
       payouts: {
         Row: {
@@ -2612,8 +2823,69 @@ export type Database = {
       process_renewals: { Args: never; Returns: Json }
       process_waiting_list_timeouts: { Args: never; Returns: Json }
       qr_check_in: {
-        Args: { p_library_id: string; p_qr_code: string }
+        Args: {
+          p_entry_id?: string
+          p_entry_timestamp?: string
+          p_device_id?: string
+          p_library_id: string
+          p_qr_code?: string
+          p_student_id?: string
+        }
         Returns: Json
+      }
+      validate_and_bind_scanner_device: {
+        Args: {
+          p_device_id?: string
+          p_library_access_key: string
+        }
+        Returns: Json
+      }
+      regenerate_library_access_key: {
+        Args: { p_library_id: string }
+        Returns: Json
+      }
+      scan_attendance_entry: {
+        Args: {
+          p_entry_id?: string
+          p_entry_timestamp?: string
+          p_device_id?: string
+          p_library_id: string
+          p_qr_code?: string
+          p_student_id?: string
+        }
+        Returns: Json
+      }
+      issue_device_command: {
+        Args: {
+          p_command_type: string
+          p_device_id: string
+          p_library_id: string
+          p_payload?: Json
+        }
+        Returns: Database["public"]["Tables"]["device_commands"]["Row"]
+      }
+      pull_device_commands: {
+        Args: {
+          p_device_id: string
+          p_device_token: string
+          p_library_access_key: string
+          p_library_id: string
+          p_limit?: number
+        }
+        Returns: Database["public"]["Tables"]["device_commands"]["Row"][]
+      }
+      record_device_command_status: {
+        Args: {
+          p_command_id: string
+          p_device_id: string
+          p_device_token: string
+          p_error_message?: string | null
+          p_library_access_key: string
+          p_library_id: string
+          p_metadata?: Json
+          p_status: string
+        }
+        Returns: Database["public"]["Tables"]["device_commands"]["Row"]
       }
       recalculate_affiliate_totals: {
         Args: { p_affiliate_id: string }

@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import AttendanceLog from "@/components/dashboard/AttendanceLog";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useAuth } from "@/hooks/useAuth";
+import { parseStudentQrPayload, readStoredLibraryId } from "@/lib/deviceKiosk";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 
 interface CheckInResult {
@@ -20,7 +21,12 @@ interface CheckInResult {
   action?: "check_in" | "check_out";
   student_name?: string;
   seat?: string;
+  code?: string;
 }
+
+type CheckInTarget =
+  | { source: "signed"; studentId: string }
+  | { source: "legacy"; qrCode: string };
 
 type BarcodeDetectorResult = {
   rawValue?: string;
@@ -32,27 +38,7 @@ type BarcodeDetectorInstance = {
 
 type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
 
-const normalizeQrInput = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-
-  try {
-    const url = new URL(trimmed);
-    const match = url.pathname.match(/\/student\/([^/]+)/i);
-    if (match?.[1]) {
-      return decodeURIComponent(match[1]);
-    }
-  } catch {
-    // Not a URL, fall back to raw input.
-  }
-
-  const fallbackMatch = trimmed.match(/\/student\/([^/]+)/i);
-  if (fallbackMatch?.[1]) {
-    return decodeURIComponent(fallbackMatch[1]);
-  }
-
-  return trimmed;
-};
+const STUDENT_QR_PUBLIC_KEY = import.meta.env.VITE_QR_PUBLIC_KEY ?? import.meta.env.VITE_STUDENT_QR_PUBLIC_KEY ?? "";
 
 const AttendancePage = () => {
   const queryClient = useQueryClient();
@@ -110,10 +96,10 @@ const AttendancePage = () => {
   }, []);
 
   const checkInMutation = useMutation({
-    mutationFn: async (qrCode: string) => {
+    mutationFn: async (target: CheckInTarget) => {
       if (!resolvedLibraryId) throw new Error("Library not linked for this account.");
       const { data, error } = await supabase.rpc("qr_check_in", {
-        p_qr_code: qrCode,
+        ...(target.source === "legacy" ? { p_qr_code: target.qrCode } : { p_student_id: target.studentId }),
         p_library_id: resolvedLibraryId,
       });
       if (error) throw error;
@@ -193,10 +179,33 @@ const AttendancePage = () => {
         const scannedValue = await readQrCodeFromFrame();
         if (scannedValue) {
           scanLockRef.current = true;
-          const normalized = normalizeQrInput(scannedValue);
-          setQrInput(normalized || scannedValue);
+          const parsed = await parseStudentQrPayload(scannedValue, {
+            allowLegacy: true,
+            expectedLibraryId: readStoredLibraryId(),
+            publicKeyPem: STUDENT_QR_PUBLIC_KEY,
+            now: new Date(),
+          });
+
+          if (!parsed || !parsed.valid) {
+            const message = parsed && !parsed.valid ? parsed.message : "Invalid ID.";
+            setLastResult({
+              success: false,
+              error: message,
+              code: parsed && !parsed.valid ? parsed.code : "INVALID_QR",
+            });
+            toast({ title: "Denied", description: message, variant: "destructive" });
+            stopCamera();
+            return;
+          }
+
+          const checkInTarget: CheckInTarget =
+            parsed.source === "legacy"
+              ? { source: "legacy", qrCode: parsed.qrCode }
+              : { source: "signed", studentId: parsed.studentId };
+
+          setQrInput(parsed.source === "legacy" ? parsed.qrCode : parsed.studentId);
           stopCamera();
-          checkInMutation.mutate(normalized || scannedValue);
+          checkInMutation.mutate(checkInTarget);
           return;
         }
       } catch {
@@ -210,7 +219,7 @@ const AttendancePage = () => {
       window.cancelAnimationFrame(rafRef.current);
     }
     rafRef.current = window.requestAnimationFrame(() => void loop());
-  }, [checkInMutation, readQrCodeFromFrame, stopCamera]);
+  }, [checkInMutation, readQrCodeFromFrame, stopCamera, toast]);
 
   const getCameraErrorMessage = (error: unknown) => {
     if (error instanceof DOMException) {
@@ -297,11 +306,32 @@ const AttendancePage = () => {
     };
   }, [stopCamera]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const normalized = normalizeQrInput(qrInput);
-    if (!normalized) return;
-    checkInMutation.mutate(normalized);
+    const parsed = await parseStudentQrPayload(qrInput, {
+      allowLegacy: true,
+      expectedLibraryId: readStoredLibraryId(),
+      publicKeyPem: STUDENT_QR_PUBLIC_KEY,
+      now: new Date(),
+    });
+
+    if (!parsed || !parsed.valid) {
+      const message = parsed && !parsed.valid ? parsed.message : "Invalid ID.";
+      setLastResult({
+        success: false,
+        error: message,
+        code: parsed && !parsed.valid ? parsed.code : "INVALID_QR",
+      });
+      toast({ title: "Denied", description: message, variant: "destructive" });
+      return;
+    }
+
+    const checkInTarget: CheckInTarget =
+      parsed.source === "legacy"
+        ? { source: "legacy", qrCode: parsed.qrCode }
+        : { source: "signed", studentId: parsed.studentId };
+
+    checkInMutation.mutate(checkInTarget);
   };
 
   return (
@@ -309,7 +339,7 @@ const AttendancePage = () => {
       <div className="space-y-6">
         <div>
           <h2 className="text-2xl font-bold font-display text-foreground">Attendance</h2>
-          <p className="text-sm text-muted-foreground mt-1">QR code check-in / check-out & daily logs</p>
+          <p className="text-sm text-muted-foreground mt-1">ID card check-in / check-out & daily logs</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -317,14 +347,14 @@ const AttendancePage = () => {
             <CardHeader>
               <CardTitle className="text-lg font-display flex items-center gap-2">
                 <ScanLine className="w-5 h-5 text-primary" />
-                QR Scanner
+                ID Scanner
               </CardTitle>
-              <CardDescription>Scan or enter a student's QR code</CardDescription>
+              <CardDescription>Scan or enter a student ID</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <Input
-                  placeholder="Enter or scan QR code..."
+                  placeholder="Enter or scan student ID..."
                   value={qrInput}
                   onChange={(e) => setQrInput(e.target.value)}
                   autoFocus

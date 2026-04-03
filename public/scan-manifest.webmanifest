@@ -1,0 +1,27 @@
+{
+  "id": "/scan",
+  "name": "Libriofy Smart Entry",
+  "short_name": "Smart Entry",
+  "description": "Premium kiosk scanner for fast QR-based library entry.",
+  "start_url": "/scan",
+  "scope": "/",
+  "display_override": ["fullscreen", "standalone"],
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#06091d",
+  "theme_color": "#06091d",
+  "icons": [
+    {
+      "src": "/icons/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

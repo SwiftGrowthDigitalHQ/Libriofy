@@ -32,6 +32,7 @@ import { Link, useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import RevenueControlDashboard from "@/components/dashboard/RevenueControlDashboard";
 import RevenueChart, { type DailyRevenuePoint, type RevenuePoint } from "@/components/dashboard/RevenueChart";
+import DeviceControlCenter from "@/components/dashboard/DeviceControlCenter";
 import StatsCard from "@/components/dashboard/StatsCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +45,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import {
+  readBrowserStorageItem,
+  writeBrowserStorageItem,
+} from "@/lib/browserStorage";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { comparePaymentSummaryRisk, createPlanPriceLookup, derivePaymentSummary, groupPaymentsByStudent } from "@/lib/paymentRecovery";
 import { isPendingPaymentStatus, isSuccessfulPaymentStatus } from "@/lib/payments";
@@ -299,7 +304,7 @@ const readDashboardDayState = (libraryId: string | null, dateKey: string): Dashb
   }
 
   try {
-    const raw = window.localStorage.getItem(getDashboardDayStorageKey(libraryId, dateKey));
+    const raw = readBrowserStorageItem("local", getDashboardDayStorageKey(libraryId, dateKey));
     if (!raw) {
       return { attendanceSkipUsed: false, completedTaskIds: [] };
     }
@@ -318,7 +323,7 @@ const readDashboardDayState = (libraryId: string | null, dateKey: string): Dashb
 
 const writeDashboardDayState = (libraryId: string | null, dateKey: string, state: DashboardDayState) => {
   if (!libraryId || typeof window === "undefined") return;
-  window.localStorage.setItem(getDashboardDayStorageKey(libraryId, dateKey), JSON.stringify(state));
+  writeBrowserStorageItem("local", getDashboardDayStorageKey(libraryId, dateKey), JSON.stringify(state));
 };
 
 const parseClosingTime = (openingHours: string | null | undefined) => {
@@ -1894,6 +1899,8 @@ const Dashboard = () => {
                 </Alert>
               </div>
             ) : null}
+
+            <DeviceControlCenter libraryId={resolvedLibraryId} />
 
             <RevenueControlDashboard
               currentDateLabel={format(currentTime, "EEEE, dd MMM yyyy")}

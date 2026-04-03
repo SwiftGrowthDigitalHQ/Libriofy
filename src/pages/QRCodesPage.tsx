@@ -22,6 +22,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
+import { fetchSignedStudentQrTokensSafe } from "@/api/studentQr";
+import { buildStudentQrValue } from "@/lib/deviceKiosk";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
@@ -65,6 +67,7 @@ const QRCodesPage = () => {
   const [bulkExporting, setBulkExporting] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [bulkStudents, setBulkStudents] = useState<QrPassListItem[]>([]);
+  const [bulkQrTokens, setBulkQrTokens] = useState<Record<string, string>>({});
 
   const { user } = useAuth();
   const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
@@ -168,7 +171,17 @@ const QRCodesPage = () => {
   }, [page]);
 
   const students = qrPassesQuery.data?.data ?? [];
-  const loading = roleLibraryLoading || fallbackLoading || qrPassesQuery.isLoading;
+  const studentQrTokensQuery = useQuery({
+    queryKey: ["student-qr-tokens", resolvedLibraryId, page, limit, debouncedSearch, statusFilter, students.map((student) => student.id).join("|")],
+    queryFn: () =>
+      fetchSignedStudentQrTokensSafe({
+        libraryId: resolvedLibraryId ?? "",
+        studentIds: students.map((student) => student.id),
+      }),
+    enabled: !!resolvedLibraryId && students.length > 0,
+    staleTime: 30_000,
+  });
+  const loading = roleLibraryLoading || fallbackLoading || qrPassesQuery.isLoading || studentQrTokensQuery.isLoading;
   const isUpdatingPage = qrPassesQuery.isFetching && !qrPassesQuery.isLoading;
   const summary = summaryQuery.data ?? {
     activeCount: 0,
@@ -208,11 +221,6 @@ const QRCodesPage = () => {
     return null;
   };
 
-  const buildQrValue = (qrCode: string) => {
-    const base = window.location.origin;
-    return `${base}/student/${qrCode}`;
-  };
-
   const handleDownloadPng = async (studentId: string, studentName: string) => {
     const node = cardRefs.current[studentId];
     if (!node) return;
@@ -245,6 +253,11 @@ const QRCodesPage = () => {
         search,
         status: statusFilter,
       });
+      const signedTokens = await fetchSignedStudentQrTokensSafe({
+        libraryId: resolvedLibraryId,
+        studentIds: allStudents.map((student) => student.id),
+      });
+      setBulkQrTokens(signedTokens);
       setBulkStudents(allStudents);
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       const items = allStudents
@@ -258,8 +271,11 @@ const QRCodesPage = () => {
         zipName: `${libraryName}-id-cards`,
         onProgress: setBulkProgress,
       });
+    } catch (error) {
+      console.error("Unable to generate signed QR cards for export.", error);
     } finally {
       setBulkStudents([]);
+      setBulkQrTokens({});
       setBulkProgress(0);
       setBulkExporting(false);
     }
@@ -386,7 +402,7 @@ const QRCodesPage = () => {
           <Card>
             <CardContent className="py-12 text-center">
               <QrCode className="mx-auto mb-3 h-12 w-12 text-muted-foreground/30" />
-              <p className="text-destructive">Unable to load ID cards: {getSafeErrorMessage(qrPassesQuery.error)}</p>
+              <p className="text-destructive">Unable to prepare ID cards: {getSafeErrorMessage(qrPassesQuery.error)}</p>
             </CardContent>
           </Card>
         ) : students.length === 0 ? (
@@ -410,7 +426,13 @@ const QRCodesPage = () => {
                     libraryName={libraryName}
                     libraryLogoUrl={libraryLogoUrl}
                     brandColor={brandColor}
-                    qrValue={buildQrValue(student.qr_code)}
+                    qrValue={buildStudentQrValue({
+                      signedToken: studentQrTokensQuery.data?.[student.id] ?? null,
+                      studentId: student.id,
+                      libraryId: resolvedLibraryId,
+                      qrCode: student.qr_code,
+                      origin: window.location.origin,
+                    })}
                     seatNumber={student.seat_number}
                     plan={student.plan}
                     timeSlot={resolveSlotLabel(student.slot_id, student.slot)}
@@ -529,7 +551,13 @@ const QRCodesPage = () => {
               libraryName={libraryName}
               libraryLogoUrl={libraryLogoUrl}
               brandColor={brandColor}
-              qrValue={buildQrValue(student.qr_code ?? "")}
+              qrValue={buildStudentQrValue({
+                signedToken: bulkQrTokens[student.id] ?? null,
+                studentId: student.id,
+                libraryId: resolvedLibraryId,
+                qrCode: student.qr_code ?? "",
+                origin: window.location.origin,
+              })}
               seatNumber={student.seat_number ?? null}
               plan={student.plan ?? null}
               timeSlot={resolveSlotLabel(student.slot_id ?? null, student.slot ?? null)}

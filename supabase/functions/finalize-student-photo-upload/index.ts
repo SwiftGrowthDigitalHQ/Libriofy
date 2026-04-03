@@ -1,5 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { blockIfMaintenanceMode } from "../_shared/maintenance.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { Image } from "npm:imagescript@1.3.0";
 
@@ -78,6 +79,8 @@ serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+  const maintenanceBlocked = await blockIfMaintenanceMode(corsHeaders);
+  if (maintenanceBlocked) return maintenanceBlocked;
 
   if (req.method !== "POST") {
     return jsonResponse({ success: false, error: "Method not allowed" }, { status: 405 });

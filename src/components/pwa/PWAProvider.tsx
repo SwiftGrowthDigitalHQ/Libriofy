@@ -26,9 +26,11 @@ interface PWAContextValue {
 const PWAContext = createContext<PWAContextValue | null>(null);
 
 const isStandaloneMode = () =>
-  window.matchMedia("(display-mode: standalone)").matches ||
-  window.matchMedia("(display-mode: window-controls-overlay)").matches ||
-  (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  (window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: window-controls-overlay)").matches ||
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true);
 
 const bindMediaQueryListener = (query: MediaQueryList, listener: () => void) => {
   if ("addEventListener" in query) {
@@ -48,7 +50,7 @@ export const PWAProvider = ({ children }: { children: ReactNode }) => {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
 
     const displayModeQuery = window.matchMedia("(display-mode: standalone)");
     const overlayModeQuery = window.matchMedia("(display-mode: window-controls-overlay)");

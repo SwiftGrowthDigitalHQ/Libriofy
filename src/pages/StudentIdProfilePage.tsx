@@ -5,21 +5,26 @@ import { Loader2, ShieldCheck, XCircle } from "lucide-react";
 import { format } from "date-fns";
 
 import StudentIdCard from "@/components/dashboard/StudentIdCard";
+import { buildStudentQrValue, parseStudentQrPayload } from "@/lib/deviceKiosk";
 import { supabase } from "@/integrations/supabase/client";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
+import { fetchSignedStudentQrTokensSafe } from "@/api/studentQr";
 import { cn } from "@/lib/utils";
 
 type StudentIdProfilePayload = {
   success: boolean;
   error?: string | null;
   data?: {
+    id: string | null;
     expiry_date: string | null;
     library_logo_url: string | null;
+    library_id: string | null;
     library_name: string | null;
     library_primary_color: string | null;
     plan: string | null;
     photo_thumbnail_path: string | null;
     photo_version: number | null;
+    qr_code: string | null;
     seat_number: string | null;
     slot_label: string | null;
     status: string | null;
@@ -35,16 +40,53 @@ const formatStatusLabel = (value: string) =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ") || "Inactive";
 
+const STUDENT_QR_PUBLIC_KEY = import.meta.env.VITE_QR_PUBLIC_KEY ?? import.meta.env.VITE_STUDENT_QR_PUBLIC_KEY ?? "";
+
 const StudentIdProfilePage = () => {
   const { qr } = useParams<{ qr: string }>();
 
-  const profileQuery = useQuery({
-    queryKey: ["student-id-profile", qr],
+  const routeQrQuery = useQuery({
+    queryKey: ["student-id-route-qr", qr],
     queryFn: async () => {
-      if (!qr) throw new Error("Invalid QR code.");
-      const { data, error } = await supabase.rpc("get_student_id_profile" as never, {
-        p_qr_code: qr,
-      } as never);
+      if (!qr) throw new Error("Invalid ID.");
+      return parseStudentQrPayload(qr, {
+        allowLegacy: true,
+        publicKeyPem: STUDENT_QR_PUBLIC_KEY,
+        now: new Date(),
+      });
+    },
+    enabled: !!qr,
+    staleTime: 30_000,
+  });
+
+  const profileQuery = useQuery({
+    queryKey: [
+      "student-id-profile",
+      qr,
+      routeQrQuery.data?.valid ? routeQrQuery.data.source : "unknown",
+      routeQrQuery.data?.valid && routeQrQuery.data.source === "signed" ? routeQrQuery.data.studentId : null,
+    ],
+    queryFn: async () => {
+      if (!qr) throw new Error("Invalid ID.");
+
+      const parsedRoute = routeQrQuery.data;
+      if (parsedRoute && !parsedRoute.valid) {
+        throw new Error(parsedRoute.message || "Invalid ID.");
+      }
+
+      const rpcArgs =
+        parsedRoute?.valid && parsedRoute.source === "signed"
+          ? ({
+              p_student_id: parsedRoute.studentId,
+              p_library_id: parsedRoute.libraryId,
+            } as never)
+          : parsedRoute?.valid && parsedRoute.source === "legacy"
+            ? ({
+                p_qr_code: parsedRoute.qrCode,
+              } as never)
+            : ({ p_qr_code: qr } as never);
+
+      const { data, error } = await supabase.rpc("get_student_id_profile" as never, rpcArgs);
       if (error) throw error;
       const payload = data as StudentIdProfilePayload;
       if (!payload?.success || !payload.data) {
@@ -52,11 +94,43 @@ const StudentIdProfilePage = () => {
       }
       return payload.data;
     },
-    enabled: !!qr,
+    enabled: !!qr && !routeQrQuery.isLoading,
     staleTime: 30_000,
   });
 
   const profile = profileQuery.data;
+  const signedQrQuery = useQuery({
+    queryKey: ["student-id-profile-qr", profile?.id, profile?.library_id, qr, routeQrQuery.data?.valid ? routeQrQuery.data.source : "unknown"],
+    queryFn: async () => {
+      if (!profile?.id || !profile.library_id) {
+        throw new Error("Student ID is unavailable.");
+      }
+
+      const parsedRoute = routeQrQuery.data;
+      if (parsedRoute?.valid && parsedRoute.source === "signed") {
+        return buildStudentQrValue({
+          signedToken: qr ?? "",
+          libraryId: profile.library_id,
+          origin: window.location.origin,
+        });
+      }
+
+      const tokenMap = await fetchSignedStudentQrTokensSafe({
+        libraryId: profile.library_id,
+        studentIds: [profile.id],
+      });
+
+      return buildStudentQrValue({
+        signedToken: tokenMap[profile.id] ?? null,
+        qrCode: profile.qr_code ?? profile.id,
+        libraryId: profile.library_id,
+        origin: window.location.origin,
+      });
+    },
+    enabled: !!profile?.id && !!profile?.library_id,
+    staleTime: 30_000,
+  });
+
   const photoUrl = useMemo(() => {
     if (!profile) return null;
     if (profile.photo_thumbnail_path) {
@@ -77,10 +151,11 @@ const StudentIdProfilePage = () => {
   const status = profile?.status ?? "expired";
   const isActive = status === "active";
   const statusLabel = formatStatusLabel(status);
+  const qrValue = signedQrQuery.data ?? null;
 
   let content = null;
 
-  if (profileQuery.isLoading) {
+  if (profileQuery.isLoading || routeQrQuery.isLoading || signedQrQuery.isLoading) {
     content = (
       <div className="mx-auto flex min-h-screen max-w-2xl items-center justify-center px-6 py-10">
         <div className="w-full rounded-[32px] border border-white/10 bg-white/[0.05] p-8 text-center shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
@@ -124,7 +199,7 @@ const StudentIdProfilePage = () => {
 
             <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300/85">
               This secure profile confirms {profile.student_name || "the student"} as a verified member of{" "}
-              {profile.library_name || "the library"}, with live QR-backed access details and current validity status.
+              {profile.library_name || "the library"}, with live ID-backed access details and current validity status.
             </p>
 
             <div className="mt-8 grid gap-4 sm:grid-cols-3">
@@ -156,8 +231,8 @@ const StudentIdProfilePage = () => {
             <div className="mt-8 rounded-[28px] border border-white/10 bg-slate-950/40 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
               <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-[#94a3b8]">Identity Integrity</p>
               <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300/80">
-                The QR code on this card routes directly to this live verification page, ensuring the status, plan, seat, and access window
-                are always checked against the latest library record.
+                The code on this card carries a secure signed pass, so scanners can verify the latest status, plan, seat, and access
+                window against the live library record.
               </p>
             </div>
           </div>
@@ -175,7 +250,14 @@ const StudentIdProfilePage = () => {
                   libraryName={profile.library_name || "Library"}
                   libraryLogoUrl={profile.library_logo_url}
                   brandColor={profile.library_primary_color}
-                  qrValue={window.location.href}
+                  qrValue={
+                    qrValue ??
+                    buildStudentQrValue({
+                      qrCode: qr ?? "",
+                      libraryId: profile.library_id,
+                      origin: window.location.origin,
+                    })
+                  }
                   seatNumber={profile.seat_number}
                   plan={profile.plan}
                   timeSlot={profile.slot_label}

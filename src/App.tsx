@@ -1,8 +1,9 @@
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, HashRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { GlobalErrorBoundary } from "@/components/error/GlobalErrorBoundary";
+import MaintenanceGate from "@/components/maintenance/MaintenanceGate";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -11,9 +12,11 @@ import DomainRouter from "@/components/DomainRouter";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import AuthRoute from "@/components/auth/AuthRoute";
 import { PWAProvider } from "@/components/pwa/PWAProvider";
+import { hasStoredLibraryBinding } from "@/lib/deviceKiosk";
 import { queryClient } from "@/lib/queryClient";
 
 const Home = lazy(() => import("./pages/Home"));
+const MaintenancePage = lazy(() => import("./pages/MaintenancePage"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const SeatMapPage = lazy(() => import("./pages/SeatMapPage"));
 const LockerMapPage = lazy(() => import("./pages/LockerMapPage"));
@@ -24,6 +27,8 @@ const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const LibraryPublicPage = lazy(() => import("./pages/LibraryPublicPage"));
 const AuthPage = lazy(() => import("./pages/AuthPage"));
 const SignupPage = lazy(() => import("./pages/SignupPage"));
+const ScanPage = lazy(() => import("./pages/IdCardScanPage"));
+const SetupDevicePage = lazy(() => import("./pages/SetupDevicePage"));
 const PartnerEntryPage = lazy(() => import("./pages/PartnerEntryPage"));
 const PartnerRegistrationPage = lazy(() => import("./pages/PartnerRegistrationPage"));
 const PartnerDashboard = lazy(() => import("./pages/PartnerDashboard"));
@@ -63,19 +68,39 @@ const RouteFallback = () => (
   </div>
 );
 
+const DeviceScanRoute = () => {
+  if (!hasStoredLibraryBinding()) {
+    return <Navigate to="/setup-device" replace />;
+  }
+
+  return <ScanPage />;
+};
+
+const DeviceSetupRoute = () => {
+  if (hasStoredLibraryBinding()) {
+    return <Navigate to="/scan" replace />;
+  }
+
+  return <SetupDevicePage />;
+};
+
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <PWAProvider>
-          <Router {...(useHashRouter ? {} : { basename: import.meta.env.BASE_URL })}>
-            <GlobalErrorBoundary>
-              <Suspense fallback={<RouteFallback />}>
-                <DomainRouter>
-                  <Routes>
+  <MaintenanceGate useHashRouter={useHashRouter}>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <PWAProvider>
+            <Router {...(useHashRouter ? {} : { basename: import.meta.env.BASE_URL })}>
+              <GlobalErrorBoundary>
+                <Suspense fallback={<RouteFallback />}>
+                  <DomainRouter>
+                    <Routes>
                     <Route path="/" element={<Home />} />
+                    <Route path="/maintenance" element={<MaintenancePage />} />
+                    <Route path="/setup-device" element={<DeviceSetupRoute />} />
+                    <Route path="/scan" element={<DeviceScanRoute />} />
                     <Route
                       path="/auth"
                       element={
@@ -346,15 +371,16 @@ const App = () => (
                     <Route path="/renew/:token" element={<StudentRenewalPage />} />
                     <Route path="/student/:qr" element={<StudentIdProfilePage />} />
                     <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </DomainRouter>
-              </Suspense>
-            </GlobalErrorBoundary>
-          </Router>
-        </PWAProvider>
-      </TooltipProvider>
-    </AuthProvider>
-  </QueryClientProvider>
+                    </Routes>
+                  </DomainRouter>
+                </Suspense>
+              </GlobalErrorBoundary>
+            </Router>
+          </PWAProvider>
+        </TooltipProvider>
+      </AuthProvider>
+    </QueryClientProvider>
+  </MaintenanceGate>
 );
 
 export default App;
