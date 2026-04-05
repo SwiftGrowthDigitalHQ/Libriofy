@@ -5,7 +5,7 @@ import { useAuth } from "./useAuth";
 import { isSupabaseUnauthorizedError, useUserRole } from "./useUserRole";
 
 export const useCurrentLibraryId = () => {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const { data: roles, isLoading: rolesLoading } = useUserRole();
   const { data: ownedLibraries = [], isLoading: ownedLibrariesLoading } = useQuery({
     queryKey: ["current-user-owned-libraries", user?.id],
@@ -21,7 +21,7 @@ export const useCurrentLibraryId = () => {
 
       if (error) {
         if (isSupabaseUnauthorizedError(error)) {
-          await supabase.auth.signOut({ scope: "local" });
+          await signOut();
         }
         throw error;
       }

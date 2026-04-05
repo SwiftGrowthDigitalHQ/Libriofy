@@ -14,7 +14,7 @@ const navItems = [
 
 const PartnerLayout = ({ children }: { children: ReactNode }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const { user, signOut } = useAuth();
+  const { user, signOut, logoutAllDevices } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -55,16 +55,29 @@ const PartnerLayout = ({ children }: { children: ReactNode }) => {
 
         <div className="border-t border-sidebar-border">
           {user ? (
-            <button
-              onClick={async () => {
-                await signOut();
-                navigate("/auth");
-              }}
-              className="flex items-center gap-3 px-5 py-3 text-sm text-sidebar-foreground/60 hover:text-sidebar-foreground transition-colors w-full"
-            >
-              <LogOut className="w-4 h-4 flex-shrink-0" />
-              {!collapsed ? <span>Sign Out</span> : null}
-            </button>
+            <div className="space-y-1 px-2 py-2">
+              <button
+                onClick={async () => {
+                  await signOut();
+                  navigate("/auth");
+                }}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+              >
+                <LogOut className="w-4 h-4 flex-shrink-0" />
+                {!collapsed ? <span>Sign Out</span> : null}
+              </button>
+              {!collapsed ? (
+                <button
+                  onClick={async () => {
+                    await logoutAllDevices();
+                    navigate("/auth");
+                  }}
+                  className="w-full rounded-lg px-3 py-2 text-left text-xs text-sidebar-foreground/45 transition hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80"
+                >
+                  Sign out all devices
+                </button>
+              ) : null}
+            </div>
           ) : null}
           <button
             onClick={() => setCollapsed(!collapsed)}

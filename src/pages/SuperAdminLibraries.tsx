@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +17,26 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Label } from "@/components/ui/label";
 import { Link } from "react-router-dom";
 
+type LibrarySummary = {
+  active_students?: number | null;
+  address?: string | null;
+  city?: string | null;
+  enabled?: boolean | null;
+  id: string;
+  monthly_revenue?: number | null;
+  name: string;
+  slug?: string | null;
+  total_seats?: number | null;
+};
+
+type LibrarySubscriptionSummary = {
+  library_id: string;
+  plan_name?: string | null;
+  status?: string | null;
+};
+
 const SuperAdminLibraries = () => {
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [newLib, setNewLib] = useState({ name: "", address: "", city: "", district: "", state: "", country: "India" });
@@ -35,14 +55,14 @@ const SuperAdminLibraries = () => {
 
   const { data: subs = [] } = useQuery({
     queryKey: ["admin-subs-for-libs"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("library_subscriptions" as any).select("*");
+    queryFn: async (): Promise<LibrarySubscriptionSummary[]> => {
+      const { data, error } = await supabase.from("library_subscriptions" as never).select("*");
       if (error) throw error;
-      return data as any[];
+      return (data as LibrarySubscriptionSummary[] | null) ?? [];
     },
   });
 
-  const subMap = Object.fromEntries(subs.map((s: any) => [s.library_id, s]));
+  const subMap = Object.fromEntries(subs.map((subscription) => [subscription.library_id, subscription]));
 
   const toggleMutation = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
@@ -64,12 +84,16 @@ const SuperAdminLibraries = () => {
       queryClient.invalidateQueries({ queryKey: ["admin-libraries"] });
       toast({ title: "Library deleted" });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Unable to delete library.",
+        variant: "destructive",
+      }),
   });
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
       const slug = newLib.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const { error } = await supabase.from("libraries").insert({
@@ -90,16 +114,23 @@ const SuperAdminLibraries = () => {
       setDialogOpen(false);
       toast({ title: "Library created" });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Unable to create library.",
+        variant: "destructive",
+      }),
   });
 
-  const filtered = libraries.filter((l: any) => {
-    const matchesSearch = l.name.toLowerCase().includes(search.toLowerCase()) || (l.city || "").toLowerCase().includes(search.toLowerCase());
+  const filtered = (libraries as LibrarySummary[]).filter((library) => {
+    const matchesSearch =
+      library.name.toLowerCase().includes(search.toLowerCase()) ||
+      (library.city || "").toLowerCase().includes(search.toLowerCase());
     if (filter === "all") return matchesSearch;
-    if (filter === "active") return matchesSearch && l.enabled;
-    if (filter === "disabled") return matchesSearch && !l.enabled;
+    if (filter === "active") return matchesSearch && Boolean(library.enabled);
+    if (filter === "disabled") return matchesSearch && !library.enabled;
     if (filter === "expired") {
-      const sub = subMap[l.id];
+      const sub = subMap[library.id];
       return matchesSearch && sub?.status === "expired";
     }
     return matchesSearch;
@@ -198,7 +229,7 @@ const SuperAdminLibraries = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((lib: any) => {
+                  {filtered.map((lib) => {
                     const sub = subMap[lib.id];
                     return (
                       <TableRow key={lib.id}>

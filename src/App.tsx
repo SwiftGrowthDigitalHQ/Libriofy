@@ -117,6 +117,7 @@ const App = () => (
                         </AuthRoute>
                       }
                     />
+                    <Route path="/reset-password" element={<AuthPage initialMode="reset-password" />} />
                     <Route path="/partner" element={<PartnerEntryPage />} />
                     <Route path="/partner/register" element={<PartnerRegistrationPage />} />
                     <Route

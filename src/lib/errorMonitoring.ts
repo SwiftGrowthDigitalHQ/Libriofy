@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { getStoredAuthUser } from "@/lib/authSession";
 import { classifyAppError, extractErrorMessage } from "@/lib/errorHandling";
 
 type LogAppErrorInput = {
@@ -15,10 +16,7 @@ const resolveUserId = async (userId?: string | null) => {
   }
 
   try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    return user?.id ?? null;
+    return getStoredAuthUser()?.id ?? null;
   } catch {
     return null;
   }

@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { getStoredAccessToken } from "@/lib/authSession";
 
 export type StudentQrTokenMap = Record<string, string>;
 
@@ -30,12 +30,7 @@ const uniqueStudentIds = (studentIds: string[]) =>
   [...new Set(studentIds.map((studentId) => trimText(studentId)).filter(Boolean))];
 
 const getAuthHeaders = async () => {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) {
-    throw error;
-  }
-
-  const accessToken = data.session?.access_token;
+  const accessToken = await getStoredAccessToken();
   if (!accessToken) {
     throw new Error("Please sign in again to generate student QR cards.");
   }

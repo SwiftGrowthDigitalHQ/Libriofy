@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { getStoredAccessToken } from "@/lib/authSession";
 import { evaluateSubscriptionAccess, type LibrarySubscriptionRecord } from "@/lib/subscription";
 
 type FunctionErrorLike = Error | { message: string; context?: Response };
@@ -67,10 +68,7 @@ export const readFunctionErrorMessage = async (error: FunctionErrorLike, functio
 };
 
 export const getEdgeFunctionAuthHeaders = async () => {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-
-  const accessToken = data.session?.access_token;
+  const accessToken = await getStoredAccessToken();
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
 };
 

@@ -3,6 +3,7 @@ import {
   createStudentQrClaims,
   signStudentQrToken,
 } from "./studentQr";
+import { resolveRequestAuthUser } from "./requestAuth.server";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -210,10 +211,9 @@ export const resolveStudentQrSigningRequest = async (
 
   const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
   const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-  const anonKey = readEnv(env, "SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY");
   const privateKey = readEnv(env, "STUDENT_QR_PRIVATE_KEY", "QR_SIGNING_PRIVATE_KEY", "VITE_QR_PRIVATE_KEY");
 
-  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+  if (!supabaseUrl || !serviceRoleKey) {
     return buildError("Supabase environment is not configured.", 500, "CONFIG_ERROR");
   }
 
@@ -226,13 +226,6 @@ export const resolveStudentQrSigningRequest = async (
     return buildError("Missing authorization header", 401, "UNAUTHORIZED");
   }
 
-  const authClient = createClient(supabaseUrl, anonKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-
   const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
@@ -240,15 +233,15 @@ export const resolveStudentQrSigningRequest = async (
     },
   });
 
-  const { data: authData, error: authError } = await authClient.auth.getUser(authToken);
-  if (authError || !authData.user) {
+  const authUser = await resolveRequestAuthUser(env, `Bearer ${authToken}`);
+  if (!authUser) {
     return buildError("Unauthorized", 401, "UNAUTHORIZED");
   }
 
   const { data: roles, error: rolesError } = await serviceClient
     .from("user_roles")
     .select("role, library_id")
-    .eq("user_id", authData.user.id);
+    .eq("user_id", authUser.id);
 
   if (rolesError) {
     throw rolesError;
@@ -276,7 +269,7 @@ export const resolveStudentQrSigningRequest = async (
     roles: normalizedRoles,
     libraryId: requestedLibraryId,
     ownerId: libraryRow.owner_id,
-    userId: authData.user.id,
+    userId: authUser.id,
   })) {
     return buildError("You do not have access to this library.", 403, "FORBIDDEN");
   }

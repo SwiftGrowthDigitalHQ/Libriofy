@@ -22,7 +22,7 @@ export const isUserRolesSchemaError = (error: unknown): boolean => {
 };
 
 export const useUserRole = () => {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
 
   return useQuery({
     queryKey: ["user-roles", user?.id],
@@ -34,7 +34,7 @@ export const useUserRole = () => {
         .eq("user_id", user.id);
       if (error) {
         if (isSupabaseUnauthorizedError(error)) {
-          await supabase.auth.signOut({ scope: "local" });
+          await signOut();
         }
         throw error;
       }

@@ -18,7 +18,9 @@ import { getSafeErrorMessage } from "@/lib/errorHandling";
 interface CheckInResult {
   success: boolean;
   error?: string;
-  action?: "check_in" | "check_out";
+  message?: string;
+  action?: "check-in" | "check-out" | "check_in" | "check_out";
+  studentName?: string;
   student_name?: string;
   seat?: string;
   code?: string;
@@ -26,6 +28,7 @@ interface CheckInResult {
 
 type CheckInTarget =
   | { source: "signed"; studentId: string }
+  | { source: "structured"; studentId: string; libraryId: string }
   | { source: "legacy"; qrCode: string };
 
 type BarcodeDetectorResult = {
@@ -39,6 +42,12 @@ type BarcodeDetectorInstance = {
 type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
 
 const STUDENT_QR_PUBLIC_KEY = import.meta.env.VITE_QR_PUBLIC_KEY ?? import.meta.env.VITE_STUDENT_QR_PUBLIC_KEY ?? "";
+
+const looksLikeUuid = (value: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+
+const normalizeAttendanceAction = (value?: CheckInResult["action"]) =>
+  typeof value === "string" && value.replace(/_/g, "-").toLowerCase() === "check-out" ? "check-out" : "check-in";
 
 const AttendancePage = () => {
   const queryClient = useQueryClient();
@@ -75,6 +84,38 @@ const AttendancePage = () => {
   });
 
   const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
+  const lastResultAction = normalizeAttendanceAction(lastResult?.action);
+  const lastResultStudentLabel = lastResult?.studentName || lastResult?.student_name || "Student";
+
+  const resolveCheckInRpcArgs = useCallback(
+    async (target: CheckInTarget) => {
+      if (!resolvedLibraryId) {
+        throw new Error("Library not linked for this account.");
+      }
+
+      if (target.source === "legacy") {
+        return { p_qr_code: target.qrCode };
+      }
+
+      if (looksLikeUuid(target.studentId)) {
+        return { p_student_id: target.studentId };
+      }
+
+      const { data, error } = await supabase
+        .from("students")
+        .select("id")
+        .eq("library_id", resolvedLibraryId)
+        .eq("qr_code", target.studentId)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      return data?.id ? { p_student_id: data.id } : { p_qr_code: target.studentId };
+    },
+    [resolvedLibraryId],
+  );
 
   const stopCamera = useCallback(() => {
     if (rafRef.current !== null) {
@@ -98,8 +139,9 @@ const AttendancePage = () => {
   const checkInMutation = useMutation({
     mutationFn: async (target: CheckInTarget) => {
       if (!resolvedLibraryId) throw new Error("Library not linked for this account.");
+      const rpcArgs = await resolveCheckInRpcArgs(target);
       const { data, error } = await supabase.rpc("qr_check_in", {
-        ...(target.source === "legacy" ? { p_qr_code: target.qrCode } : { p_student_id: target.studentId }),
+        ...rpcArgs,
         p_library_id: resolvedLibraryId,
       });
       if (error) throw error;
@@ -111,12 +153,14 @@ const AttendancePage = () => {
       setLastResult(result);
       setQrInput("");
       if (result.success) {
+        const action = normalizeAttendanceAction(result.action);
+        const studentLabel = result.studentName || result.student_name || "Student";
         toast({
-          title: result.action === "check_in" ? "Checked In!" : "Checked Out!",
-          description: `${result.student_name} - Seat ${result.seat || "N/A"}`,
+          title: action === "check-in" ? "Checked In!" : "Checked Out!",
+          description: `${studentLabel} - Seat ${result.seat || "N/A"}`,
         });
       } else {
-        toast({ title: "Denied", description: result.error, variant: "destructive" });
+        toast({ title: "Denied", description: result.error || result.message, variant: "destructive" });
       }
     },
     onError: (err: Error) => {
@@ -181,7 +225,7 @@ const AttendancePage = () => {
           scanLockRef.current = true;
           const parsed = await parseStudentQrPayload(scannedValue, {
             allowLegacy: true,
-            expectedLibraryId: readStoredLibraryId(),
+            expectedLibraryId: resolvedLibraryId ?? readStoredLibraryId(),
             publicKeyPem: STUDENT_QR_PUBLIC_KEY,
             now: new Date(),
           });
@@ -201,7 +245,9 @@ const AttendancePage = () => {
           const checkInTarget: CheckInTarget =
             parsed.source === "legacy"
               ? { source: "legacy", qrCode: parsed.qrCode }
-              : { source: "signed", studentId: parsed.studentId };
+              : parsed.source === "structured"
+                ? { source: "structured", studentId: parsed.studentId, libraryId: parsed.libraryId }
+                : { source: "signed", studentId: parsed.studentId };
 
           setQrInput(parsed.source === "legacy" ? parsed.qrCode : parsed.studentId);
           stopCamera();
@@ -219,7 +265,7 @@ const AttendancePage = () => {
       window.cancelAnimationFrame(rafRef.current);
     }
     rafRef.current = window.requestAnimationFrame(() => void loop());
-  }, [checkInMutation, readQrCodeFromFrame, stopCamera, toast]);
+  }, [checkInMutation, readQrCodeFromFrame, resolvedLibraryId, stopCamera, toast]);
 
   const getCameraErrorMessage = (error: unknown) => {
     if (error instanceof DOMException) {
@@ -310,7 +356,7 @@ const AttendancePage = () => {
     e.preventDefault();
     const parsed = await parseStudentQrPayload(qrInput, {
       allowLegacy: true,
-      expectedLibraryId: readStoredLibraryId(),
+      expectedLibraryId: resolvedLibraryId ?? readStoredLibraryId(),
       publicKeyPem: STUDENT_QR_PUBLIC_KEY,
       now: new Date(),
     });
@@ -329,7 +375,9 @@ const AttendancePage = () => {
     const checkInTarget: CheckInTarget =
       parsed.source === "legacy"
         ? { source: "legacy", qrCode: parsed.qrCode }
-        : { source: "signed", studentId: parsed.studentId };
+        : parsed.source === "structured"
+          ? { source: "structured", studentId: parsed.studentId, libraryId: parsed.libraryId }
+          : { source: "signed", studentId: parsed.studentId };
 
     checkInMutation.mutate(checkInTarget);
   };
@@ -427,10 +475,10 @@ const AttendancePage = () => {
                   </div>
                   {lastResult.success ? (
                     <div className="space-y-1">
-                      <p className="text-sm text-foreground font-medium">{lastResult.student_name}</p>
+                      <p className="text-sm text-foreground font-medium">{lastResultStudentLabel}</p>
                       <div className="flex items-center gap-2">
-                        <Badge variant={lastResult.action === "check_in" ? "default" : "secondary"}>
-                          {lastResult.action === "check_in" ? (
+                        <Badge variant={lastResultAction === "check-in" ? "default" : "secondary"}>
+                          {lastResultAction === "check-in" ? (
                             <>
                               <LogIn className="w-3 h-3 mr-1" /> Check In
                             </>
@@ -444,7 +492,7 @@ const AttendancePage = () => {
                       </div>
                     </div>
                   ) : (
-                    <p className="text-sm text-destructive">{lastResult.error}</p>
+                    <p className="text-sm text-destructive">{lastResult.error || lastResult.message}</p>
                   )}
                 </div>
               )}

@@ -21,7 +21,10 @@ export type AttendanceQueueEntry = {
 
 export type AttendanceScanSuccessPayload = {
   status: "success";
+  success: true;
+  action: "check-in" | "check-out";
   name: string;
+  studentName: string;
   seat: string;
   time: string;
   message?: string;
@@ -30,12 +33,14 @@ export type AttendanceScanSuccessPayload = {
 
 export type AttendanceScanErrorPayload = {
   status: "error";
+  success?: false;
   message: string;
   code?: string;
 };
 
 export type AttendanceScanQueuedPayload = {
   status: "queued";
+  success?: false;
   message: string;
   time: string;
   entry_id: string;
@@ -122,6 +127,11 @@ const formatTimeLabel = (timestamp: string) => {
     hour: "numeric",
     minute: "2-digit",
   });
+};
+
+const normalizeAction = (value: unknown): AttendanceScanSuccessPayload["action"] => {
+  const normalized = trimText(value).toLowerCase().replace(/_/g, "-");
+  return normalized === "check-out" ? "check-out" : "check-in";
 };
 
 const requestToPromise = <T,>(request: IDBRequest<T>) =>
@@ -234,12 +244,16 @@ const normalizeSuccessPayload = (
     trimText(record.time) ||
     trimText(record.slot_label) ||
     formatTimeLabel(entry.timestamp);
-  const message = trimText(record.message) || undefined;
+  const action = normalizeAction(record.action);
+  const message = trimText(record.message) || (action === "check-out" ? "Checked out successfully." : "Checked in successfully.");
   const duplicate = record.duplicate === true || record.action === "duplicate";
 
   return {
     status: "success",
+    success: true,
+    action,
     name,
+    studentName: trimText(record.studentName) || trimText(record.student_name) || name,
     seat,
     time,
     ...(message ? { message } : {}),
@@ -256,21 +270,46 @@ const normalizeErrorPayload = (payload: unknown, fallbackMessage: string): Atten
   const message = trimText(record.message) || trimText(record.error) || fallbackMessage;
   return {
     status: "error",
+    success: false,
     message,
     ...(trimText(record.code) ? { code: trimText(record.code) } : {}),
   };
 };
 
-const buildRequestBody = (entry: AttendanceQueueEntry) => ({
-  qr_code: entry.qr_code,
-  student_id: entry.student_id,
-  device_id: entry.device_id,
-  library_id: entry.library_id,
-  library_access_key: entry.library_access_key || readStoredLibraryAccessKey() || "",
-  entry_id: entry.entry_id,
-  timestamp: entry.timestamp,
-  status: entry.status,
-});
+const isTransportFailureMessage = (message: string) => {
+  const normalized = trimText(message).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.includes("internet") ||
+    normalized.includes("network") ||
+    normalized.includes("timed out") ||
+    normalized.includes("timeout") ||
+    normalized.includes("fetch") ||
+    normalized.includes("unable to reach") ||
+    normalized.includes("connection")
+  );
+};
+
+const buildRequestBody = (entry: AttendanceQueueEntry) => {
+  const normalizedStudentId = trimText(entry.student_id);
+  const normalizedQrCode = trimText(entry.qr_code);
+
+  return {
+    qr_code: entry.qr_code,
+    ...(normalizedStudentId && normalizedStudentId !== normalizedQrCode
+      ? { student_id: normalizedStudentId }
+      : {}),
+    device_id: entry.device_id,
+    library_id: entry.library_id,
+    library_access_key: entry.library_access_key || readStoredLibraryAccessKey() || "",
+    entry_id: entry.entry_id,
+    timestamp: entry.timestamp,
+    status: entry.status,
+  };
+};
 
 const buildRequestHeaders = (deviceToken?: string) => {
   const headers: Record<string, string> = {
@@ -356,9 +395,16 @@ const sendAttendanceRequest = async (
     }
 
     if (response.status >= 500) {
-      throw new Error(
-        normalizeErrorPayload(payload, "The scanner is taking too long to respond.").message,
-      );
+      // In local/dev, middleware/API may fail while the deployed edge function still works.
+      try {
+        return await invokeSupabaseFallback(entry, options.deviceToken);
+      } catch {
+        return normalizeErrorPayload(payload, "Live verification is temporarily unavailable.");
+      }
+    }
+
+    if (response.status >= 400) {
+      return normalizeErrorPayload(payload, "Unable to verify this ID right now.");
     }
 
     return normalizeServerPayload(payload, entry);
@@ -548,17 +594,25 @@ export const submitAttendanceScan = async ({
   try {
     return await sendAttendanceRequest(entry, { scanApiUrl, deviceToken, timeoutMs });
   } catch (error) {
+    const message =
+      error instanceof Error && error.message.trim()
+        ? error.message
+        : "Connection issue detected. The scan was saved locally.";
+
+    // Keep queue strictly for transport failures; surface server errors immediately.
+    if (!isTransportFailureMessage(message)) {
+      return {
+        status: "error",
+        message,
+      };
+    }
+
     await enqueueAttendanceQueueEntry({
       ...entry,
       status: "pending",
       last_error: null,
       updated_at: nowIso(),
     });
-
-    const message =
-      error instanceof Error && error.message.trim()
-        ? error.message
-        : "Connection issue detected. The scan was saved locally.";
 
     return buildQueuedPayload(
       entry,

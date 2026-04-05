@@ -36,15 +36,27 @@ export type StudentQrLegacyPayload = {
   libraryId: string | null;
 };
 
+export type StudentQrStructuredPayload = {
+  valid: true;
+  source: "structured";
+  rawValue: string;
+  studentId: string;
+  libraryId: string;
+};
+
 export type StudentQrInvalidPayload = {
   valid: false;
-  source: "signed" | "legacy" | "url" | "token" | "unknown";
+  source: "signed" | "legacy" | "structured" | "url" | "token" | "unknown";
   rawValue: string;
   code: StudentQrVerificationFailureCode;
   message: string;
 };
 
-export type StudentQrParsedPayload = StudentQrVerifiedPayload | StudentQrLegacyPayload | StudentQrInvalidPayload;
+export type StudentQrParsedPayload =
+  | StudentQrVerifiedPayload
+  | StudentQrLegacyPayload
+  | StudentQrStructuredPayload
+  | StudentQrInvalidPayload;
 
 export type StudentQrParseOptions = {
   expectedLibraryId?: string | null;
@@ -196,6 +208,31 @@ const extractLegacyStudentCandidate = (rawValue: string) => {
     qrCode: trimmed,
     libraryId: null,
   };
+};
+
+const extractStructuredStudentCandidate = (rawValue: string) => {
+  const trimmed = trimText(rawValue);
+  if (!trimmed || !trimmed.startsWith("{")) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const studentId = trimText(parsed.studentId ?? parsed.student_id);
+    const libraryId = trimText(parsed.libraryId ?? parsed.library_id);
+
+    if (!studentId || !libraryId) {
+      return null;
+    }
+
+    return {
+      source: "structured" as const,
+      studentId,
+      libraryId,
+    };
+  } catch {
+    return null;
+  }
 };
 
 const getImportedPublicKey = (() => {
@@ -506,8 +543,23 @@ export const parseStudentQrPayload = async (
   }
 
   const candidate = extractStudentRouteCandidate(trimmed);
+  const structuredCandidate = extractStructuredStudentCandidate(trimmed);
   const expectedLibraryId = trimText(options.expectedLibraryId);
   const allowLegacy = options.allowLegacy ?? false;
+
+  if (structuredCandidate) {
+    if (expectedLibraryId && structuredCandidate.libraryId !== expectedLibraryId) {
+      return buildInvalidResult(trimmed, structuredCandidate.source, "WRONG_LIBRARY", "Wrong Library");
+    }
+
+    return {
+      valid: true,
+      source: "structured",
+      rawValue: trimmed,
+      studentId: structuredCandidate.studentId,
+      libraryId: structuredCandidate.libraryId,
+    };
+  }
 
   if (candidate) {
     if (looksLikeJwt(candidate.token)) {

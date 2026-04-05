@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, supabaseAuth } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -84,7 +84,7 @@ const PartnerRegistrationPage = () => {
         },
       });
 
-      const { data: authData } = await supabase.auth.getUser();
+      const { data: authData } = await supabaseAuth.auth.getUser();
       const userId = authData?.user?.id ?? null;
       if (userId) {
         const { data, error } = await supabase
@@ -102,8 +102,12 @@ const PartnerRegistrationPage = () => {
         title: "Partner registration submitted",
         description: "Check your email to confirm your account, then sign in to access the Partner Dashboard.",
       });
-    } catch (err: any) {
-      toast({ title: "Registration failed", description: err.message, variant: "destructive" });
+    } catch (err) {
+      toast({
+        title: "Registration failed",
+        description: err instanceof Error ? err.message : "Unable to register partner.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -229,4 +233,3 @@ const PartnerRegistrationPage = () => {
 };
 
 export default PartnerRegistrationPage;
-
