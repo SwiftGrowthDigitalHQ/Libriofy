@@ -60,15 +60,12 @@ type ExtendedTrackConstraintSet = MediaTrackConstraintSet & {
   whiteBalanceMode?: ConstrainDOMString;
 };
 
-type ExtendedTrackConstraints = MediaTrackConstraints & {
-  exposureMode?: ConstrainDOMString;
-  focusMode?: ConstrainDOMString;
-  whiteBalanceMode?: ConstrainDOMString;
-  advanced?: ExtendedTrackConstraintSet[];
+type CameraSourceSelection = {
+  cameraSource: string | MediaTrackConstraints;
+  profileLabel: string;
 };
-
-type CameraProfile = {
-  constraints: ExtendedTrackConstraints;
+type CameraSourceOption = {
+  constraints: MediaTrackConstraints;
   label: string;
 };
 
@@ -90,6 +87,9 @@ const DUPLICATE_SCAN_WINDOW_MS = 3000;
 const SYNC_INTERVAL_MS = 30000;
 const WATCHDOG_INTERVAL_MS = 4500;
 const WATCHDOG_STALL_MS = 14000;
+const CAMERA_START_TIMEOUT_MS = 5000;
+const CAMERA_START_DELAY_MS = 300;
+const CAMERA_CONTAINER_WAIT_TIMEOUT_MS = 5000;
 const TODAY_LOG_LIMIT = 18;
 const SOUND_STORAGE_KEY = "libriofy:scanner-sound-enabled";
 const TODAY_STORAGE_PREFIX = "libriofy:attendance:today";
@@ -98,48 +98,60 @@ const SCAN_BOX_MIN_EDGE = 250;
 const SCAN_BOX_MAX_EDGE = 320;
 const SCAN_BOX_PADDING = 42;
 const DEVICE_BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY", "DEVICE_BLOCKED"]);
-const CAMERA_PROFILES: CameraProfile[] = [
+const CAMERA_SOURCE_OPTIONS: CameraSourceOption[] = [
   {
-    label: "Sharp rear camera",
+    label: "Rear camera",
     constraints: {
       facingMode: "environment",
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 15, max: 18 },
-      focusMode: "continuous",
-      exposureMode: "continuous",
-      whiteBalanceMode: "continuous",
     },
   },
   {
-    label: "Balanced rear camera",
+    label: "Front camera",
     constraints: {
-      facingMode: "environment",
-      width: { ideal: 960 },
-      height: { ideal: 540 },
-      frameRate: { ideal: 12, max: 15 },
-      focusMode: "continuous",
-      exposureMode: "continuous",
-      whiteBalanceMode: "continuous",
-    },
-  },
-  {
-    label: "Low-end Android mode",
-    constraints: {
-      facingMode: "environment",
-      width: { ideal: 640 },
-      height: { ideal: 480 },
-      frameRate: { ideal: 10, max: 12 },
-      focusMode: "continuous",
-      exposureMode: "continuous",
-      whiteBalanceMode: "continuous",
+      facingMode: "user",
     },
   },
 ];
-
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+const createCameraStartupError = (message: string) => {
+  const error = new Error(message);
+  error.name = "CameraStartupError";
+  return error;
+};
+const withCameraTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, errorMessage: string) => {
+  let timeoutId: number | null = null;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(createCameraStartupError(errorMessage));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+};
+const waitForElementById = async (id: string, timeoutMs: number) => {
+  const startAt = Date.now();
+
+  while (Date.now() - startAt < timeoutMs) {
+    const element = document.getElementById(id);
+    if (element) {
+      return element;
+    }
+
+    await sleep(50);
+  }
+
+  throw createCameraStartupError("SCANNER_CONTAINER_MISSING");
+};
 
 const getTodayStorageKey = (libraryId: string | null) => {
   const now = new Date();
@@ -288,6 +300,17 @@ const getCameraErrorState = (error: unknown): CameraErrorState => {
     }
   }
 
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+
+    if (message.includes("camera_start_timeout") || message.includes("scanner_container_missing")) {
+      return {
+        title: "Camera failed to start",
+        detail: "Camera failed to start. Please retry.",
+      };
+    }
+  }
+
   return {
     title: "Camera unavailable",
     detail: getSafeErrorMessage(error, "Unable to start the camera right now."),
@@ -310,17 +333,17 @@ const IdCardScanPage = () => {
   const [soundEnabled, setSoundEnabled] = useState(readSoundPreference);
   const [todayEntries, setTodayEntries] = useState<TodayAttendanceItem[]>([]);
   const [scanBoxEdge, setScanBoxEdge] = useState(SCAN_BOX_DEFAULT_EDGE);
-  const [cameraProfileLabel, setCameraProfileLabel] = useState(CAMERA_PROFILES[0].label);
+  const [cameraProfileLabel, setCameraProfileLabel] = useState(CAMERA_SOURCE_OPTIONS[0].label);
 
   const mountedRef = useRef(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerStartedRef = useRef(false);
   const scannerPausedRef = useRef(false);
   const scannerStartPromiseRef = useRef<Promise<void> | null>(null);
+  const isStartingRef = useRef(false);
   const scannerReadyAtRef = useRef(0);
   const lastAcceptedScanRef = useRef<{ at: number; value: string }>({ at: 0, value: "" });
   const resultResetTimerRef = useRef<number | null>(null);
-  const cameraProfileIndexRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const cameraStoppedRef = useRef(false);
   const resumeScannerRef = useRef<() => Promise<void>>(async () => undefined);
@@ -452,13 +475,6 @@ const IdCardScanPage = () => {
     [persistTodayEntries],
   );
 
-  const getActiveCameraProfile = useCallback(
-    () => CAMERA_PROFILES[cameraProfileIndexRef.current] ?? CAMERA_PROFILES[0],
-    [],
-  );
-
-  const getActiveVideoConstraints = useCallback(() => getActiveCameraProfile().constraints, [getActiveCameraProfile]);
-
   const resolveScanBoxEdge = useCallback((viewfinderWidth: number, viewfinderHeight: number) => {
     const shortestEdge = Math.max(0, Math.floor(Math.min(viewfinderWidth, viewfinderHeight)));
     const minEdge = Math.min(SCAN_BOX_MIN_EDGE, shortestEdge || SCAN_BOX_MIN_EDGE);
@@ -537,17 +553,16 @@ const IdCardScanPage = () => {
         }
 
         await scanner.applyVideoConstraints({
-          ...getActiveVideoConstraints(),
           advanced: [supportedControls],
         } as MediaTrackConstraints);
       } catch {
         // Ignore unsupported focus/exposure tuning.
       }
     },
-    [getActiveVideoConstraints],
+    [],
   );
 
-  const chooseRearCameraSource = useCallback(async (): Promise<string | MediaTrackConstraints> => {
+  const chooseRearCameraSource = useCallback(async (): Promise<CameraSourceSelection[]> => {
     if (!window.isSecureContext) {
       throw new Error("HTTPS_REQUIRED");
     }
@@ -556,79 +571,22 @@ const IdCardScanPage = () => {
       throw new Error("MEDIA_DEVICES_UNSUPPORTED");
     }
 
-    let warmupStream: MediaStream | null = null;
-    let selectedProfile = getActiveCameraProfile();
-    let lastError: unknown = null;
-
-    try {
-      for (let profileIndex = cameraProfileIndexRef.current; profileIndex < CAMERA_PROFILES.length; profileIndex += 1) {
-        const candidateProfile = CAMERA_PROFILES[profileIndex];
-
-        try {
-          warmupStream = await navigator.mediaDevices.getUserMedia({
-            video: candidateProfile.constraints,
-            audio: false,
-          });
-          cameraProfileIndexRef.current = profileIndex;
-          selectedProfile = candidateProfile;
-          setCameraProfileLabel(candidateProfile.label);
-          break;
-        } catch (error) {
-          lastError = error;
-
-          if (!(error instanceof DOMException) || error.name !== "OverconstrainedError") {
-            throw error;
-          }
-        }
-      }
-
-      if (!warmupStream) {
-        throw lastError ?? new Error("No supported camera profile was accepted.");
-      }
-
-      const activeTrack = warmupStream.getVideoTracks()[0];
-      const activeSettings = activeTrack?.getSettings();
-      const videoInputs =
-        typeof navigator.mediaDevices.enumerateDevices === "function"
-          ? (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput")
-          : [];
-
-      const rearCamera = videoInputs.find((device) =>
-        /back|rear|environment|world|traseira|trasera|camera 0/i.test(device.label),
-      );
-
-      if (rearCamera?.deviceId) {
-        return rearCamera.deviceId;
-      }
-
-      if (activeSettings?.deviceId) {
-        return activeSettings.deviceId;
-      }
-
-      if (videoInputs[0]?.deviceId) {
-        return videoInputs[0].deviceId;
-      }
-
-      return selectedProfile.constraints;
-    } finally {
-      warmupStream?.getTracks().forEach((track) => track.stop());
-      if (warmupStream) {
-        await sleep(120);
-      }
-    }
-  }, [getActiveCameraProfile]);
+    return CAMERA_SOURCE_OPTIONS.map((option) => ({
+      cameraSource: option.constraints,
+      profileLabel: option.label,
+    }));
+  }, []);
 
   const stopScanner = useCallback(async () => {
     scannerStartPromiseRef.current = null;
+    isStartingRef.current = false;
 
     const scanner = scannerRef.current;
     scannerRef.current = null;
 
     if (scanner) {
       try {
-        if (scannerStartedRef.current) {
-          await scanner.stop();
-        }
+        await scanner.stop();
       } catch {
         // Ignore stop failures and continue with cleanup.
       }
@@ -670,12 +628,18 @@ const IdCardScanPage = () => {
       return;
     }
 
+    if (isStartingRef.current) {
+      return;
+    }
+
     if (scannerStartPromiseRef.current) {
       await scannerStartPromiseRef.current;
       return;
     }
 
+    isStartingRef.current = true;
     const startup = (async () => {
+      console.info("Starting camera...");
       setCameraInitializing(true);
       setCameraReady(false);
       setCameraError(null);
@@ -692,19 +656,13 @@ const IdCardScanPage = () => {
       }
 
       await stopScanner();
+      await waitForElementById(SCANNER_REGION_ID, CAMERA_CONTAINER_WAIT_TIMEOUT_MS);
+      await sleep(CAMERA_START_DELAY_MS);
 
-      const cameraSource = await chooseRearCameraSource();
+      const cameraSources = await chooseRearCameraSource();
       if (!mountedRef.current || cameraStoppedRef.current) {
         return;
       }
-
-      const scanner = new Html5Qrcode(SCANNER_REGION_ID, {
-        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-        useBarCodeDetectorIfSupported: true,
-        verbose: false,
-      });
-
-      scannerRef.current = scanner;
 
       const scanConfig: Html5QrcodeCameraScanConfig = {
         fps: 12,
@@ -718,28 +676,70 @@ const IdCardScanPage = () => {
 
           return { width: edge, height: edge };
         },
-        videoConstraints: getActiveVideoConstraints(),
       };
 
-      try {
-        await scanner.start(
-          cameraSource,
-          scanConfig,
-          (decodedText) => {
-            void handleDecodedRef.current(decodedText).catch(() => undefined);
-          },
-          () => undefined,
-        );
-        hideHtml5Dashboard();
-        await applyPreferredTrackControls(scanner);
-      } catch (error) {
-        scannerRef.current = null;
+      let startedScanner: Html5Qrcode | null = null;
+      let startedProfileLabel: string | null = null;
+      let lastStartError: unknown = null;
+
+      for (const cameraSource of cameraSources) {
+        const scanner = new Html5Qrcode(SCANNER_REGION_ID, {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          useBarCodeDetectorIfSupported: true,
+          verbose: false,
+        });
+
+        scannerRef.current = scanner;
+        setCameraProfileLabel(cameraSource.profileLabel);
+
         try {
-          await scanner.clear();
-        } catch {
-          // Ignore cleanup failures.
+          await withCameraTimeout(
+            scanner.start(
+              cameraSource.cameraSource,
+              scanConfig,
+              (decodedText) => {
+                void handleDecodedRef.current(decodedText).catch(() => undefined);
+              },
+              () => undefined,
+            ),
+            CAMERA_START_TIMEOUT_MS,
+            "CAMERA_START_TIMEOUT",
+          );
+          startedScanner = scanner;
+          startedProfileLabel = cameraSource.profileLabel;
+          console.info("Camera stream received");
+          hideHtml5Dashboard();
+          await applyPreferredTrackControls(scanner);
+          break;
+        } catch (error) {
+          lastStartError = error;
+          console.warn("Camera failed", error);
+          scannerRef.current = null;
+          try {
+            await scanner.stop();
+          } catch {
+            // Ignore stream shutdown failures during camera startup recovery.
+          }
+
+          try {
+            await scanner.clear();
+          } catch {
+            // Ignore cleanup failures.
+          }
+
+          if (
+            error instanceof DOMException &&
+            ["NotAllowedError", "PermissionDeniedError", "SecurityError"].includes(error.name)
+          ) {
+            throw error;
+          }
+
+          await sleep(120);
         }
-        throw error;
+      }
+
+      if (!startedScanner || !startedProfileLabel) {
+        throw lastStartError ?? createCameraStartupError("CAMERA_START_TIMEOUT");
       }
 
       if (!mountedRef.current || cameraStoppedRef.current) {
@@ -747,12 +747,14 @@ const IdCardScanPage = () => {
         return;
       }
 
+      scannerRef.current = startedScanner;
       scannerStartedRef.current = true;
       scannerPausedRef.current = false;
       scannerReadyAtRef.current = Date.now();
       setCameraReady(true);
       setCameraInitializing(false);
       setCameraError(null);
+      setCameraProfileLabel(startedProfileLabel);
       setStatusMessage(isOnline ? "Ready to scan" : "Offline queue ready");
     })()
       .catch(async (error) => {
@@ -765,9 +767,10 @@ const IdCardScanPage = () => {
         setCameraInitializing(false);
         setCameraReady(false);
         setCameraError(getCameraErrorState(error));
-        setStatusMessage("Camera unavailable");
+        setStatusMessage("Camera failed to start. Please retry.");
       })
       .finally(() => {
+        isStartingRef.current = false;
         if (scannerStartPromiseRef.current === startup) {
           scannerStartPromiseRef.current = null;
         }
@@ -778,7 +781,6 @@ const IdCardScanPage = () => {
   }, [
     applyPreferredTrackControls,
     chooseRearCameraSource,
-    getActiveVideoConstraints,
     hideHtml5Dashboard,
     isOnline,
     navigate,
@@ -990,9 +992,14 @@ const IdCardScanPage = () => {
   const handleRetryCamera = useCallback(() => {
     cameraStoppedRef.current = false;
     setCameraStopped(false);
-    setStatusMessage("Restarting camera...");
-    void startScanner();
-  }, [startScanner]);
+    setCameraError(null);
+    setStatusMessage("Starting camera...");
+    void stopScanner()
+      .catch(() => undefined)
+      .finally(() => {
+        void startScanner();
+      });
+  }, [startScanner, stopScanner]);
 
   const handleStopCamera = useCallback(() => {
     clearResultResetTimer();
@@ -1057,6 +1064,23 @@ const IdCardScanPage = () => {
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        if (!cameraStoppedRef.current && !isVerifying && !scanResult) {
+          void startScanner();
+        }
+      } else {
+        void stopScanner();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isVerifying, scanResult, startScanner, stopScanner]);
 
   useEffect(() => {
     cameraStoppedRef.current = cameraStopped;
@@ -1296,6 +1320,15 @@ const IdCardScanPage = () => {
                     </div>
                     <p className="mt-4 text-2xl font-semibold tracking-tight">{cameraError.title}</p>
                     <p className="mt-2 text-sm text-white/70">{cameraError.detail}</p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="mt-5 rounded-full px-5"
+                      onClick={handleRetryCamera}
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Retry Camera
+                    </Button>
                   </div>
                 </div>
               ) : null}

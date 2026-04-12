@@ -14,8 +14,18 @@ import AuthRoute from "@/components/auth/AuthRoute";
 import { PWAProvider } from "@/components/pwa/PWAProvider";
 import { hasStoredLibraryBinding } from "@/lib/deviceKiosk";
 import { queryClient } from "@/lib/queryClient";
+import {
+  LEGACY_SUPER_ADMIN_DASHBOARD_ROUTE,
+  SUPER_ADMIN_DASHBOARD_ROUTE,
+  SUPER_ADMIN_LOGIN_ROUTE,
+} from "@/lib/superAdminPaths";
 
 const Home = lazy(() => import("./pages/Home"));
+const About = lazy(() => import("./pages/About"));
+const Contact = lazy(() => import("./pages/Contact"));
+const Support = lazy(() => import("./pages/Support"));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
+const Terms = lazy(() => import("./pages/Terms"));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const SeatMapPage = lazy(() => import("./pages/SeatMapPage"));
@@ -27,7 +37,8 @@ const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const LibraryPublicPage = lazy(() => import("./pages/LibraryPublicPage"));
 const AuthPage = lazy(() => import("./pages/AuthPage"));
 const SignupPage = lazy(() => import("./pages/SignupPage"));
-const ScanPage = lazy(() => import("./pages/IdCardScanPage"));
+const ReferralLanding = lazy(() => import("./pages/ReferralLanding"));
+const ScanPage = lazy(() => import("./pages/ScanKioskPage"));
 const SetupDevicePage = lazy(() => import("./pages/SetupDevicePage"));
 const PartnerEntryPage = lazy(() => import("./pages/PartnerEntryPage"));
 const PartnerRegistrationPage = lazy(() => import("./pages/PartnerRegistrationPage"));
@@ -61,6 +72,10 @@ const SuperAdminDomains = lazy(() => import("./pages/SuperAdminDomains"));
 
 const useHashRouter = import.meta.env.VITE_USE_HASH_ROUTER === "true";
 const Router = useHashRouter ? HashRouter : BrowserRouter;
+const routerFutureFlags = {
+  v7_startTransition: true,
+  v7_relativeSplatPath: true,
+} as const;
 
 const RouteFallback = () => (
   <div className="flex min-h-screen items-center justify-center bg-background">
@@ -92,17 +107,33 @@ const App = () => (
           <Toaster />
           <Sonner />
           <PWAProvider>
-            <Router {...(useHashRouter ? {} : { basename: import.meta.env.BASE_URL })}>
+            <Router
+              future={routerFutureFlags}
+              {...(useHashRouter ? {} : { basename: import.meta.env.BASE_URL })}
+            >
               <GlobalErrorBoundary>
                 <Suspense fallback={<RouteFallback />}>
                   <DomainRouter>
                     <Routes>
                     <Route path="/" element={<Home />} />
+                    <Route path="/about" element={<About />} />
+                    <Route path="/contact" element={<Contact />} />
+                    <Route path="/support" element={<Support />} />
+                    <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+                    <Route path="/terms" element={<Terms />} />
                     <Route path="/maintenance" element={<MaintenancePage />} />
                     <Route path="/setup-device" element={<DeviceSetupRoute />} />
                     <Route path="/scan" element={<DeviceScanRoute />} />
                     <Route
                       path="/auth"
+                      element={
+                        <AuthRoute>
+                          <AuthPage />
+                        </AuthRoute>
+                      }
+                    />
+                    <Route
+                      path="/login"
                       element={
                         <AuthRoute>
                           <AuthPage />
@@ -117,13 +148,19 @@ const App = () => (
                         </AuthRoute>
                       }
                     />
+                    <Route path="/ref/:code" element={<ReferralLanding />} />
                     <Route path="/reset-password" element={<AuthPage initialMode="reset-password" />} />
                     <Route path="/partner" element={<PartnerEntryPage />} />
                     <Route path="/partner/register" element={<PartnerRegistrationPage />} />
                     <Route
                       path="/partner/dashboard"
                       element={
-                        <ProtectedRoute allowRoles={["partner"]}>
+                        <ProtectedRoute
+                          allowRoles={["partner", "super_admin"]}
+                          debugLabel="partner"
+                          unauthenticatedRedirectTo="/login"
+                          unauthorizedRedirectTo="/dashboard"
+                        >
                           <PartnerDashboard />
                         </ProtectedRoute>
                       }
@@ -131,7 +168,12 @@ const App = () => (
                     <Route
                       path="/partner/leads"
                       element={
-                        <ProtectedRoute allowRoles={["partner"]}>
+                        <ProtectedRoute
+                          allowRoles={["partner", "super_admin"]}
+                          debugLabel="partner"
+                          unauthenticatedRedirectTo="/login"
+                          unauthorizedRedirectTo="/dashboard"
+                        >
                           <PartnerLeadsPage />
                         </ProtectedRoute>
                       }
@@ -139,7 +181,12 @@ const App = () => (
                     <Route
                       path="/partner/payouts"
                       element={
-                        <ProtectedRoute allowRoles={["partner"]}>
+                        <ProtectedRoute
+                          allowRoles={["partner", "super_admin"]}
+                          debugLabel="partner"
+                          unauthenticatedRedirectTo="/login"
+                          unauthorizedRedirectTo="/dashboard"
+                        >
                           <PartnerPayoutsPage />
                         </ProtectedRoute>
                       }
@@ -147,7 +194,12 @@ const App = () => (
                     <Route
                       path="/partner/kit"
                       element={
-                        <ProtectedRoute allowRoles={["partner"]}>
+                        <ProtectedRoute
+                          allowRoles={["partner", "super_admin"]}
+                          debugLabel="partner"
+                          unauthenticatedRedirectTo="/login"
+                          unauthorizedRedirectTo="/dashboard"
+                        >
                           <PartnerMarketingKitPage />
                         </ProtectedRoute>
                       }
@@ -155,13 +207,18 @@ const App = () => (
                     <Route
                       path="/partner/notifications"
                       element={
-                        <ProtectedRoute allowRoles={["partner"]}>
+                        <ProtectedRoute
+                          allowRoles={["partner", "super_admin"]}
+                          debugLabel="partner"
+                          unauthenticatedRedirectTo="/login"
+                          unauthorizedRedirectTo="/dashboard"
+                        >
                           <PartnerNotificationsPage />
                         </ProtectedRoute>
                       }
                     />
                     <Route
-                      path="/super-admin-login"
+                      path={SUPER_ADMIN_LOGIN_ROUTE}
                       element={
                         <AuthRoute>
                           <SuperAdminLoginPage />
@@ -289,17 +346,34 @@ const App = () => (
                       }
                     />
                     <Route
-                      path="/admin"
+                      path={SUPER_ADMIN_DASHBOARD_ROUTE}
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminDashboard />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path={LEGACY_SUPER_ADMIN_DASHBOARD_ROUTE}
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <Navigate to={SUPER_ADMIN_DASHBOARD_ROUTE} replace />
                         </ProtectedRoute>
                       }
                     />
                     <Route
                       path="/admin/libraries"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminLibraries />
                         </ProtectedRoute>
                       }
@@ -307,7 +381,10 @@ const App = () => (
                     <Route
                       path="/admin/revenue"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminRevenue />
                         </ProtectedRoute>
                       }
@@ -315,7 +392,10 @@ const App = () => (
                     <Route
                       path="/admin/subscriptions"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminSubscriptions />
                         </ProtectedRoute>
                       }
@@ -323,7 +403,10 @@ const App = () => (
                     <Route
                       path="/admin/partners"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminPartners />
                         </ProtectedRoute>
                       }
@@ -331,7 +414,10 @@ const App = () => (
                     <Route
                       path="/admin/leads"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminLeads />
                         </ProtectedRoute>
                       }
@@ -339,7 +425,10 @@ const App = () => (
                     <Route
                       path="/admin/payouts"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminPayouts />
                         </ProtectedRoute>
                       }
@@ -347,7 +436,10 @@ const App = () => (
                     <Route
                       path="/admin/notifications"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminNotifications />
                         </ProtectedRoute>
                       }
@@ -355,7 +447,10 @@ const App = () => (
                     <Route
                       path="/admin/domains"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminDomains />
                         </ProtectedRoute>
                       }
@@ -363,7 +458,10 @@ const App = () => (
                     <Route
                       path="/admin/settings"
                       element={
-                        <ProtectedRoute allowRoles={["super_admin"]}>
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
                           <SuperAdminSettings />
                         </ProtectedRoute>
                       }

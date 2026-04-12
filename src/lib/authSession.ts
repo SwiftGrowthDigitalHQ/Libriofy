@@ -20,9 +20,14 @@ const parseStoredSession = (rawValue: string | null): ClientAuthSession | null =
 
     if (
       typeof parsed.accessToken !== "string" ||
+      (typeof parsed.authLevel !== "number" && typeof parsed.authLevel !== "undefined") ||
       typeof parsed.expiresAt !== "number" ||
+      (typeof parsed.idleTimeoutSeconds !== "number" &&
+        parsed.idleTimeoutSeconds !== null &&
+        typeof parsed.idleTimeoutSeconds !== "undefined") ||
       typeof parsed.loginMethod !== "string" ||
       typeof parsed.provider !== "string" ||
+      (typeof parsed.sessionScope !== "string" && typeof parsed.sessionScope !== "undefined") ||
       typeof parsed.trustedDevice !== "boolean" ||
       !parsed.user ||
       typeof parsed.user !== "object" ||
@@ -31,7 +36,12 @@ const parseStoredSession = (rawValue: string | null): ClientAuthSession | null =
       return null;
     }
 
-    return parsed as ClientAuthSession;
+    return {
+      ...parsed,
+      authLevel: typeof parsed.authLevel === "number" ? parsed.authLevel : 1,
+      idleTimeoutSeconds: typeof parsed.idleTimeoutSeconds === "number" ? parsed.idleTimeoutSeconds : null,
+      sessionScope: parsed.sessionScope === "super_admin" ? "super_admin" : "general",
+    } as ClientAuthSession;
   } catch {
     return null;
   }

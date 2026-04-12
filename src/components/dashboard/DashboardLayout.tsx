@@ -11,10 +11,20 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useIsSuperAdmin } from "@/hooks/useUserRole";
 import { evaluateSubscriptionAccess, useLibrarySubscription } from "@/hooks/useLibrarySubscription";
+import { SUPER_ADMIN_DASHBOARD_ROUTE } from "@/lib/superAdminPaths";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import InstallAppButton from "@/components/pwa/InstallAppButton";
 
-const baseLibraryNavItems = [
+type DashboardNavItem = {
+  disabled?: boolean;
+  icon: typeof LayoutDashboard;
+  label: string;
+  path: string;
+  rel?: string;
+  target?: string;
+};
+
+const baseLibraryNavItems: DashboardNavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { icon: LayoutGrid, label: "Seat Map", path: "/dashboard/seats" },
   { icon: Archive, label: "Locker Map", path: "/dashboard/lockers" },
@@ -31,7 +41,7 @@ const baseLibraryNavItems = [
   { icon: HelpCircle, label: "Support", path: "/dashboard/support" },
 ];
 
-const settingsNavItem = { icon: Settings, label: "Settings", path: "/dashboard/settings" };
+const settingsNavItem: DashboardNavItem = { icon: Settings, label: "Settings", path: "/dashboard/settings" };
 
 const DashboardLayout = ({ children }: { children: ReactNode }) => {
   const [collapsed, setCollapsed] = useState(false);
@@ -60,7 +70,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
     staleTime: 60_000,
   });
   const publicPagePath = currentLibrary?.slug ? `/library/${currentLibrary.slug}` : null;
-  const libraryNavItems = [
+  const libraryNavItems: DashboardNavItem[] = [
     ...baseLibraryNavItems,
     {
       icon: Globe,
@@ -132,7 +142,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
         <div className="border-t border-sidebar-border">
           {isSuperAdmin && (
             <Link
-              to="/admin"
+              to={SUPER_ADMIN_DASHBOARD_ROUTE}
               className="flex items-center gap-3 px-5 py-3 text-sm text-sidebar-foreground/60 hover:text-sidebar-foreground transition-colors w-full"
             >
               <Shield className="w-4 h-4 flex-shrink-0" />

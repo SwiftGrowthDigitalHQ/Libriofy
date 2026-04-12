@@ -9,6 +9,12 @@ export type MaintenanceStatus = {
   updatedAt: string | null;
 };
 
+type LocationLike = {
+  hash: string;
+  pathname: string;
+  search: string;
+};
+
 const normalizeString = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
 
 export const normalizeBasePath = (basePath: string | undefined): string => {
@@ -126,7 +132,7 @@ export const getCurrentRoutePath = ({
 }: {
   basePath: string;
   isHashRouter: boolean;
-  location: Pick<Location, "pathname" | "hash">;
+  location: Pick<LocationLike, "pathname" | "hash">;
 }): string => {
   if (isHashRouter) {
     const hashPath = location.hash.replace(/^#/, "");
@@ -164,7 +170,7 @@ export const buildMaintenanceHref = ({
 }: {
   basePath: string;
   isHashRouter: boolean;
-  location: Pick<Location, "pathname" | "search">;
+  location: Pick<LocationLike, "pathname" | "search">;
 }): string => {
   if (isHashRouter) {
     return `${location.pathname}${location.search}#${MAINTENANCE_ROUTE}`;
@@ -177,4 +183,3 @@ export const buildMaintenanceHref = ({
 
   return `${normalizedBase}${MAINTENANCE_ROUTE}${location.search}`;
 };
-

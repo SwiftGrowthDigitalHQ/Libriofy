@@ -44,6 +44,10 @@ export type AttendanceScanQueuedPayload = {
   message: string;
   time: string;
   entry_id: string;
+  verifiedOffline?: boolean;
+  name?: string;
+  studentName?: string;
+  seat?: string;
 };
 
 export type AttendanceScanPayload =

@@ -43,7 +43,6 @@ const fetchDatabaseMaintenanceStatus = async (env: EnvLike): Promise<Maintenance
 
   try {
     const response = await fetch(endpoint.toString(), {
-      cache: "no-store",
       headers: {
         Accept: "application/json",
         apikey: supabaseKey,
@@ -80,4 +79,3 @@ export const resolveMaintenanceStatus = async (env: EnvLike = process.env): Prom
     updatedAt: null,
   };
 };
-

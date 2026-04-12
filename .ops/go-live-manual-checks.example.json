@@ -1,0 +1,32 @@
+{
+  "verified_release_sha": "",
+  "verified_by": "",
+  "verified_at_utc": null,
+  "login_works": {
+    "status": "pending",
+    "checked_at_utc": null,
+    "checked_by": "",
+    "environment": "production",
+    "release_sha": "",
+    "evidence": [],
+    "notes": "Validate login flow in staging and production before go-live."
+  },
+  "qr_scan_works": {
+    "status": "pending",
+    "checked_at_utc": null,
+    "checked_by": "",
+    "environment": "production",
+    "release_sha": "",
+    "evidence": [],
+    "notes": "Validate end-to-end kiosk QR scan and attendance write before go-live."
+  },
+  "payment_works": {
+    "status": "pending",
+    "checked_at_utc": null,
+    "checked_by": "",
+    "environment": "production",
+    "release_sha": "",
+    "evidence": [],
+    "notes": "Validate payment checkout and verification flow before go-live."
+  }
+}

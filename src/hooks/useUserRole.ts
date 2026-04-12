@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { SUPER_ADMIN_DASHBOARD_ROUTE } from "@/lib/superAdminPaths";
 import { useAuth } from "./useAuth";
 
 export type AppRole = "super_admin" | "library_owner" | "staff" | "partner" | "student";
@@ -56,7 +57,8 @@ export const useUserRole = () => {
       }
 
       if (affiliate) {
-        return [...roles, { role: "partner", library_id: null }];
+        const partnerRole: UserRoleRecord = { role: "partner", library_id: null };
+        return [...roles, partnerRole];
       }
 
       return roles;
@@ -90,7 +92,7 @@ export const getPrimaryRole = (roles: UserRoleRecord[] | null | undefined): AppR
 
 export const getRoleHomeRoute = (roles: UserRoleRecord[] | null | undefined): string => {
   const primary = getPrimaryRole(roles);
-  if (primary === "super_admin") return "/admin";
+  if (primary === "super_admin") return SUPER_ADMIN_DASHBOARD_ROUTE;
   if (primary === "library_owner" || primary === "staff") return "/dashboard";
   if (primary === "partner") return "/partner/dashboard";
   return "/auth";

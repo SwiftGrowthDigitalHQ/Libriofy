@@ -1,10 +1,18 @@
+import compression from "compression";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server";
+import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server";
+import { resolveMaintenanceStatus } from "../src/lib/maintenance.server";
+import { buildServerReadiness } from "../src/lib/observability/serverHealth";
+import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring";
+import { assertServerStartupEnv } from "../src/lib/observability/startupValidation";
 import {
   ensureOtpAuthWorkerStarted,
   resolveEmailLoginRequest,
@@ -12,20 +20,36 @@ import {
   resolveLogoutRequest,
   resolveRefreshSessionRequest,
   resolveSendOtpRequest,
+  resolveSuperAdminLoginRequest,
+  resolveSuperAdminSessionRequest,
+  resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
 } from "../src/lib/otpAuth.server";
 import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server";
+import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server";
+import {
+  SUPER_ADMIN_DASHBOARD_ROUTE,
+  SUPER_ADMIN_LOGIN_ROUTE,
+  isSuperAdminDashboardPath,
+  sanitizeSuperAdminRedirectPath,
+} from "../src/lib/superAdminPaths";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const workspaceRoot = path.resolve(__dirname, "..");
 const distDirectory = path.join(workspaceRoot, "dist");
+const assetsDirectory = path.join(distDirectory, "assets");
 const port = Number(process.env.PORT || 3001);
+const serverStartedAt = Date.now();
+
+assertServerStartupEnv(process.env);
 
 const app = express();
+initializeServerMonitoring(process.env);
 
 app.disable("x-powered-by");
+app.set("trust proxy", 1);
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -33,8 +57,47 @@ app.use(
   }),
 );
 app.use(cors({ credentials: true, origin: true }));
+app.use(compression());
+app.use((req, res, next) => {
+  const requestId = randomUUID();
+  res.setHeader("x-request-id", requestId);
+  res.locals.requestId = requestId;
+  next();
+});
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
+
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+
+type OpenAIResponsesPayload = {
+  output?: Array<{
+    content?: Array<{
+      content?: unknown;
+      text?: unknown;
+    }>;
+  }>;
+  output_text?: unknown;
+};
+
+const extractOutputText = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") return "";
+
+  const candidate = payload as OpenAIResponsesPayload;
+  if (typeof candidate.output_text === "string") return candidate.output_text;
+
+  const output = Array.isArray(candidate.output) ? candidate.output : [];
+  for (const item of output) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const chunk of content) {
+      if (typeof chunk?.text === "string") return chunk.text;
+      if (typeof chunk?.content === "string") return chunk.content;
+    }
+  }
+
+  return "";
+};
 
 ensureOtpAuthWorkerStarted(process.env);
 
@@ -70,6 +133,18 @@ const readRequestContext = (req: Request) => ({
   userAgent: req.headers["user-agent"],
 });
 
+const isHtmlNavigationRequest = (req: Request) => {
+  if (req.method !== "GET") {
+    return false;
+  }
+
+  const acceptHeader = req.headers.accept ?? "";
+  return typeof acceptHeader === "string" && (acceptHeader.includes("text/html") || acceptHeader.includes("*/*"));
+};
+
+const buildSuperAdminLoginRedirect = (requestedPath: string) =>
+  `${SUPER_ADMIN_LOGIN_ROUTE}?redirect=${encodeURIComponent(requestedPath)}`;
+
 const sendAuthResponse = (
   res: Response,
   result: {
@@ -85,6 +160,28 @@ const sendAuthResponse = (
   res.status(result.statusCode).json(result.body);
 };
 
+const sendServerError = (
+  req: Request,
+  res: Response,
+  error: unknown,
+  fallbackMessage: string,
+  extraContext?: Record<string, unknown>,
+) => {
+  captureServerError(error, {
+    method: req.method,
+    path: req.originalUrl || req.path,
+    requestId: res.locals.requestId,
+    ...extraContext,
+  });
+
+  const message = error instanceof Error ? error.message : fallbackMessage;
+  res.status(500).json({
+    requestId: res.locals.requestId,
+    success: false,
+    message,
+  });
+};
+
 const handleAttendanceScan: Parameters<typeof app.post>[1] = async (req, res) => {
   try {
     const result = await resolveScanAttendanceRequest(process.env, req.body, {
@@ -93,10 +190,17 @@ const handleAttendanceScan: Parameters<typeof app.post>[1] = async (req, res) =>
 
     res.status(result.statusCode).json(result.body);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected attendance scan failure";
+    captureServerError(error, {
+      method: req.method,
+      path: req.originalUrl || req.path,
+      requestId: res.locals.requestId,
+      source: "attendance_scan",
+    });
+
     res.status(500).json({
       code: "SERVER_ERROR",
-      message,
+      message: error instanceof Error ? error.message : "Unexpected attendance scan failure",
+      requestId: res.locals.requestId,
       status: "error",
       success: false,
     });
@@ -104,11 +208,65 @@ const handleAttendanceScan: Parameters<typeof app.post>[1] = async (req, res) =>
 };
 
 app.get("/health", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   res.status(200).json({
+    appEnv: process.env.APP_ENV || process.env.NODE_ENV || "development",
+    release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
     service: "libriofy-auth-attendance-api",
     status: "ok",
     timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round((Date.now() - serverStartedAt) / 1000),
   });
+});
+
+app.get("/health/live", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round((Date.now() - serverStartedAt) / 1000),
+  });
+});
+
+app.get("/health/ready", async (_req, res) => {
+  const readiness = await buildServerReadiness(process.env, { hasDist: existsSync(distDirectory) });
+  res.setHeader("Cache-Control", "no-store");
+  res.status(readiness.ok ? 200 : 503).json({
+    ...readiness,
+    appEnv: process.env.APP_ENV || process.env.NODE_ENV || "development",
+    service: "libriofy-auth-attendance-api",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/health/ops", async (_req, res) => {
+  const readiness = await buildServerReadiness(process.env, { hasDist: existsSync(distDirectory) });
+  res.setHeader("Cache-Control", "no-store");
+  res.status(readiness.ok ? 200 : 503).json({
+    appEnv: process.env.APP_ENV || process.env.NODE_ENV || "development",
+    nodeVersion: process.version,
+    readiness,
+    release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
+    requestId: res.locals.requestId,
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round((Date.now() - serverStartedAt) / 1000),
+  });
+});
+
+app.get("/api/settings", async (_req, res) => {
+  try {
+    const status = await resolveMaintenanceStatus(process.env);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({
+      maintenanceMode: status.maintenanceMode,
+      maintenance_mode: status.maintenanceMode,
+      source: status.source,
+      updatedAt: status.updatedAt,
+      updated_at: status.updatedAt,
+    });
+  } catch (error) {
+    sendServerError(_req, res, error, "Unexpected settings lookup failure", { source: "api_settings" });
+  }
 });
 
 app.post("/auth/send-otp", async (req, res) => {
@@ -116,10 +274,7 @@ app.post("/auth/send-otp", async (req, res) => {
     const result = await resolveSendOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected send OTP failure",
-    });
+    sendServerError(req, res, error, "Unexpected send OTP failure", { source: "auth_send_otp" });
   }
 });
 
@@ -128,10 +283,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     const result = await resolveVerifyOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected OTP verification failure",
-    });
+    sendServerError(req, res, error, "Unexpected OTP verification failure", { source: "auth_verify_otp" });
   }
 });
 
@@ -140,9 +292,26 @@ app.post("/auth/login-email", async (req, res) => {
     const result = await resolveEmailLoginRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected email login failure",
+    sendServerError(req, res, error, "Unexpected email login failure", { source: "auth_login_email" });
+  }
+});
+
+app.post("/auth/super-admin/login", async (req, res) => {
+  try {
+    const result = await resolveSuperAdminLoginRequest(process.env, req.body, readRequestContext(req));
+    sendAuthResponse(res, result);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected super admin login failure", { source: "super_admin_login" });
+  }
+});
+
+app.post("/auth/super-admin/verify-otp", async (req, res) => {
+  try {
+    const result = await resolveSuperAdminVerifyOtpRequest(process.env, req.body, readRequestContext(req));
+    sendAuthResponse(res, result);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected super admin OTP verification failure", {
+      source: "super_admin_verify_otp",
     });
   }
 });
@@ -152,10 +321,7 @@ app.post("/auth/refresh", async (req, res) => {
     const result = await resolveRefreshSessionRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected session refresh failure",
-    });
+    sendServerError(req, res, error, "Unexpected session refresh failure", { source: "auth_refresh" });
   }
 });
 
@@ -164,10 +330,7 @@ app.post("/auth/logout", async (req, res) => {
     const result = await resolveLogoutRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected logout failure",
-    });
+    sendServerError(req, res, error, "Unexpected logout failure", { source: "auth_logout" });
   }
 });
 
@@ -176,10 +339,7 @@ app.post("/auth/logout-all", async (req, res) => {
     const result = await resolveLogoutAllRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected logout-all failure",
-    });
+    sendServerError(req, res, error, "Unexpected logout-all failure", { source: "auth_logout_all" });
   }
 });
 
@@ -188,10 +348,7 @@ app.post("/auth/twilio-status", async (req, res) => {
     const result = await resolveTwilioStatusCallbackRequest(process.env, req.body);
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected Twilio callback failure",
-    });
+    sendServerError(req, res, error, "Unexpected Twilio callback failure", { source: "twilio_status" });
   }
 });
 
@@ -200,10 +357,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
     const result = await resolveSendOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected send OTP failure",
-    });
+    sendServerError(req, res, error, "Unexpected send OTP failure", { source: "api_auth_send_otp" });
   }
 });
 
@@ -212,10 +366,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     const result = await resolveVerifyOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected OTP verification failure",
-    });
+    sendServerError(req, res, error, "Unexpected OTP verification failure", { source: "api_auth_verify_otp" });
   }
 });
 
@@ -224,9 +375,26 @@ app.post("/api/auth/login-email", async (req, res) => {
     const result = await resolveEmailLoginRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected email login failure",
+    sendServerError(req, res, error, "Unexpected email login failure", { source: "api_auth_login_email" });
+  }
+});
+
+app.post("/api/auth/super-admin/login", async (req, res) => {
+  try {
+    const result = await resolveSuperAdminLoginRequest(process.env, req.body, readRequestContext(req));
+    sendAuthResponse(res, result);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected super admin login failure", { source: "api_super_admin_login" });
+  }
+});
+
+app.post("/api/auth/super-admin/verify-otp", async (req, res) => {
+  try {
+    const result = await resolveSuperAdminVerifyOtpRequest(process.env, req.body, readRequestContext(req));
+    sendAuthResponse(res, result);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected super admin OTP verification failure", {
+      source: "api_super_admin_verify_otp",
     });
   }
 });
@@ -236,10 +404,7 @@ app.post("/api/auth/refresh", async (req, res) => {
     const result = await resolveRefreshSessionRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected session refresh failure",
-    });
+    sendServerError(req, res, error, "Unexpected session refresh failure", { source: "api_auth_refresh" });
   }
 });
 
@@ -248,10 +413,7 @@ app.post("/api/auth/logout", async (req, res) => {
     const result = await resolveLogoutRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected logout failure",
-    });
+    sendServerError(req, res, error, "Unexpected logout failure", { source: "api_auth_logout" });
   }
 });
 
@@ -260,10 +422,7 @@ app.post("/api/auth/logout-all", async (req, res) => {
     const result = await resolveLogoutAllRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected logout-all failure",
-    });
+    sendServerError(req, res, error, "Unexpected logout-all failure", { source: "api_auth_logout_all" });
   }
 });
 
@@ -272,27 +431,239 @@ app.post("/api/auth/twilio-status", async (req, res) => {
     const result = await resolveTwilioStatusCallbackRequest(process.env, req.body);
     sendAuthResponse(res, result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected Twilio callback failure",
-    });
+    sendServerError(req, res, error, "Unexpected Twilio callback failure", { source: "api_twilio_status" });
   }
 });
 
 app.post("/api/attendance/scan", handleAttendanceScan);
 app.post("/api/scan-attendance", handleAttendanceScan);
 
+app.post("/api/device-setup", async (req, res) => {
+  try {
+    const libraryAccessKey = String(req.body?.library_id ?? req.body?.libraryId ?? "").trim();
+    const deviceId = String(req.body?.device_id ?? req.body?.deviceId ?? "").trim();
+    const result = await validateAndBindScannerDevice(process.env, libraryAccessKey, deviceId);
+
+    res.setHeader("Cache-Control", "no-store");
+    res.status(result.valid ? 200 : result.code === "DEVICE_SETUP_LOCKED" ? 429 : 404).json(result);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected device setup failure", { source: "device_setup" });
+  }
+});
+
+app.post("/api/device-heartbeat", async (req, res) => {
+  try {
+    const result = await resolveDeviceHeartbeatRequest(process.env, req.body);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(result.statusCode).json(result.body);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected device heartbeat failure", {
+      source: "device_heartbeat",
+    });
+  }
+});
+
+app.post("/api/student-qr", async (req, res) => {
+  try {
+    const result = await resolveStudentQrSigningRequest(process.env, req.body, {
+      authorization: req.headers.authorization,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.status(result.statusCode).json(result.body);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected student QR signing failure", {
+      source: "student_qr",
+    });
+  }
+});
+
+app.post("/api/ai/partner", async (req, res) => {
+  if (!OPENAI_API_KEY) {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(500).json({
+      success: false,
+      requestId: res.locals.requestId,
+      message: "OPENAI_API_KEY is not configured on the server.",
+    });
+    return;
+  }
+
+  const {
+    task,
+    customerType,
+    objection,
+    goal,
+    context,
+  } = req.body ?? {};
+
+  try {
+    const response = await fetch(`${OPENAI_BASE_URL}/responses`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        input: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "text",
+                text:
+                  "You are a sales assistant for Libriofy partners. Provide crisp, high-conversion WhatsApp messages, call scripts, objection handling, and demo pitches. Keep it short, friendly, and action-oriented. Avoid making any false claims. Output should be ready-to-send.",
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    task: task ?? "message",
+                    customerType: customerType ?? "library_owner",
+                    objection: objection ?? null,
+                    goal: goal ?? "schedule_demo",
+                    context: context ?? null,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      res.setHeader("Cache-Control", "no-store");
+      res.status(500).json({
+        success: false,
+        message: "OpenAI request failed.",
+        details: errorBody,
+        requestId: res.locals.requestId,
+      });
+      return;
+    }
+
+    const payload = await response.json();
+    const outputText = extractOutputText(payload) || "Unable to generate response. Try again.";
+
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({
+      success: true,
+      output: outputText,
+      model: OPENAI_MODEL,
+      requestId: res.locals.requestId,
+    });
+  } catch (error) {
+    sendServerError(req, res, error, "AI request failed.", { source: "partner_ai" });
+  }
+});
+
 if (existsSync(distDirectory)) {
-  app.use(express.static(distDirectory));
+  if (existsSync(assetsDirectory)) {
+    app.use(
+      "/assets",
+      express.static(assetsDirectory, {
+        immutable: true,
+        index: false,
+        maxAge: "1y",
+      }),
+    );
+  }
+
+  app.use(async (req, res, next) => {
+    if (!isHtmlNavigationRequest(req)) {
+      next();
+      return;
+    }
+
+    const requestedPath = req.originalUrl || req.path;
+
+    if (isSuperAdminDashboardPath(req.path)) {
+      try {
+        const activeSession = await resolveSuperAdminSessionRequest(process.env, readRequestContext(req));
+        if (!activeSession) {
+          res.redirect(302, buildSuperAdminLoginRedirect(requestedPath));
+          return;
+        }
+      } catch (error) {
+        console.warn("[auth] super admin route guard failed", error);
+        res.redirect(302, buildSuperAdminLoginRedirect(requestedPath));
+        return;
+      }
+    }
+
+    if (req.path === SUPER_ADMIN_LOGIN_ROUTE) {
+      try {
+        const activeSession = await resolveSuperAdminSessionRequest(process.env, readRequestContext(req));
+        if (activeSession) {
+          const redirectTarget = sanitizeSuperAdminRedirectPath(
+            new URL(requestedPath, "http://localhost").searchParams.get("redirect"),
+          );
+          res.redirect(302, redirectTarget ?? SUPER_ADMIN_DASHBOARD_ROUTE);
+          return;
+        }
+      } catch (error) {
+        console.warn("[auth] super admin login guard failed", error);
+      }
+    }
+
+    next();
+  });
+
+  app.use(
+    express.static(distDirectory, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith("service-worker.js")) {
+          res.setHeader("Cache-Control", "no-cache");
+          return;
+        }
+
+        if (filePath.endsWith("release.json")) {
+          res.setHeader("Cache-Control", "no-store");
+          return;
+        }
+
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("Cache-Control", "no-store");
+          return;
+        }
+
+        if (/\.[a-f0-9]{8,}\./i.test(path.basename(filePath))) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          return;
+        }
+
+        res.setHeader("Cache-Control", "public, max-age=300");
+      },
+    }),
+  );
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api/")) {
       next();
       return;
     }
 
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(path.join(distDirectory, "index.html"));
   });
 }
+
+app.use((error: unknown, req: Request, res: Response, _next: express.NextFunction) => {
+  if (res.headersSent) {
+    return;
+  }
+
+  sendServerError(req, res, error, "Unexpected server failure", { source: "express_error_handler" });
+});
 
 app.listen(port, () => {
   console.log(`Libriofy API listening on http://localhost:${port}`);

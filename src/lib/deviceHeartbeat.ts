@@ -9,12 +9,14 @@ export type DeviceHeartbeatStatus = {
 };
 
 export type DeviceHeartbeatSuccess = {
+  code?: undefined;
   valid: true;
   deviceId: string;
   libraryId: string;
   deviceName: string | null;
   heartbeatAt: string;
   lastSeenAt: string;
+  message?: undefined;
 };
 
 export type DeviceHeartbeatFailure = {

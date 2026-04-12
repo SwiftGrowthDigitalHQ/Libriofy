@@ -1,0 +1,14 @@
+.git
+.github
+.githooks
+backups
+dist
+dist-server
+docs
+node_modules
+npm-debug.log*
+*.log
+.env
+.env.*
+!.env.example
+!.env.ops.example

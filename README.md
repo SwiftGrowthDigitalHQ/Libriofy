@@ -2,6 +2,34 @@
 
 Libriofy is a library automation platform for seat management, students, attendance, payments, and renewals.
 
+## System documentation
+
+Complete architecture, flows, database, API, setup, and handover docs live in:
+
+- [docs/system-blueprint/README.md](docs/system-blueprint/README.md)
+- [docs/devops-and-infra.md](docs/devops-and-infra.md)
+- [docs/backup-and-recovery.md](docs/backup-and-recovery.md)
+- [docs/go-live-checklist.md](docs/go-live-checklist.md)
+
+Every feature or behavior change must update the relevant docs in `docs/system-blueprint/`. Work without doc updates is not considered complete.
+
+If a change touches `supabase/migrations/`, update `src/integrations/supabase/types.ts` in the same change and run:
+
+```bash
+npm run check:schema-sync
+```
+
+Commit and push are now guarded by repo git hooks:
+
+- `pre-commit` runs schema sync plus documentation coverage on staged changes
+- `pre-push` runs schema sync plus documentation coverage on the pushed diff
+
+If hooks are not active locally, run:
+
+```bash
+npm run setup:hooks
+```
+
 ## Fix: "Database setup incomplete"
 
 If `/dashboard` shows `public.user_roles was not found`, your Supabase project is linked but migrations were not applied on that project.
@@ -52,9 +80,11 @@ npx supabase db push
 The QR scanner now uses a one-time device binding flow:
 
 - Open `/setup-device` on the kiosk to bind it to a `library_id`.
-- The binding is saved in `localStorage` and validated server-side through `/api/device-setup`.
-- New student QR payloads include `library_id`, so `/scan` can reject mismatched cards before submitting attendance.
-- To rebind the kiosk, long-press the top-right corner of `/scan` for 5 seconds and enter `VITE_SCAN_ADMIN_PIN`.
+- The binding is saved in `localStorage` and validated server-side against the current scanner setup flow.
+- The live `/scan` route now uses `src/pages/ScanPage.tsx` with a worker-based hybrid detector: `BarcodeDetector` primary, `jsQR` fallback, `html5-qrcode` only for camera preview/runtime control, and adaptive ROI / loop tuning by device tier.
+- Normal scan flow is now `detect -> pause -> verify -> result -> resume`, with soft watchdog recovery instead of random restart behavior.
+- Real-device tuning is built in: use `/scan?scanDebug=1` to see rolling latency, ROI, loop interval, and active camera profile during kiosk testing.
+- Detailed scanner trace: [docs/system-blueprint/scan-technical-breakdown.md](docs/system-blueprint/scan-technical-breakdown.md)
 
 Useful scanner env vars:
 
@@ -81,11 +111,60 @@ npm run build
 Libriofy now includes an operational backup workflow for Supabase data:
 
 - Supabase automatic backups should stay enabled for production recovery.
-- `npm run backup:db` creates a weekly export bundle under `backups/`.
-- Optional offsite upload is supported with AWS S3 or an `rclone` remote such as Google Drive.
-- `npm run restore:db` replays a saved export into a target Postgres database.
+- `npm run backup:db` creates a verified timestamped bundle under `backups/`.
+- Offsite upload is supported with AWS S3, an `rclone` remote such as Google Drive, or Supabase Storage.
+- `npm run backup:monitor` checks backup freshness and monthly restore drill freshness.
+- `npm run restore:db` and `npm run restore:latest` restore a backup into a target Postgres database.
+- `npm run restore:drill` performs the staging restore drill workflow.
+- `npm run setup:ops-schedule` installs daily backup, daily monitor, and monthly drill tasks after `.env.ops` is configured.
 
 Full runbook: [docs/backup-and-recovery.md](docs/backup-and-recovery.md)
+
+## Production infra
+
+Libriofy now ships with a production-oriented deployment and monitoring baseline:
+
+- frontend deployment contract: `vercel.json`
+- API container contract: `Dockerfile.api`
+- Render service definition: `render.yaml`
+- CI/CD and uptime monitors: `.github/workflows/`
+- one-command ops status: `npm run ops:health`
+
+Infra runbook: [docs/devops-and-infra.md](docs/devops-and-infra.md)
+
+## Go-live gate
+
+Production release is now blocked until the full go-live checklist passes:
+
+```bash
+npm run go-live:init
+npm run go-live:check
+```
+
+Checklist runbook: [docs/go-live-checklist.md](docs/go-live-checklist.md)
+
+Rule:
+
+- system decides readiness, not memory
+- failed checks block release with no exceptions
+- if it cannot be verified, it is not deployed
+- manual checks require evidence tied to the verified release SHA
+- if it is not reproducible, it is not trusted
+- if it is not monitored, it is already broken
+
+Strict release command:
+
+```bash
+npm run release:truth
+```
+
+Truth report:
+
+```bash
+npm run go-live:report
+```
+
+The report now emits a `release_truth` summary with `verified`, `reproducible`, and `monitored` verdicts so readiness is explicit and machine-readable.
 
 ## Automatic renewal reminders
 

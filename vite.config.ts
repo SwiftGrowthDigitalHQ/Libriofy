@@ -12,11 +12,141 @@ import {
   resolveLogoutRequest,
   resolveRefreshSessionRequest,
   resolveSendOtpRequest,
+  resolveSuperAdminLoginRequest,
+  resolveSuperAdminSessionRequest,
+  resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
 } from "./src/lib/otpAuth.server";
 import { resolveStudentQrSigningRequest } from "./src/lib/studentQr.server";
 import { resolveScanAttendanceRequest } from "./src/lib/scanAttendance.server";
+import {
+  SUPER_ADMIN_DASHBOARD_ROUTE,
+  SUPER_ADMIN_LOGIN_ROUTE,
+  isSuperAdminDashboardPath,
+  sanitizeSuperAdminRedirectPath,
+} from "./src/lib/superAdminPaths";
+
+type OpenAIResponsesPayload = {
+  output?: Array<{
+    content?: Array<{
+      text?: unknown;
+    }>;
+  }>;
+  output_text?: unknown;
+};
+
+const releaseManifestPlugin = (env: Record<string, string>): Plugin => ({
+  name: "libriofy-release-manifest",
+  generateBundle() {
+    const payload = {
+      appEnv: env.VITE_APP_ENV || env.APP_ENV || "development",
+      generated_at_utc: new Date().toISOString(),
+      release: env.VITE_RELEASE_SHA || env.RELEASE_SHA || null,
+    };
+
+    this.emitFile({
+      fileName: "release.json",
+      source: JSON.stringify(payload, null, 2),
+      type: "asset",
+    });
+  },
+});
+
+const extractPartnerAiOutput = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  const candidate = payload as OpenAIResponsesPayload;
+  if (typeof candidate.output_text === "string") {
+    return candidate.output_text;
+  }
+
+  return Array.isArray(candidate.output) && typeof candidate.output[0]?.content?.[0]?.text === "string"
+    ? candidate.output[0].content[0].text
+    : "";
+};
+
+const partnerAiPlugin = (env: Record<string, string>): Plugin => ({
+  name: "libriofy-partner-ai",
+  configureServer(server) {
+    server.middlewares.use("/api/ai/partner", async (req, res, next) => {
+      if (req.method === "OPTIONS") {
+        res.statusCode = 204;
+        res.setHeader("Cache-Control", "no-store");
+        res.end();
+        return;
+      }
+
+      if (req.method !== "POST") {
+        res.statusCode = 405;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+        res.end(JSON.stringify({ success: false, message: "Method not allowed" }));
+        return;
+      }
+
+      try {
+        const apiKey = env.OPENAI_API_KEY || "";
+        if (!apiKey) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.end(JSON.stringify({ success: false, message: "OPENAI_API_KEY is not configured." }));
+          return;
+        }
+
+        const rawBody = await readRequestBody(req);
+        const contentType = Array.isArray(req.headers["content-type"]) ? req.headers["content-type"][0] : req.headers["content-type"];
+        const body = parseRequestBody(rawBody, contentType);
+
+        const response = await fetch(`${env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/responses`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: env.OPENAI_MODEL || "gpt-4o-mini",
+            input: [
+              {
+                role: "system",
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      "You are a sales assistant for Libriofy partners. Provide crisp, high-conversion WhatsApp messages, call scripts, objection handling, and demo pitches. Keep it short, friendly, and action-oriented. Avoid making any false claims. Output should be ready-to-send.",
+                  },
+                ],
+              },
+              {
+                role: "user",
+                content: [{ type: "text", text: JSON.stringify(body ?? {}, null, 2) }],
+              },
+            ],
+          }),
+        });
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.end(JSON.stringify({ success: false, message: "OpenAI request failed.", details: errorBody }));
+          return;
+        }
+
+        const payload = await response.json();
+        const outputText = extractPartnerAiOutput(payload) || "Unable to generate response.";
+
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(JSON.stringify({ success: true, output: outputText }));
+      } catch (error) {
+        next(error);
+      }
+    });
+  },
+});
 
 const maintenanceSettingsPlugin = (env: Record<string, string>): Plugin => ({
   name: "libriofy-maintenance-settings",
@@ -226,6 +356,75 @@ const scanAttendancePlugin = (env: Record<string, string>): Plugin => ({
   },
 });
 
+const superAdminPageGuardPlugin = (env: Record<string, string>): Plugin => ({
+  name: "libriofy-super-admin-page-guard",
+  configureServer(server) {
+    server.middlewares.use(async (req, res, next) => {
+      const requestUrl = req.url || "/";
+      const parsedUrl = new URL(requestUrl, "http://localhost");
+      const pathname = parsedUrl.pathname;
+      const acceptHeader = Array.isArray(req.headers.accept) ? req.headers.accept[0] : req.headers.accept;
+
+      if (
+        req.method !== "GET" ||
+        pathname.startsWith("/api/") ||
+        pathname.startsWith("/auth/") ||
+        typeof acceptHeader !== "string" ||
+        (!acceptHeader.includes("text/html") && !acceptHeader.includes("*/*"))
+      ) {
+        next();
+        return;
+      }
+
+      const requestContext = {
+        authorization: Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization,
+        cookieHeader: Array.isArray(req.headers.cookie) ? req.headers.cookie[0] : req.headers.cookie,
+        deviceFingerprint: Array.isArray(req.headers["x-device-fingerprint"])
+          ? req.headers["x-device-fingerprint"][0]
+          : req.headers["x-device-fingerprint"],
+        deviceLabel: Array.isArray(req.headers["x-device-label"]) ? req.headers["x-device-label"][0] : req.headers["x-device-label"],
+        ip: extractClientIp(req.headers),
+        userAgent: extractUserAgent(req.headers),
+      };
+
+      if (isSuperAdminDashboardPath(pathname)) {
+        try {
+          const activeSession = await resolveSuperAdminSessionRequest(env, requestContext);
+          if (!activeSession) {
+            res.statusCode = 302;
+            res.setHeader("Location", `${SUPER_ADMIN_LOGIN_ROUTE}?redirect=${encodeURIComponent(requestUrl)}`);
+            res.end();
+            return;
+          }
+        } catch (error) {
+          next(error);
+          return;
+        }
+      }
+
+      if (pathname === SUPER_ADMIN_LOGIN_ROUTE) {
+        try {
+          const activeSession = await resolveSuperAdminSessionRequest(env, requestContext);
+          if (activeSession) {
+            res.statusCode = 302;
+            res.setHeader(
+              "Location",
+              sanitizeSuperAdminRedirectPath(parsedUrl.searchParams.get("redirect")) ?? SUPER_ADMIN_DASHBOARD_ROUTE,
+            );
+            res.end();
+            return;
+          }
+        } catch (error) {
+          next(error);
+          return;
+        }
+      }
+
+      next();
+    });
+  },
+});
+
 const authPlugin = (env: Record<string, string>): Plugin => ({
   name: "libriofy-auth",
   configureServer(server) {
@@ -297,6 +496,8 @@ const authPlugin = (env: Record<string, string>): Plugin => ({
     const handleSendOtp = createHandler((body, context) => resolveSendOtpRequest(env, body, context));
     const handleVerifyOtp = createHandler((body, context) => resolveVerifyOtpRequest(env, body, context));
     const handleEmailLogin = createHandler((body, context) => resolveEmailLoginRequest(env, body, context));
+    const handleSuperAdminLogin = createHandler((body, context) => resolveSuperAdminLoginRequest(env, body, context));
+    const handleSuperAdminVerifyOtp = createHandler((body, context) => resolveSuperAdminVerifyOtpRequest(env, body, context));
     const handleRefresh = createHandler((body, context) => resolveRefreshSessionRequest(env, body, context));
     const handleLogout = createHandler((body, context) => resolveLogoutRequest(env, body, context));
     const handleLogoutAll = createHandler((body, context) => resolveLogoutAllRequest(env, body, context));
@@ -305,6 +506,8 @@ const authPlugin = (env: Record<string, string>): Plugin => ({
     server.middlewares.use("/auth/send-otp", handleSendOtp);
     server.middlewares.use("/auth/verify-otp", handleVerifyOtp);
     server.middlewares.use("/auth/login-email", handleEmailLogin);
+    server.middlewares.use("/auth/super-admin/login", handleSuperAdminLogin);
+    server.middlewares.use("/auth/super-admin/verify-otp", handleSuperAdminVerifyOtp);
     server.middlewares.use("/auth/refresh", handleRefresh);
     server.middlewares.use("/auth/logout", handleLogout);
     server.middlewares.use("/auth/logout-all", handleLogoutAll);
@@ -312,6 +515,8 @@ const authPlugin = (env: Record<string, string>): Plugin => ({
     server.middlewares.use("/api/auth/send-otp", handleSendOtp);
     server.middlewares.use("/api/auth/verify-otp", handleVerifyOtp);
     server.middlewares.use("/api/auth/login-email", handleEmailLogin);
+    server.middlewares.use("/api/auth/super-admin/login", handleSuperAdminLogin);
+    server.middlewares.use("/api/auth/super-admin/verify-otp", handleSuperAdminVerifyOtp);
     server.middlewares.use("/api/auth/refresh", handleRefresh);
     server.middlewares.use("/api/auth/logout", handleLogout);
     server.middlewares.use("/api/auth/logout-all", handleLogoutAll);
@@ -335,12 +540,15 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       react(),
+      releaseManifestPlugin(env),
       maintenanceSettingsPlugin(env),
       deviceSetupPlugin(env),
       deviceHeartbeatPlugin(env),
       authPlugin(env),
+      superAdminPageGuardPlugin(env),
       studentQrPlugin(env),
       scanAttendancePlugin(env),
+      partnerAiPlugin(env),
     ],
     build: {
       rollupOptions: {
@@ -389,6 +597,17 @@ export default defineConfig(({ mode }) => {
               id.includes("topojson-client")
             ) {
               return "vendor-utils";
+            }
+
+            if (
+              id.includes("html5-qrcode") ||
+              id.includes("jsqr") ||
+              id.includes("jspdf") ||
+              id.includes("jszip") ||
+              id.includes("html-to-image") ||
+              id.includes("browser-image-compression")
+            ) {
+              return "vendor-heavy";
             }
 
             return "vendor";

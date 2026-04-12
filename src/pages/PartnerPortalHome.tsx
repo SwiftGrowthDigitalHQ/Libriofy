@@ -37,10 +37,10 @@ const PartnerPortalHome = () => {
 
           <div className="flex flex-col sm:flex-row gap-3">
             <Button asChild className="sm:flex-1">
-              <Link to="/auth">Sign in</Link>
+              <Link to="/login">Sign in</Link>
             </Button>
             <Button asChild variant="outline" className="sm:flex-1">
-              <Link to="/partner">Become a partner</Link>
+              <Link to="/partner/register">Become a partner</Link>
             </Button>
           </div>
 

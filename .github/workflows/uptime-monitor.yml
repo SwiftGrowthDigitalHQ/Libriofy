@@ -1,0 +1,57 @@
+name: Uptime Monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  uptime_check:
+    name: Uptime Check
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run remote health checks
+        run: npm run ops:health -- --remote-only --strict --json
+        env:
+          HEALTHCHECK_PRODUCTION_FRONTEND_URL: ${{ secrets.HEALTHCHECK_PRODUCTION_FRONTEND_URL }}
+          HEALTHCHECK_PRODUCTION_API_URL: ${{ secrets.HEALTHCHECK_PRODUCTION_API_URL }}
+          HEALTHCHECK_STAGING_FRONTEND_URL: ${{ secrets.HEALTHCHECK_STAGING_FRONTEND_URL }}
+          HEALTHCHECK_STAGING_API_URL: ${{ secrets.HEALTHCHECK_STAGING_API_URL }}
+
+  notify_failure:
+    name: Notify Failure
+    if: ${{ always() && needs.uptime_check.result == 'failure' }}
+    needs:
+      - uptime_check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Send alert
+        run: >-
+          node ./scripts/send-webhook-alert.mjs
+          --title "Libriofy uptime monitor failed"
+          --severity "critical"
+          --source "github-actions"
+          --message "Scheduled uptime monitoring detected an unhealthy endpoint."
+        env:
+          OPS_ALERT_WEBHOOK_URL: ${{ secrets.OPS_ALERT_WEBHOOK_URL }}

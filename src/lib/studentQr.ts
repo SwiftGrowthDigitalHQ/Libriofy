@@ -16,6 +16,7 @@ export type StudentQrTokenClaims = {
 export type StudentQrVerificationFailureCode = "INVALID_QR" | "EXPIRED" | "WRONG_LIBRARY";
 
 export type StudentQrVerifiedPayload = {
+  code?: undefined;
   valid: true;
   source: "signed";
   rawValue: string;
@@ -24,24 +25,29 @@ export type StudentQrVerifiedPayload = {
   studentId: string;
   libraryId: string;
   exp: number;
+  message?: undefined;
   nonce: string;
   iat: number;
 };
 
 export type StudentQrLegacyPayload = {
+  code?: undefined;
   valid: true;
   source: "legacy";
   rawValue: string;
   qrCode: string;
   libraryId: string | null;
+  message?: undefined;
 };
 
 export type StudentQrStructuredPayload = {
+  code?: undefined;
   valid: true;
   source: "structured";
   rawValue: string;
   studentId: string;
   libraryId: string;
+  message?: undefined;
 };
 
 export type StudentQrInvalidPayload = {
@@ -298,7 +304,7 @@ const normalizeClaims = (claims: Partial<StudentQrSigningClaims> & { exp: number
     throw new Error("Student ID details are incomplete.");
   }
 
-  const iat = Number.isFinite(claims.iat) ? Math.floor(claims.iat) : nowEpochSeconds();
+  const iat = typeof claims.iat === "number" && Number.isFinite(claims.iat) ? Math.floor(claims.iat) : nowEpochSeconds();
   const nonce = trimText(claims.nonce) || base64UrlEncode(getRandomBytes(16));
 
   return {
@@ -572,16 +578,18 @@ export const parseStudentQrPayload = async (
         now: options.now,
       });
 
-      return verified.valid
-        ? {
-            ...verified,
-            rawValue: trimmed,
-          }
-        : {
-            ...verified,
-            rawValue: trimmed,
-            source: candidate.source,
-          };
+      if (verified.valid) {
+        return {
+          ...verified,
+          rawValue: trimmed,
+        } satisfies StudentQrVerifiedPayload;
+      }
+
+      return {
+        ...verified,
+        rawValue: trimmed,
+        source: candidate.source,
+      } satisfies StudentQrInvalidPayload;
     }
 
     if (allowLegacy) {

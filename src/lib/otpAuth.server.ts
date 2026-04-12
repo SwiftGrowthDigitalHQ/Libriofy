@@ -11,19 +11,26 @@ import {
   OTP_COOLDOWN_SECONDS,
   OTP_MAX_ATTEMPTS,
   OTP_TTL_SECONDS,
+  SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
+  SUPER_ADMIN_OTP_TTL_SECONDS,
   TRUSTED_DEVICE_TTL_SECONDS,
   buildOtpMessage,
   expandPhoneCandidates,
   isAdminFallbackRole,
   isValidOtpCode,
+  maskEmailAddress,
   normalizePhoneNumber,
   type AuthDeliveryChannel,
   type AuthLoginMethod,
+  type AuthSessionScope,
   type AuthUser,
   type ClientAuthSession,
   type LoginEmailResponse,
   type RefreshSessionResponse,
   type SendOtpResponse,
+  type SuperAdminLoginResponse,
+  type SuperAdminOtpChannel,
+  type SuperAdminVerifyOtpResponse,
   type VerifyOtpResponse,
 } from "./auth.shared";
 import { resolveRequestAuthUser } from "./requestAuth.server";
@@ -64,6 +71,13 @@ type UserRoleRow = {
   role: string;
 };
 
+type SuperAdminCredentialRow = {
+  email: string | null;
+  full_name: string | null;
+  phone_number: string | null;
+  user_id: string;
+};
+
 type OtpRecord = {
   attempts: number;
   deliveryChannel: AuthDeliveryChannel;
@@ -89,15 +103,38 @@ type DeliveryRecord = {
 };
 
 type TrustedDeviceRow = {
+  auth_level: number;
   delivery_channel: string | null;
   device_fingerprint_hash: string | null;
   device_label: string | null;
   expires_at: string;
   id: string;
+  idle_timeout_seconds: number | null;
   login_method: AuthLoginMethod;
   refresh_token_hash: string;
   revoked_at: string | null;
+  session_scope: AuthSessionScope;
   user_id: string;
+};
+
+type SuperAdminChallengeRecord = {
+  attempts: number;
+  challengeId: string;
+  deliveryChannel: SuperAdminOtpChannel;
+  email: string;
+  expiresAt: number;
+  fingerprintHash: string | null;
+  fullName: string | null;
+  otpHash: string;
+  phone: string | null;
+  userId: string;
+};
+
+type ActiveSessionContext = {
+  authLevel: number;
+  refreshToken: string;
+  sessionScope: AuthSessionScope;
+  user: AuthUser;
 };
 
 type FallbackJobData = {
@@ -111,8 +148,12 @@ const DELIVERY_RECORD_TTL_SECONDS = 20 * 60;
 const SEND_OTP_IP_LIMIT = 20;
 const VERIFY_OTP_IP_LIMIT = 40;
 const EMAIL_LOGIN_IP_LIMIT = 20;
+const SUPER_ADMIN_LOGIN_IP_LIMIT = 10;
+const SUPER_ADMIN_VERIFY_IP_LIMIT = 10;
+const SUPER_ADMIN_FAILED_ATTEMPT_LIMIT = 5;
 const RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
 const BLOCK_WINDOW_SECONDS = 10 * 60;
+const SUPER_ADMIN_BLOCK_WINDOW_SECONDS = 15 * 60;
 const FALLBACK_QUEUE_NAME = "libriofy-auth-whatsapp-fallback";
 
 const redisClients = new Map<string, IORedis>();
@@ -292,6 +333,10 @@ const phoneBlockKey = (phone: string) => `auth:otp:block:${phone}`;
 const deliveryKey = (requestId: string) => `auth:otp:delivery:${requestId}`;
 const deliverySidKey = (sid: string) => `auth:otp:delivery:sid:${sid}`;
 const rateKey = (scope: string, value: string) => `auth:rate:${scope}:${value}`;
+const superAdminChallengeKey = (challengeId: string) => `auth:super-admin:challenge:${challengeId}`;
+const superAdminChallengePointerKey = (email: string) => `auth:super-admin:challenge:email:${sha256(email)}`;
+const superAdminFailureKey = (scope: "email" | "ip", value: string) => `auth:super-admin:fail:${scope}:${value}`;
+const superAdminBlockKey = (scope: "email" | "ip", value: string) => `auth:super-admin:block:${scope}:${value}`;
 
 const getOtpRecord = async (redis: IORedis, phone: string) => {
   const rawRecord = await redis.get(otpKey(phone));
@@ -359,6 +404,254 @@ const enforceRateLimit = async (
   return Math.max(1, await redis.ttl(key));
 };
 
+const normalizeEmail = (value: unknown) => trimText(value).toLowerCase();
+
+const buildLoginDeviceLabel = (context: RequestContext) =>
+  [trimText(context.deviceLabel), trimText(context.userAgent)].filter(Boolean).join(" | ") || "unknown";
+
+const getSuperAdminChallenge = async (redis: IORedis, challengeId: string) => {
+  const rawRecord = await redis.get(superAdminChallengeKey(challengeId));
+  if (!rawRecord) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawRecord) as SuperAdminChallengeRecord;
+  } catch {
+    return null;
+  }
+};
+
+const setSuperAdminChallenge = async (redis: IORedis, record: SuperAdminChallengeRecord) => {
+  const ttlSeconds = Math.max(1, Math.ceil((record.expiresAt - Date.now()) / 1000));
+  await redis
+    .multi()
+    .set(superAdminChallengeKey(record.challengeId), JSON.stringify(record), "EX", ttlSeconds)
+    .set(superAdminChallengePointerKey(record.email), record.challengeId, "EX", ttlSeconds)
+    .exec();
+};
+
+const clearSuperAdminChallenge = async (redis: IORedis, record: Pick<SuperAdminChallengeRecord, "challengeId" | "email">) => {
+  const pointerKey = superAdminChallengePointerKey(record.email);
+  const currentPointer = await redis.get(pointerKey);
+  const multi = redis.multi();
+  multi.del(superAdminChallengeKey(record.challengeId));
+  if (currentPointer === record.challengeId) {
+    multi.del(pointerKey);
+  }
+  await multi.exec();
+};
+
+const getSuperAdminBlockedTtl = async (redis: IORedis, email: string, ip: string) => {
+  const [emailTtl, ipTtl] = await Promise.all([
+    email ? redis.ttl(superAdminBlockKey("email", email)) : Promise.resolve(-1),
+    ip ? redis.ttl(superAdminBlockKey("ip", ip)) : Promise.resolve(-1),
+  ]);
+
+  return Math.max(emailTtl, ipTtl, 0);
+};
+
+const incrementSuperAdminFailureCount = async (redis: IORedis, scope: "email" | "ip", value: string) => {
+  if (!value) {
+    return 0;
+  }
+
+  const key = superAdminFailureKey(scope, value);
+  const nextCount = await redis.incr(key);
+  if (nextCount === 1) {
+    await redis.expire(key, SUPER_ADMIN_BLOCK_WINDOW_SECONDS);
+  }
+
+  if (nextCount >= SUPER_ADMIN_FAILED_ATTEMPT_LIMIT) {
+    await redis.set(superAdminBlockKey(scope, value), "1", "EX", SUPER_ADMIN_BLOCK_WINDOW_SECONDS);
+  }
+
+  return nextCount;
+};
+
+const clearSuperAdminFailures = async (redis: IORedis, email: string, ip: string) => {
+  const keys = [
+    email ? superAdminFailureKey("email", email) : "",
+    email ? superAdminBlockKey("email", email) : "",
+    ip ? superAdminFailureKey("ip", ip) : "",
+    ip ? superAdminBlockKey("ip", ip) : "",
+  ].filter(Boolean);
+
+  if (keys.length) {
+    await redis.del(...keys);
+  }
+};
+
+const trackSuperAdminFailure = async (redis: IORedis, email: string, ip: string) => {
+  const [emailCount, ipCount] = await Promise.all([
+    incrementSuperAdminFailureCount(redis, "email", email),
+    incrementSuperAdminFailureCount(redis, "ip", ip),
+  ]);
+
+  const retryAfter =
+    Math.max(
+      emailCount >= SUPER_ADMIN_FAILED_ATTEMPT_LIMIT
+        ? await redis.ttl(superAdminBlockKey("email", email))
+        : 0,
+      ipCount >= SUPER_ADMIN_FAILED_ATTEMPT_LIMIT
+        ? await redis.ttl(superAdminBlockKey("ip", ip))
+        : 0,
+    ) || 0;
+
+  return {
+    blocked: emailCount >= SUPER_ADMIN_FAILED_ATTEMPT_LIMIT || ipCount >= SUPER_ADMIN_FAILED_ATTEMPT_LIMIT,
+    retryAfter: Math.max(retryAfter, 0),
+  };
+};
+
+const canSendSuperAdminEmailOtp = (env: EnvLike) =>
+  !!readEnv(env, "RESEND_API_KEY") && !!readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
+
+const canSendSuperAdminWhatsappOtp = (env: EnvLike) => {
+  const twilio = resolveTwilioConfig(env);
+  return !!twilio.accountSid && !!twilio.authToken && !!twilio.whatsappFrom;
+};
+
+const buildSuperAdminEmailSubject = () => "Your Libriofy Super Admin OTP";
+
+const buildSuperAdminEmailText = (otp: string, fullName: string | null) =>
+  [
+    fullName ? `Hi ${fullName},` : "Hi,",
+    "",
+    `Your Libriofy Super Admin OTP is ${otp}.`,
+    "It expires in 5 minutes.",
+    "Do not share this code with anyone.",
+  ].join("\n");
+
+const buildSuperAdminEmailHtml = (otp: string, fullName: string | null) => `
+  <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#18181b;">
+    <p style="margin:0 0 16px;">${fullName ? `Hi ${fullName},` : "Hi,"}</p>
+    <p style="margin:0 0 16px;">Use this OTP to finish your Libriofy Super Admin login:</p>
+    <div style="margin:0 0 20px;padding:18px 20px;border-radius:16px;background:#111827;color:#fff;font-size:32px;letter-spacing:8px;font-weight:700;text-align:center;">
+      ${otp}
+    </div>
+    <p style="margin:0 0 8px;">This code expires in 5 minutes.</p>
+    <p style="margin:0;color:#52525b;">Do not share this code with anyone.</p>
+  </div>
+`;
+
+const sendSuperAdminOtpEmail = async ({
+  email,
+  env,
+  fullName,
+  otp,
+}: {
+  email: string;
+  env: EnvLike;
+  fullName: string | null;
+  otp: string;
+}) => {
+  const apiKey = readEnv(env, "RESEND_API_KEY");
+  const from = readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
+  if (!apiKey || !from) {
+    throw new Error("Email OTP delivery is not configured.");
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      html: buildSuperAdminEmailHtml(otp, fullName),
+      subject: buildSuperAdminEmailSubject(),
+      text: buildSuperAdminEmailText(otp, fullName),
+      to: [email],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Unable to send the email OTP.");
+  }
+};
+
+const sendSuperAdminWhatsappOtp = async ({
+  env,
+  otp,
+  phone,
+}: {
+  env: EnvLike;
+  otp: string;
+  phone: string;
+}) => {
+  const twilio = resolveTwilioConfig(env);
+  const defaultCountryCode = resolveDefaultCountryCode(env);
+  if (!twilio.accountSid || !twilio.authToken || !twilio.whatsappFrom) {
+    throw new Error("WhatsApp OTP delivery is not configured.");
+  }
+
+  await sendViaTwilio({
+    accountSid: twilio.accountSid,
+    authToken: twilio.authToken,
+    body: `Libriofy Super Admin OTP: ${otp}. Valid for 5 minutes. Do not share.`,
+    channel: "whatsapp",
+    defaultCountryCode,
+    from: twilio.whatsappFrom,
+    statusCallback: resolveTwilioStatusCallbackUrl(env) || undefined,
+    to: phone,
+  });
+};
+
+const isSuperAdminEmailAllowedByEnv = (env: EnvLike, email: string) => {
+  const allowList = readEnv(env, "SUPER_ADMIN_ALLOWED_EMAILS", "SUPER_ADMIN_EMAIL_ALLOWLIST");
+  if (!allowList) {
+    return true;
+  }
+
+  const allowedEmails = new Set(
+    allowList
+      .split(",")
+      .map((value) => normalizeEmail(value))
+      .filter(Boolean),
+  );
+
+  return allowedEmails.has(email);
+};
+
+const logLoginAttempt = async ({
+  channel,
+  context,
+  email,
+  env,
+  reason,
+  status,
+  step,
+  userId,
+}: {
+  channel?: string | null;
+  context: RequestContext;
+  email?: string | null;
+  env: EnvLike;
+  reason?: string | null;
+  status: "success" | "failed";
+  step: "password" | "otp";
+  userId?: string | null;
+}) => {
+  try {
+    const serviceClient = createServiceClient(env);
+    await serviceClient.from("login_logs").insert({
+      channel: channel ?? null,
+      device: buildLoginDeviceLabel(context),
+      email: trimText(email) || null,
+      ip_address: trimText(context.ip) || null,
+      login_step: step,
+      reason: trimText(reason) || null,
+      status,
+      user_id: trimText(userId) || null,
+    });
+  } catch (error) {
+    console.warn("[auth] Failed to persist login log", error);
+  }
+};
+
 const loadAuthUserById = async (env: EnvLike, userId: string) => {
   const serviceClient = createServiceClient(env);
 
@@ -420,6 +713,31 @@ const findUserByPhone = async (env: EnvLike, phone: string) => {
   return loadAuthUserById(env, typedProfile.user_id);
 };
 
+const resolveSuperAdminCredentialUser = async (env: EnvLike, email: string, password: string) => {
+  const serviceClient = createServiceClient(env);
+  const { data, error } = await serviceClient.rpc("super_admin_verify_password", {
+    candidate_email: email,
+    candidate_password: password,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  const row = Array.isArray(data) ? (data[0] as SuperAdminCredentialRow | undefined) : undefined;
+  if (!row?.user_id) {
+    return null;
+  }
+
+  const user = await loadAuthUserById(env, row.user_id);
+  return {
+    ...user,
+    email: user.email ?? row.email ?? null,
+    fullName: user.fullName ?? row.full_name ?? null,
+    phone: user.phone ?? row.phone_number ?? null,
+  } satisfies AuthUser;
+};
+
 const getJwtSecret = (env: EnvLike) => {
   const secret = readEnv(env, "SUPABASE_JWT_SECRET", "JWT_SECRET", "APP_JWT_SECRET");
   if (!secret) {
@@ -430,25 +748,44 @@ const getJwtSecret = (env: EnvLike) => {
 };
 
 const mintAccessToken = ({
+  authLevel,
   env,
   loginMethod,
   sessionId,
+  sessionScope,
   user,
 }: {
+  authLevel: number;
   env: EnvLike;
   loginMethod: AuthLoginMethod;
   sessionId: string;
+  sessionScope: AuthSessionScope;
   user: AuthUser;
 }) => {
   const now = Math.floor(Date.now() / 1000);
+  const provider =
+    sessionScope === "super_admin"
+      ? "super_admin_mfa"
+      : loginMethod === "otp"
+        ? "phone_otp"
+        : "email_password";
+  const authMethods =
+    sessionScope === "super_admin"
+      ? [
+          { method: "password", timestamp: now },
+          { method: "otp", timestamp: now },
+        ]
+      : [{ method: loginMethod === "otp" ? "otp" : "password", timestamp: now }];
 
   return jwt.sign(
     {
-      aal: "aal1",
-      amr: [{ method: loginMethod === "otp" ? "otp" : "password", timestamp: now }],
+      aal: authLevel >= 2 ? "aal2" : "aal1",
+      amr: authMethods,
       app_metadata: {
-        provider: loginMethod === "otp" ? "phone_otp" : "email_password",
+        auth_level: authLevel,
+        provider,
         roles: user.roles,
+        session_scope: sessionScope,
       },
       aud: "authenticated",
       email: user.email ?? undefined,
@@ -471,59 +808,79 @@ const mintAccessToken = ({
 
 const createClientSession = ({
   accessToken,
+  authLevel,
   loginMethod,
+  idleTimeoutSeconds,
   provider,
+  sessionScope,
   trustedDevice,
   user,
 }: {
   accessToken: string;
+  authLevel: number;
   loginMethod: AuthLoginMethod;
+  idleTimeoutSeconds: number | null;
   provider: ClientAuthSession["provider"];
+  sessionScope: AuthSessionScope;
   trustedDevice: boolean;
   user: AuthUser;
 }): ClientAuthSession => ({
   accessToken,
+  authLevel,
   expiresAt: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS,
+  idleTimeoutSeconds,
   loginMethod,
   provider,
+  sessionScope,
   trustedDevice,
   user,
 });
 
 const insertTrustedDeviceSession = async ({
+  authLevel,
   deliveryChannel,
   deviceFingerprint,
   deviceLabel,
   env,
+  idleTimeoutSeconds,
   ip,
   loginMethod,
+  sessionScope,
+  sessionTtlSeconds,
   user,
   userAgent,
 }: {
-  deliveryChannel?: AuthDeliveryChannel;
+  authLevel: number;
+  deliveryChannel?: string;
   deviceFingerprint?: string;
   deviceLabel?: string;
   env: EnvLike;
+  idleTimeoutSeconds?: number | null;
   ip?: string;
   loginMethod: AuthLoginMethod;
+  sessionScope: AuthSessionScope;
+  sessionTtlSeconds: number;
   user: AuthUser;
   userAgent?: string;
 }) => {
   const serviceClient = createServiceClient(env);
   const refreshToken = createRefreshToken();
-  const expiresAt = new Date(Date.now() + TRUSTED_DEVICE_TTL_SECONDS * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + sessionTtlSeconds * 1000).toISOString();
 
   const { error } = await serviceClient.from("auth_trusted_devices").insert({
+    auth_level: authLevel,
     delivery_channel: deliveryChannel ?? null,
     device_fingerprint_hash: trimText(deviceFingerprint) ? sha256(trimText(deviceFingerprint)) : null,
     device_label: trimText(deviceLabel) || null,
     expires_at: expiresAt,
+    idle_timeout_seconds: idleTimeoutSeconds ?? null,
     last_ip: trimText(ip) || null,
     last_used_at: new Date().toISOString(),
     login_method: loginMethod,
     phone_number: user.phone,
     refresh_token_hash: sha256(refreshToken),
     revoked_at: null,
+    session_scope: sessionScope,
     user_agent: trimText(userAgent) || null,
     user_id: user.id,
   });
@@ -536,41 +893,58 @@ const insertTrustedDeviceSession = async ({
 };
 
 const createAuthenticatedResponse = async ({
+  authLevel = 1,
   deliveryChannel,
   env,
+  idleTimeoutSeconds = null,
   loginMethod,
+  sessionScope = "general",
+  sessionTtlSeconds = TRUSTED_DEVICE_TTL_SECONDS,
   user,
   ...context
 }: {
-  deliveryChannel?: AuthDeliveryChannel;
+  authLevel?: number;
+  deliveryChannel?: string;
   env: EnvLike;
+  idleTimeoutSeconds?: number | null;
   loginMethod: AuthLoginMethod;
+  sessionScope?: AuthSessionScope;
+  sessionTtlSeconds?: number;
   user: AuthUser;
 } & RequestContext) => {
   const refreshToken = await insertTrustedDeviceSession({
+    authLevel,
     deliveryChannel,
     deviceFingerprint: context.deviceFingerprint,
     deviceLabel: context.deviceLabel,
     env,
+    idleTimeoutSeconds,
     ip: context.ip,
     loginMethod,
+    sessionScope,
+    sessionTtlSeconds,
     user,
     userAgent: context.userAgent,
   });
 
   const accessToken = mintAccessToken({
+    authLevel,
     env,
     loginMethod,
     sessionId: createRequestId(),
+    sessionScope,
     user,
   });
 
   return {
-    cookies: [buildSessionCookie(env, refreshToken, TRUSTED_DEVICE_TTL_SECONDS)],
+    cookies: [buildSessionCookie(env, refreshToken, sessionTtlSeconds)],
     session: createClientSession({
       accessToken,
+      authLevel,
+      idleTimeoutSeconds,
       loginMethod,
       provider: "custom",
+      sessionScope,
       trustedDevice: true,
       user,
     }),
@@ -585,7 +959,7 @@ const getTrustedDeviceSession = async (env: EnvLike, refreshToken: string) => {
   const serviceClient = createServiceClient(env);
   const { data, error } = await serviceClient
     .from("auth_trusted_devices")
-    .select("id, user_id, device_fingerprint_hash, refresh_token_hash, expires_at, revoked_at, login_method, device_label, delivery_channel")
+    .select("id, user_id, device_fingerprint_hash, refresh_token_hash, expires_at, revoked_at, login_method, device_label, delivery_channel, auth_level, session_scope, idle_timeout_seconds")
     .eq("refresh_token_hash", sha256(refreshToken))
     .maybeSingle();
 
@@ -609,22 +983,32 @@ const rotateTrustedDeviceSession = async ({
   deviceFingerprint,
   deviceSession,
   env,
+  ip,
+  userAgent,
 }: {
   deviceFingerprint?: string;
   deviceSession: TrustedDeviceRow;
   env: EnvLike;
+  ip?: string;
+  userAgent?: string;
 }) => {
   const serviceClient = createServiceClient(env);
   const refreshToken = createRefreshToken();
+  const nextTtlSeconds =
+    deviceSession.session_scope === "super_admin"
+      ? deviceSession.idle_timeout_seconds ?? SUPER_ADMIN_IDLE_TIMEOUT_SECONDS
+      : TRUSTED_DEVICE_TTL_SECONDS;
   const { error } = await serviceClient
     .from("auth_trusted_devices")
     .update({
       device_fingerprint_hash: trimText(deviceFingerprint)
         ? sha256(trimText(deviceFingerprint))
         : deviceSession.device_fingerprint_hash,
-      expires_at: new Date(Date.now() + TRUSTED_DEVICE_TTL_SECONDS * 1000).toISOString(),
+      expires_at: new Date(Date.now() + nextTtlSeconds * 1000).toISOString(),
+      last_ip: trimText(ip) || null,
       last_used_at: new Date().toISOString(),
       refresh_token_hash: sha256(refreshToken),
+      user_agent: trimText(userAgent) || null,
     })
     .eq("id", deviceSession.id);
 
@@ -648,6 +1032,66 @@ const revokeRefreshToken = async (env: EnvLike, refreshToken: string, reason = "
       revocation_reason: reason,
     })
     .eq("refresh_token_hash", sha256(refreshToken));
+};
+
+const resolveActiveSessionFromRefreshToken = async (
+  env: EnvLike,
+  context: RequestContext = {},
+): Promise<ActiveSessionContext | null> => {
+  const refreshToken = readRefreshTokenFromCookies(context.cookieHeader);
+  if (!refreshToken) {
+    return null;
+  }
+
+  const trustedSession = await getTrustedDeviceSession(env, refreshToken);
+  if (!trustedSession) {
+    return null;
+  }
+
+  if (
+    trustedSession.device_fingerprint_hash &&
+    trimText(context.deviceFingerprint) &&
+    trustedSession.device_fingerprint_hash !== sha256(trimText(context.deviceFingerprint))
+  ) {
+    await revokeRefreshToken(env, refreshToken, "device_mismatch");
+    return null;
+  }
+
+  const user = await loadAuthUserById(env, trustedSession.user_id);
+  if (
+    trustedSession.session_scope === "super_admin" &&
+    (trustedSession.auth_level < 2 || !user.roles.includes("super_admin"))
+  ) {
+    await revokeRefreshToken(env, refreshToken, "super_admin_scope_invalid");
+    return null;
+  }
+
+  return {
+    authLevel: trustedSession.auth_level,
+    refreshToken,
+    sessionScope: trustedSession.session_scope,
+    user,
+  };
+};
+
+export const resolveSuperAdminSessionRequest = async (
+  env: EnvLike,
+  context: RequestContext = {},
+): Promise<ActiveSessionContext | null> => {
+  const activeSession = await resolveActiveSessionFromRefreshToken(env, context);
+  if (!activeSession) {
+    return null;
+  }
+
+  if (
+    activeSession.sessionScope !== "super_admin" ||
+    activeSession.authLevel < 2 ||
+    !activeSession.user.roles.includes("super_admin")
+  ) {
+    return null;
+  }
+
+  return activeSession;
 };
 
 const scheduleWhatsappFallback = async (env: EnvLike, payload: FallbackJobData) => {
@@ -868,6 +1312,10 @@ const sendOtpMessage = async ({
 };
 
 export const ensureOtpAuthWorkerStarted = (env: EnvLike) => {
+  if (readEnv(env, "VERCEL", "AWS_LAMBDA_FUNCTION_NAME")) {
+    return;
+  }
+
   const redisUrl = readEnv(env, "REDIS_URL");
   if (!redisUrl || startedWorkerKeys.has(redisUrl)) {
     return;
@@ -894,6 +1342,350 @@ export const ensureOtpAuthWorkerStarted = (env: EnvLike) => {
   });
 
   startedWorkerKeys.add(redisUrl);
+};
+
+export const resolveSuperAdminLoginRequest = async (
+  env: EnvLike,
+  requestBody: unknown,
+  context: RequestContext = {},
+): Promise<ServiceResponse<SuperAdminLoginResponse>> => {
+  const body =
+    requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
+      ? (requestBody as Record<string, unknown>)
+      : {};
+
+  const redis = getRedisConnection(env);
+  const ip = trimText(context.ip);
+  const ipRetryAfter = await enforceRateLimit(
+    redis,
+    "super-admin-login-ip",
+    ip,
+    SUPER_ADMIN_LOGIN_IP_LIMIT,
+    RATE_LIMIT_WINDOW_SECONDS,
+  );
+  if (ipRetryAfter) {
+    return buildError(429, "Too many super admin login attempts from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
+      retryAfter: ipRetryAfter,
+    });
+  }
+
+  const email = normalizeEmail(body.email);
+  const password = trimText(body.password);
+  if (!email || !password) {
+    return buildError(400, "Email and password are required.", "INVALID_REQUEST");
+  }
+
+  const blockedTtl = await getSuperAdminBlockedTtl(redis, email, ip);
+  if (blockedTtl > 0) {
+    await logLoginAttempt({
+      context,
+      email,
+      env,
+      reason: "blocked",
+      status: "failed",
+      step: "password",
+    });
+    return buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
+      retryAfter: blockedTtl,
+    });
+  }
+
+  if (!isSuperAdminEmailAllowedByEnv(env, email)) {
+    const failure = await trackSuperAdminFailure(redis, email, ip);
+    await logLoginAttempt({
+      context,
+      email,
+      env,
+      reason: "email_not_allowed",
+      status: "failed",
+      step: "password",
+    });
+
+    return failure.blocked
+      ? buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
+          retryAfter: failure.retryAfter || SUPER_ADMIN_BLOCK_WINDOW_SECONDS,
+        })
+      : buildError(401, "Invalid email or password.", "INVALID_CREDENTIALS");
+  }
+
+  const user = await resolveSuperAdminCredentialUser(env, email, password);
+  if (!user || !user.roles.includes("super_admin")) {
+    const failure = await trackSuperAdminFailure(redis, email, ip);
+    await logLoginAttempt({
+      context,
+      email,
+      env,
+      reason: "invalid_credentials",
+      status: "failed",
+      step: "password",
+    });
+
+    return failure.blocked
+      ? buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
+          retryAfter: failure.retryAfter || SUPER_ADMIN_BLOCK_WINDOW_SECONDS,
+        })
+      : buildError(401, "Invalid email or password.", "INVALID_CREDENTIALS");
+  }
+
+  const otp = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  const challengeId = createRequestId();
+  const otpHash = await bcrypt.hash(otp, OTP_HASH_ROUNDS);
+  const normalizedAccountEmail = normalizeEmail(user.email ?? email);
+  const existingChallengeId = await redis.get(superAdminChallengePointerKey(normalizedAccountEmail));
+  if (existingChallengeId) {
+    await redis.del(superAdminChallengeKey(existingChallengeId), superAdminChallengePointerKey(normalizedAccountEmail));
+  }
+
+  let channel: SuperAdminOtpChannel | null = null;
+  let maskedDestination = "";
+  const preferredEmail = normalizeEmail(user.email);
+
+  if (preferredEmail && canSendSuperAdminEmailOtp(env)) {
+    try {
+      await sendSuperAdminOtpEmail({
+        email: preferredEmail,
+        env,
+        fullName: user.fullName,
+        otp,
+      });
+      channel = "email";
+      maskedDestination = maskEmailAddress(preferredEmail);
+    } catch (error) {
+      console.warn("[auth] Super admin email OTP failed, checking WhatsApp fallback", error);
+    }
+  }
+
+  if (!channel && user.phone && canSendSuperAdminWhatsappOtp(env)) {
+    await sendSuperAdminWhatsappOtp({
+      env,
+      otp,
+      phone: user.phone,
+    });
+    channel = "whatsapp";
+    maskedDestination = user.phone.replace(/\d(?=\d{4})/g, "*");
+  }
+
+  if (!channel) {
+    return buildError(
+      503,
+      "No OTP delivery channel is configured for this super admin account.",
+      "OTP_DELIVERY_UNAVAILABLE",
+    );
+  }
+
+  await setSuperAdminChallenge(redis, {
+    attempts: 0,
+    challengeId,
+    deliveryChannel: channel,
+    email: normalizedAccountEmail,
+    expiresAt: Date.now() + SUPER_ADMIN_OTP_TTL_SECONDS * 1000,
+    fingerprintHash: trimText(context.deviceFingerprint) ? sha256(trimText(context.deviceFingerprint)) : null,
+    fullName: user.fullName,
+    otpHash,
+    phone: user.phone,
+    userId: user.id,
+  });
+
+  return {
+    statusCode: 200,
+    body: {
+      success: true,
+      challengeId,
+      channel,
+      expiresIn: SUPER_ADMIN_OTP_TTL_SECONDS,
+      maskedDestination,
+      message: `OTP sent via ${channel === "email" ? "email" : "WhatsApp"}.`,
+      retryAfter: OTP_COOLDOWN_SECONDS,
+    },
+  };
+};
+
+export const resolveSuperAdminVerifyOtpRequest = async (
+  env: EnvLike,
+  requestBody: unknown,
+  context: RequestContext = {},
+): Promise<ServiceResponse<SuperAdminVerifyOtpResponse>> => {
+  const body =
+    requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
+      ? (requestBody as Record<string, unknown>)
+      : {};
+
+  const redis = getRedisConnection(env);
+  const ip = trimText(context.ip);
+  const ipRetryAfter = await enforceRateLimit(
+    redis,
+    "super-admin-verify-ip",
+    ip,
+    SUPER_ADMIN_VERIFY_IP_LIMIT,
+    RATE_LIMIT_WINDOW_SECONDS,
+  );
+  if (ipRetryAfter) {
+    return buildError(429, "Too many OTP verification attempts from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
+      retryAfter: ipRetryAfter,
+    });
+  }
+
+  const challengeId = trimText(body.challengeId);
+  const otp = trimText(body.otp);
+  if (!challengeId || !isValidOtpCode(otp)) {
+    return buildError(400, "Enter the 6-digit OTP to continue.", "INVALID_REQUEST");
+  }
+
+  const challenge = await getSuperAdminChallenge(redis, challengeId);
+  if (!challenge) {
+    return buildError(410, "OTP expired. Restart the super admin login flow.", "OTP_EXPIRED");
+  }
+
+  const blockedTtl = await getSuperAdminBlockedTtl(redis, challenge.email, ip);
+  if (blockedTtl > 0) {
+    await logLoginAttempt({
+      channel: challenge.deliveryChannel,
+      context,
+      email: challenge.email,
+      env,
+      reason: "blocked",
+      status: "failed",
+      step: "otp",
+      userId: challenge.userId,
+    });
+    return buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
+      retryAfter: blockedTtl,
+    });
+  }
+
+  if (challenge.expiresAt <= Date.now()) {
+    await clearSuperAdminChallenge(redis, challenge);
+    await logLoginAttempt({
+      channel: challenge.deliveryChannel,
+      context,
+      email: challenge.email,
+      env,
+      reason: "otp_expired",
+      status: "failed",
+      step: "otp",
+      userId: challenge.userId,
+    });
+    return buildError(410, "OTP expired. Restart the super admin login flow.", "OTP_EXPIRED");
+  }
+
+  if (
+    challenge.fingerprintHash &&
+    trimText(context.deviceFingerprint) &&
+    challenge.fingerprintHash !== sha256(trimText(context.deviceFingerprint))
+  ) {
+    await clearSuperAdminChallenge(redis, challenge);
+    const failure = await trackSuperAdminFailure(redis, challenge.email, ip);
+    await logLoginAttempt({
+      channel: challenge.deliveryChannel,
+      context,
+      email: challenge.email,
+      env,
+      reason: "device_mismatch",
+      status: "failed",
+      step: "otp",
+      userId: challenge.userId,
+    });
+
+    return failure.blocked
+      ? buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
+          retryAfter: failure.retryAfter || SUPER_ADMIN_BLOCK_WINDOW_SECONDS,
+        })
+      : buildError(401, "Device verification failed. Restart login and try again.", "DEVICE_MISMATCH");
+  }
+
+  const matches = await bcrypt.compare(otp, challenge.otpHash);
+  if (!matches) {
+    const nextAttempts = challenge.attempts + 1;
+    const failure = await trackSuperAdminFailure(redis, challenge.email, ip);
+
+    if (nextAttempts >= SUPER_ADMIN_FAILED_ATTEMPT_LIMIT || failure.blocked) {
+      await clearSuperAdminChallenge(redis, challenge);
+      await logLoginAttempt({
+        channel: challenge.deliveryChannel,
+        context,
+        email: challenge.email,
+        env,
+        reason: "otp_attempts_exceeded",
+        status: "failed",
+        step: "otp",
+        userId: challenge.userId,
+      });
+      return buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
+        retryAfter: failure.retryAfter || SUPER_ADMIN_BLOCK_WINDOW_SECONDS,
+      });
+    }
+
+    await setSuperAdminChallenge(redis, {
+      ...challenge,
+      attempts: nextAttempts,
+    });
+    await logLoginAttempt({
+      channel: challenge.deliveryChannel,
+      context,
+      email: challenge.email,
+      env,
+      reason: "otp_invalid",
+      status: "failed",
+      step: "otp",
+      userId: challenge.userId,
+    });
+
+    return buildError(401, "OTP is incorrect or expired.", "OTP_INVALID", {
+      remainingAttempts: SUPER_ADMIN_FAILED_ATTEMPT_LIMIT - nextAttempts,
+    });
+  }
+
+  await clearSuperAdminChallenge(redis, challenge);
+  await clearSuperAdminFailures(redis, challenge.email, ip);
+
+  const user = await loadAuthUserById(env, challenge.userId);
+  if (!user.roles.includes("super_admin")) {
+    await logLoginAttempt({
+      channel: challenge.deliveryChannel,
+      context,
+      email: challenge.email,
+      env,
+      reason: "role_missing_after_challenge",
+      status: "failed",
+      step: "otp",
+      userId: challenge.userId,
+    });
+    return buildError(403, "Super admin access is no longer available for this account.", "ACCESS_DENIED");
+  }
+
+  const authenticated = await createAuthenticatedResponse({
+    ...context,
+    authLevel: 2,
+    deliveryChannel: challenge.deliveryChannel,
+    env,
+    idleTimeoutSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
+    loginMethod: "email",
+    sessionScope: "super_admin",
+    sessionTtlSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
+    user,
+  });
+
+  await logLoginAttempt({
+    channel: challenge.deliveryChannel,
+    context,
+    email: challenge.email,
+    env,
+    reason: "super_admin_login",
+    status: "success",
+    step: "otp",
+    userId: challenge.userId,
+  });
+
+  return {
+    statusCode: 200,
+    body: {
+      success: true,
+      channel: challenge.deliveryChannel,
+      message: "Super admin login successful.",
+      session: authenticated.session,
+    },
+    cookies: authenticated.cookies,
+  };
 };
 
 export const resolveSendOtpRequest = async (
@@ -1111,6 +1903,14 @@ export const resolveEmailLoginRequest = async (
   }
 
   const user = await loadAuthUserById(env, data.user.id);
+  if (user.roles.includes("super_admin")) {
+    return buildError(
+      403,
+      "Use the Super Admin login page to continue with OTP verification.",
+      "SUPER_ADMIN_MFA_REQUIRED",
+    );
+  }
+
   if (!user.roles.some(isAdminFallbackRole)) {
     return buildError(403, "Email login is restricted to admin accounts.", "EMAIL_LOGIN_FORBIDDEN");
   }
@@ -1173,18 +1973,52 @@ export const resolveRefreshSessionRequest = async (
     };
   }
 
+  if (trustedSession.session_scope === "super_admin" && trustedSession.auth_level < 2) {
+    await revokeRefreshToken(env, refreshToken, "super_admin_mfa_required");
+    return {
+      statusCode: 401,
+      body: {
+        success: false,
+        message: "Super admin verification has expired. Please sign in again.",
+        code: "SUPER_ADMIN_MFA_REQUIRED",
+      },
+      cookies: [buildClearedSessionCookie(env)],
+    };
+  }
+
   const user = await loadAuthUserById(env, trustedSession.user_id);
+  if (trustedSession.session_scope === "super_admin" && !user.roles.includes("super_admin")) {
+    await revokeRefreshToken(env, refreshToken, "super_admin_role_removed");
+    return {
+      statusCode: 401,
+      body: {
+        success: false,
+        message: "Super admin access is no longer available for this account.",
+        code: "ACCESS_REVOKED",
+      },
+      cookies: [buildClearedSessionCookie(env)],
+    };
+  }
+
   const nextRefreshToken = await rotateTrustedDeviceSession({
     deviceFingerprint: context.deviceFingerprint,
     deviceSession: trustedSession,
     env,
+    ip: context.ip,
+    userAgent: context.userAgent,
   });
   const accessToken = mintAccessToken({
+    authLevel: trustedSession.auth_level,
     env,
     loginMethod: trustedSession.login_method,
     sessionId: trustedSession.id,
+    sessionScope: trustedSession.session_scope,
     user,
   });
+  const sessionTtlSeconds =
+    trustedSession.session_scope === "super_admin"
+      ? trustedSession.idle_timeout_seconds ?? SUPER_ADMIN_IDLE_TIMEOUT_SECONDS
+      : TRUSTED_DEVICE_TTL_SECONDS;
 
   return {
     statusCode: 200,
@@ -1193,13 +2027,16 @@ export const resolveRefreshSessionRequest = async (
       message: "Session restored.",
       session: createClientSession({
         accessToken,
+        authLevel: trustedSession.auth_level,
+        idleTimeoutSeconds: trustedSession.idle_timeout_seconds,
         loginMethod: trustedSession.login_method,
         provider: "custom",
+        sessionScope: trustedSession.session_scope,
         trustedDevice: true,
         user,
       }),
     },
-    cookies: [buildSessionCookie(env, nextRefreshToken, TRUSTED_DEVICE_TTL_SECONDS)],
+    cookies: [buildSessionCookie(env, nextRefreshToken, sessionTtlSeconds)],
   };
 };
 

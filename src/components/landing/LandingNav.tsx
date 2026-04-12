@@ -3,9 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import InstallAppButton from "@/components/pwa/InstallAppButton";
+import { useLandingSectionNavigation } from "@/hooks/useLandingSectionNavigation";
 
 const LandingNav = () => {
   const [open, setOpen] = useState(false);
+  const navigateToSection = useLandingSectionNavigation(() => setOpen(false));
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-hero-gradient/80 backdrop-blur-xl border-b border-primary-foreground/5">
@@ -19,9 +21,27 @@ const LandingNav = () => {
           </Link>
 
           <div className="hidden md:flex items-center gap-6">
-            <a href="#features" onClick={(e) => { e.preventDefault(); document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' }); }} className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Features</a>
-            <a href="#pricing" onClick={(e) => { e.preventDefault(); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Pricing</a>
-            <a href="#demo" onClick={(e) => { e.preventDefault(); document.getElementById('demo')?.scrollIntoView({ behavior: 'smooth' }); }} className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors">Demo</a>
+            <button
+              type="button"
+              onClick={() => navigateToSection("features")}
+              className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors"
+            >
+              Features
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToSection("pricing")}
+              className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors"
+            >
+              Pricing
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToSection("demo")}
+              className="text-sm text-primary-foreground/60 hover:text-primary-foreground transition-colors"
+            >
+              Demo
+            </button>
             <InstallAppButton size="sm" variant="outline" className="border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground hover:text-sidebar">
               Install App
             </InstallAppButton>
@@ -39,13 +59,19 @@ const LandingNav = () => {
 
         {open && (
           <div className="md:hidden pb-4 space-y-3">
-            <a href="#features" onClick={(e) => { e.preventDefault(); setOpen(false); document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' }); }} className="block text-sm text-primary-foreground/60 py-2">Features</a>
-            <a href="#pricing" onClick={(e) => { e.preventDefault(); setOpen(false); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="block text-sm text-primary-foreground/60 py-2">Pricing</a>
-            <a href="#demo" onClick={(e) => { e.preventDefault(); setOpen(false); document.getElementById('demo')?.scrollIntoView({ behavior: 'smooth' }); }} className="block text-sm text-primary-foreground/60 py-2">Demo</a>
+            <button type="button" onClick={() => navigateToSection("features")} className="block py-2 text-sm text-primary-foreground/60">
+              Features
+            </button>
+            <button type="button" onClick={() => navigateToSection("pricing")} className="block py-2 text-sm text-primary-foreground/60">
+              Pricing
+            </button>
+            <button type="button" onClick={() => navigateToSection("demo")} className="block py-2 text-sm text-primary-foreground/60">
+              Demo
+            </button>
             <InstallAppButton variant="outline" className="w-full border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground hover:text-sidebar">
               Install App
             </InstallAppButton>
-            <Link to="/dashboard">
+            <Link to="/dashboard" onClick={() => setOpen(false)}>
               <Button size="sm" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">Dashboard</Button>
             </Link>
           </div>

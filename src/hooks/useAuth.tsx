@@ -9,18 +9,23 @@ import {
   logoutCurrentSession,
   refreshAuthSession,
   sendOtp as requestOtp,
+  startSuperAdminLogin as requestSuperAdminLogin,
   verifyOtp as requestOtpVerification,
+  verifySuperAdminOtp as requestSuperAdminOtpVerification,
 } from "@/lib/authApi";
 import {
   clearStoredAuthSession,
   getStoredAuthSession,
   setStoredAuthSession,
 } from "@/lib/authSession";
+import { readBrowserStorageItem, writeBrowserStorageItem } from "@/lib/browserStorage";
 import {
   isAuthSessionExpired,
   type AuthUser,
   type ClientAuthSession,
   type SendOtpResponse,
+  type SuperAdminLoginResponse,
+  type SuperAdminVerifyOtpResponse,
   type VerifyOtpResponse,
 } from "@/lib/auth.shared";
 import { normalizeBasePath } from "@/lib/maintenance";
@@ -53,12 +58,15 @@ interface AuthContextType {
       };
     },
   ) => Promise<void>;
+  startSuperAdminLogin: (email: string, password: string) => Promise<SuperAdminLoginResponse>;
   updatePassword: (password: string) => Promise<void>;
   user: AuthUser | null;
   verifyOtp: (phone: string, otp: string) => Promise<VerifyOtpResponse>;
+  verifySuperAdminOtp: (challengeId: string, otp: string) => Promise<SuperAdminVerifyOtpResponse>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AUTH_ACTIVITY_STORAGE_KEY = "libriofy.auth.last-activity";
 
 const toAuthUserFromSupabaseSession = (session: Session): AuthUser => ({
   id: session.user.id,
@@ -84,12 +92,46 @@ const buildAppRedirectUrl = (route: string) => {
   return `${origin}${resolvedBasePath}${normalizedRoute}`;
 };
 
+const readLastActivityTimestamp = () => {
+  const rawValue = readBrowserStorageItem("local", AUTH_ACTIVITY_STORAGE_KEY);
+  const parsed = rawValue ? Number(rawValue) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : Date.now();
+};
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [session, setSession] = useState<ClientAuthSession | null>(() => getStoredAuthSession());
-  const [user, setUser] = useState<AuthUser | null>(() => getStoredAuthSession()?.user ?? null);
+  const initialSession = getStoredAuthSession();
+  const [session, setSession] = useState<ClientAuthSession | null>(initialSession);
+  const [user, setUser] = useState<AuthUser | null>(initialSession?.user ?? null);
   const [loading, setLoading] = useState(true);
-  const sessionRef = useRef<ClientAuthSession | null>(getStoredAuthSession());
+  const sessionRef = useRef<ClientAuthSession | null>(initialSession);
   const refreshTimerRef = useRef<number | null>(null);
+  const idleTimerRef = useRef<number | null>(null);
+  const lastActivityRef = useRef(readLastActivityTimestamp());
+
+  const clearRefreshTimer = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+  }, []);
+
+  const clearIdleTimer = useCallback(() => {
+    if (idleTimerRef.current !== null) {
+      window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  const clearActivityTimestamp = useCallback(() => {
+    writeBrowserStorageItem("local", AUTH_ACTIVITY_STORAGE_KEY, null);
+    lastActivityRef.current = Date.now();
+  }, []);
+
+  const markSessionActivity = useCallback(() => {
+    const now = Date.now();
+    lastActivityRef.current = now;
+    writeBrowserStorageItem("local", AUTH_ACTIVITY_STORAGE_KEY, String(now));
+  }, []);
 
   const applySession = useCallback((nextSession: ClientAuthSession | null) => {
     sessionRef.current = nextSession;
@@ -97,7 +139,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(nextSession?.user ?? null);
     setStoredAuthSession(nextSession);
     void supabase.realtime.setAuth(nextSession?.accessToken ?? "");
-  }, []);
+
+    if (!nextSession) {
+      clearRefreshTimer();
+      clearIdleTimer();
+    }
+  }, [clearIdleTimer, clearRefreshTimer]);
 
   const applySupabaseSession = useCallback((nextSession: Session | null) => {
     if (!nextSession) {
@@ -109,9 +156,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     applySession({
       accessToken: nextSession.access_token,
+      authLevel: 1,
       expiresAt: nextSession.expires_at ?? Math.floor(Date.now() / 1000) + 3600,
+      idleTimeoutSeconds: null,
       loginMethod: "email",
       provider: "supabase",
+      sessionScope: "general",
       trustedDevice: false,
       user: toAuthUserFromSupabaseSession(nextSession),
     });
@@ -149,6 +199,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [applySession, applySupabaseSession]);
 
+  const expireForInactivity = useCallback(async () => {
+    const currentSession = sessionRef.current;
+    if (!currentSession?.idleTimeoutSeconds) {
+      return;
+    }
+
+    applySession(null);
+    clearActivityTimestamp();
+    await Promise.allSettled([
+      logoutCurrentSession(),
+      supabaseAuth.auth.signOut({ scope: "global" }),
+    ]);
+    clearStoredAuthSession();
+  }, [applySession, clearActivityTimestamp]);
+
   useEffect(() => {
     let mounted = true;
 
@@ -169,17 +234,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       mounted = false;
       data.subscription.unsubscribe();
-      if (refreshTimerRef.current !== null) {
-        window.clearTimeout(refreshTimerRef.current);
-      }
+      clearRefreshTimer();
+      clearIdleTimer();
     };
-  }, [applySupabaseSession, restoreSession]);
+  }, [applySupabaseSession, clearIdleTimer, clearRefreshTimer, restoreSession]);
 
   useEffect(() => {
-    if (refreshTimerRef.current !== null) {
-      window.clearTimeout(refreshTimerRef.current);
-      refreshTimerRef.current = null;
+    if (typeof window === "undefined") {
+      return;
     }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== AUTH_ACTIVITY_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+
+      const parsed = Number(event.newValue);
+      if (Number.isFinite(parsed)) {
+        lastActivityRef.current = parsed;
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    clearRefreshTimer();
 
     if (!session || session.provider !== "custom") {
       return;
@@ -187,6 +270,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const refreshDelay = Math.max(15_000, session.expiresAt * 1000 - Date.now() - 60_000);
     refreshTimerRef.current = window.setTimeout(() => {
+      if (
+        sessionRef.current?.idleTimeoutSeconds &&
+        Date.now() - lastActivityRef.current >= sessionRef.current.idleTimeoutSeconds * 1000
+      ) {
+        void expireForInactivity();
+        return;
+      }
+
       void refreshAuthSession()
         .then((response) => {
           applySession(extractSessionFromResponse(response));
@@ -199,17 +290,75 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }, refreshDelay);
 
     return () => {
-      if (refreshTimerRef.current !== null) {
-        window.clearTimeout(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
+      clearRefreshTimer();
     };
-  }, [applySession, session]);
+  }, [applySession, clearRefreshTimer, expireForInactivity, session]);
+
+  useEffect(() => {
+    clearIdleTimer();
+
+    if (!session?.idleTimeoutSeconds || typeof window === "undefined") {
+      return;
+    }
+
+    const scheduleIdleTimeout = (activityTimestamp: number) => {
+      const remainingMs = Math.max(
+        1_000,
+        session.idleTimeoutSeconds * 1000 - (Date.now() - activityTimestamp),
+      );
+
+      clearIdleTimer();
+      idleTimerRef.current = window.setTimeout(() => {
+        void expireForInactivity();
+      }, remainingMs);
+    };
+
+    const handleActivity = () => {
+      const now = Date.now();
+      lastActivityRef.current = now;
+      writeBrowserStorageItem("local", AUTH_ACTIVITY_STORAGE_KEY, String(now));
+      scheduleIdleTimeout(now);
+    };
+
+    const handleStorageActivity = (event: StorageEvent) => {
+      if (event.key !== AUTH_ACTIVITY_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+
+      const parsed = Number(event.newValue);
+      if (!Number.isFinite(parsed)) {
+        return;
+      }
+
+      lastActivityRef.current = parsed;
+      scheduleIdleTimeout(parsed);
+    };
+
+    scheduleIdleTimeout(lastActivityRef.current);
+
+    window.addEventListener("keydown", handleActivity, { passive: true });
+    window.addEventListener("mousedown", handleActivity, { passive: true });
+    window.addEventListener("mousemove", handleActivity, { passive: true });
+    window.addEventListener("touchstart", handleActivity, { passive: true });
+    window.addEventListener("focus", handleActivity, { passive: true });
+    window.addEventListener("storage", handleStorageActivity);
+
+    return () => {
+      clearIdleTimer();
+      window.removeEventListener("keydown", handleActivity);
+      window.removeEventListener("mousedown", handleActivity);
+      window.removeEventListener("mousemove", handleActivity);
+      window.removeEventListener("touchstart", handleActivity);
+      window.removeEventListener("focus", handleActivity);
+      window.removeEventListener("storage", handleStorageActivity);
+    };
+  }, [clearIdleTimer, expireForInactivity, session]);
 
   const signIn = async (email: string, password: string) => {
     const response = await loginWithEmail(email, password);
     await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
     applySession(extractSessionFromResponse(response));
+    markSessionActivity();
   };
 
   const requestPasswordReset = async (email: string) => {
@@ -228,6 +377,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const response = await requestOtpVerification(phone, otp);
     await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
     applySession(response.session);
+    markSessionActivity();
+    return response;
+  };
+
+  const startSuperAdminLogin = async (email: string, password: string) =>
+    requestSuperAdminLogin(email, password);
+
+  const verifySuperAdminOtp = async (challengeId: string, otp: string) => {
+    const response = await requestSuperAdminOtpVerification(challengeId, otp);
+    await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
+    applySession(response.session);
+    markSessionActivity();
     return response;
   };
 
@@ -284,21 +445,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       throw error;
     }
 
-    if (data.session) {
-      applySupabaseSession(data.session);
+    if (data.user) {
+      const { data: sessionData, error: sessionError } = await supabaseAuth.auth.getSession();
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      applySupabaseSession(sessionData.session);
       return;
     }
 
-    const { data: sessionData, error: sessionError } = await supabaseAuth.auth.getSession();
-    if (sessionError) {
-      throw sessionError;
-    }
-
-    applySupabaseSession(sessionData.session);
+    applySupabaseSession(null);
   };
 
   const signOut = async () => {
     applySession(null);
+    clearActivityTimestamp();
     await Promise.allSettled([
       logoutCurrentSession(),
       supabaseAuth.auth.signOut({ scope: "global" }),
@@ -309,6 +471,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logoutAllDevices = async () => {
     const accessToken = sessionRef.current?.accessToken ?? null;
     applySession(null);
+    clearActivityTimestamp();
     await Promise.allSettled([
       logoutAllSessions(accessToken),
       supabaseAuth.auth.signOut({ scope: "global" }),
@@ -330,9 +493,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         signIn,
         signOut,
         signUp,
+        startSuperAdminLogin,
         updatePassword,
         user,
         verifyOtp,
+        verifySuperAdminOtp,
       }}
     >
       {children}

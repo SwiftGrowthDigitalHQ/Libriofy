@@ -182,6 +182,69 @@ export type Database = {
         }
         Relationships: []
       }
+      auth_trusted_devices: {
+        Row: {
+          auth_level: number
+          created_at: string
+          delivery_channel: string | null
+          device_fingerprint_hash: string | null
+          device_label: string | null
+          expires_at: string
+          id: string
+          idle_timeout_seconds: number | null
+          last_ip: string | null
+          last_used_at: string
+          login_method: string
+          phone_number: string | null
+          refresh_token_hash: string
+          revoked_at: string | null
+          revocation_reason: string | null
+          session_scope: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth_level?: number
+          created_at?: string
+          delivery_channel?: string | null
+          device_fingerprint_hash?: string | null
+          device_label?: string | null
+          expires_at: string
+          id?: string
+          idle_timeout_seconds?: number | null
+          last_ip?: string | null
+          last_used_at?: string
+          login_method: string
+          phone_number?: string | null
+          refresh_token_hash: string
+          revoked_at?: string | null
+          revocation_reason?: string | null
+          session_scope?: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          auth_level?: number
+          created_at?: string
+          delivery_channel?: string | null
+          device_fingerprint_hash?: string | null
+          device_label?: string | null
+          expires_at?: string
+          id?: string
+          idle_timeout_seconds?: number | null
+          last_ip?: string | null
+          last_used_at?: string
+          login_method?: string
+          phone_number?: string | null
+          refresh_token_hash?: string
+          revoked_at?: string | null
+          revocation_reason?: string | null
+          session_scope?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       attendance_logs: {
         Row: {
           check_in: string
@@ -349,6 +412,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      contacts: {
+        Row: {
+          created_at: string
+          email: string
+          id: string
+          message: string
+          name: string
+          phone: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id?: string
+          message: string
+          name: string
+          phone: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: string
+          message?: string
+          name?: string
+          phone?: string
+        }
+        Relationships: []
       }
       coupon_redemptions: {
         Row: {
@@ -539,51 +629,235 @@ export type Database = {
           },
         ]
       }
+      id_card_delivery_jobs: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          id: string
+          last_delivery_channel: string | null
+          last_error: string | null
+          last_file_bucket: string | null
+          last_file_path: string | null
+          last_provider_message_id: string | null
+          last_provider_name: string | null
+          library_id: string
+          max_attempts: number
+          next_retry_at: string
+          processing_started_at: string | null
+          queued_at: string
+          requested_format: string
+          sent_at: string | null
+          source: string
+          status: string
+          student_id: string
+          triggered_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          created_at?: string
+          id?: string
+          last_delivery_channel?: string | null
+          last_error?: string | null
+          last_file_bucket?: string | null
+          last_file_path?: string | null
+          last_provider_message_id?: string | null
+          last_provider_name?: string | null
+          library_id: string
+          max_attempts?: number
+          next_retry_at?: string
+          processing_started_at?: string | null
+          queued_at?: string
+          requested_format?: string
+          sent_at?: string | null
+          source?: string
+          status?: string
+          student_id: string
+          triggered_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          id?: string
+          last_delivery_channel?: string | null
+          last_error?: string | null
+          last_file_bucket?: string | null
+          last_file_path?: string | null
+          last_provider_message_id?: string | null
+          last_provider_name?: string | null
+          library_id?: string
+          max_attempts?: number
+          next_retry_at?: string
+          processing_started_at?: string | null
+          queued_at?: string
+          requested_format?: string
+          sent_at?: string | null
+          source?: string
+          status?: string
+          student_id?: string
+          triggered_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "id_card_delivery_jobs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "id_card_delivery_jobs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: true
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      id_card_delivery_logs: {
+        Row: {
+          attempt_number: number
+          created_at: string
+          delivery_channel: string | null
+          error_message: string | null
+          file_bucket: string | null
+          file_path: string | null
+          id: string
+          job_id: string
+          library_id: string
+          metadata: Json
+          provider_message_id: string | null
+          provider_name: string | null
+          sent_at: string | null
+          status: string
+          student_id: string
+        }
+        Insert: {
+          attempt_number: number
+          created_at?: string
+          delivery_channel?: string | null
+          error_message?: string | null
+          file_bucket?: string | null
+          file_path?: string | null
+          id?: string
+          job_id: string
+          library_id: string
+          metadata?: Json
+          provider_message_id?: string | null
+          provider_name?: string | null
+          sent_at?: string | null
+          status: string
+          student_id: string
+        }
+        Update: {
+          attempt_number?: number
+          created_at?: string
+          delivery_channel?: string | null
+          error_message?: string | null
+          file_bucket?: string | null
+          file_path?: string | null
+          id?: string
+          job_id?: string
+          library_id?: string
+          metadata?: Json
+          provider_message_id?: string | null
+          provider_name?: string | null
+          sent_at?: string | null
+          status?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "id_card_delivery_logs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "id_card_delivery_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "id_card_delivery_logs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "id_card_delivery_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leads: {
         Row: {
+          auto_whatsapp_sent: boolean
           city: string | null
           converted_at: string | null
           created_at: string
+          demo_scheduled_at: string | null
+          expected_value: number | null
           id: string
           library_id: string | null
           library_name: string
+          last_contacted_at: string | null
           notes: string | null
+          next_followup_at: string | null
           owner_name: string
           partner_id: string
           phone: string
           seats: number | null
+          source: string | null
           status: Database["public"]["Enums"]["lead_status"]
           updated_at: string
+          whatsapp_opt_in: boolean
         }
         Insert: {
+          auto_whatsapp_sent?: boolean
           city?: string | null
           converted_at?: string | null
           created_at?: string
+          demo_scheduled_at?: string | null
+          expected_value?: number | null
           id?: string
           library_id?: string | null
           library_name: string
+          last_contacted_at?: string | null
           notes?: string | null
+          next_followup_at?: string | null
           owner_name: string
           partner_id: string
           phone: string
           seats?: number | null
+          source?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           updated_at?: string
+          whatsapp_opt_in?: boolean
         }
         Update: {
+          auto_whatsapp_sent?: boolean
           city?: string | null
           converted_at?: string | null
           created_at?: string
+          demo_scheduled_at?: string | null
+          expected_value?: number | null
           id?: string
           library_id?: string | null
           library_name?: string
+          last_contacted_at?: string | null
           notes?: string | null
+          next_followup_at?: string | null
           owner_name?: string
           partner_id?: string
           phone?: string
           seats?: number | null
+          source?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           updated_at?: string
+          whatsapp_opt_in?: boolean
         }
         Relationships: [
           {
@@ -863,6 +1137,169 @@ export type Database = {
             columns: ["library_id"]
             isOneToOne: false
             referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_lead_activity: {
+        Row: {
+          action_type: string
+          created_at: string
+          id: string
+          lead_id: string
+          metadata: Json
+          partner_id: string
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          id?: string
+          lead_id: string
+          metadata?: Json
+          partner_id: string
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          id?: string
+          lead_id?: string
+          metadata?: Json
+          partner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_lead_activity_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_lead_activity_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_lead_notes: {
+        Row: {
+          created_at: string
+          id: string
+          lead_id: string
+          note: string
+          partner_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          lead_id: string
+          note: string
+          partner_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          lead_id?: string
+          note?: string
+          partner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_lead_notes_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_lead_notes_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_notifications: {
+        Row: {
+          created_at: string
+          id: string
+          message: string | null
+          metadata: Json
+          partner_id: string
+          read: boolean
+          scheduled_at: string | null
+          title: string
+          type: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          message?: string | null
+          metadata?: Json
+          partner_id: string
+          read?: boolean
+          scheduled_at?: string | null
+          title: string
+          type: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          message?: string | null
+          metadata?: Json
+          partner_id?: string
+          read?: boolean
+          scheduled_at?: string | null
+          title?: string
+          type?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_notifications_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_referral_clicks: {
+        Row: {
+          created_at: string
+          id: string
+          ip_address: string | null
+          partner_id: string | null
+          referral_code: string
+          user_agent: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          partner_id?: string | null
+          referral_code: string
+          user_agent?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          partner_id?: string | null
+          referral_code?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_referral_clicks_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
             referencedColumns: ["id"]
           },
         ]
@@ -1234,6 +1671,45 @@ export type Database = {
           status?: string | null
           student_id?: string | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      login_logs: {
+        Row: {
+          channel: string | null
+          device: string | null
+          email: string | null
+          id: string
+          ip_address: string | null
+          login_step: string
+          login_time: string
+          reason: string | null
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          channel?: string | null
+          device?: string | null
+          email?: string | null
+          id?: string
+          ip_address?: string | null
+          login_step: string
+          login_time?: string
+          reason?: string | null
+          status: string
+          user_id?: string | null
+        }
+        Update: {
+          channel?: string | null
+          device?: string | null
+          email?: string | null
+          id?: string
+          ip_address?: string | null
+          login_step?: string
+          login_time?: string
+          reason?: string | null
+          status?: string
+          user_id?: string | null
         }
         Relationships: []
       }

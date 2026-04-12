@@ -30,10 +30,14 @@ import { STUDENT_GENDER_OPTIONS, type StudentGender } from "@/lib/studentGender"
 import { buildAadhaarDocumentPath, STUDENT_DOCUMENTS_BUCKET } from "@/lib/studentDocuments";
 
 interface LibraryPublicPageProps {
-  domainLibrary?: PublicLibraryRow | null;
+  domainLibrary?: ExtendedPublicLibraryRow | null;
 }
 
 type PublicLibraryRow = Database["public"]["Functions"]["get_library_public"]["Returns"][number];
+type ExtendedPublicLibraryRow = PublicLibraryRow & {
+  logo_url?: string | null;
+  opening_hours?: string | null;
+};
 type GalleryImageRow = {
   caption: string | null;
   id: string;
@@ -132,11 +136,11 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
 
   const { data: library, isLoading: libLoading } = useQuery({
     queryKey: ["public-library", domainLibrary?.id || slug],
-    queryFn: async () => {
+    queryFn: async (): Promise<ExtendedPublicLibraryRow | null> => {
       if (domainLibrary) return domainLibrary;
       const { data, error } = await supabase.rpc("get_library_public", { p_identifier: slug! });
       if (error) throw error;
-      const publicLibraries = (data ?? []) as PublicLibraryRow[];
+      const publicLibraries = (data ?? []) as ExtendedPublicLibraryRow[];
       if (publicLibraries.length === 0) return null;
       return publicLibraries[0];
     },
@@ -228,11 +232,13 @@ const LibraryPublicPage = ({ domainLibrary }: LibraryPublicPageProps = {}) => {
   }, {} as Record<string, { availableSeats: number; occupiedSeats: number; totalSeats: number }>);
 
   // Demo fallback
-  const demoLibrary = {
+  const demoLibrary: ExtendedPublicLibraryRow = {
     id: "demo",
     name: "City Study Hub",
     address: "Koramangala, 5th Block",
     city: "Bangalore",
+    logo_url: null,
+    opening_hours: null,
     total_seats: 40,
     phone: "+91 97097 83056",
     whatsapp_number: "919709783056",

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { getReferralLink } from "@/lib/partnerLinks";
 
 const PartnerRegistrationPage = () => {
   const { toast } = useToast();
@@ -128,7 +129,7 @@ const PartnerRegistrationPage = () => {
               <p className="text-sm text-muted-foreground">Your Partner ID</p>
               <p className="mt-1 text-xl font-semibold tracking-wide">{partnerCode}</p>
               <p className="mt-2 text-xs text-muted-foreground">
-                Referral link: <span className="font-mono">/signup?ref={partnerCode}</span>
+                Referral link: <span className="font-mono">{getReferralLink(partnerCode)}</span>
               </p>
             </div>
           ) : null}
@@ -220,7 +221,7 @@ const PartnerRegistrationPage = () => {
               </Button>
               <p className="text-sm text-muted-foreground">
                 Already registered?{" "}
-                <Link to="/auth" className="text-primary hover:underline">
+                <Link to="/login" className="text-primary hover:underline">
                   Sign in
                 </Link>
               </p>

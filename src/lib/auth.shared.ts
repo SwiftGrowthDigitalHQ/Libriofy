@@ -3,6 +3,8 @@ export const OTP_TTL_SECONDS = 2 * 60;
 export const OTP_COOLDOWN_SECONDS = 30;
 export const OTP_MAX_ATTEMPTS = 3;
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+export const SUPER_ADMIN_OTP_TTL_SECONDS = 5 * 60;
+export const SUPER_ADMIN_IDLE_TIMEOUT_SECONDS = 30 * 60;
 export const TRUSTED_DEVICE_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const AUTH_REFRESH_COOKIE_NAME = "libriofy_refresh";
 export const AUTH_DEVICE_HEADER = "x-device-fingerprint";
@@ -10,6 +12,8 @@ export const AUTH_DEVICE_HEADER = "x-device-fingerprint";
 export type AuthDeliveryChannel = "whatsapp" | "sms";
 export type AuthLoginMethod = "otp" | "email";
 export type AuthSessionProvider = "custom" | "supabase";
+export type AuthSessionScope = "general" | "super_admin";
+export type SuperAdminOtpChannel = "email" | "whatsapp";
 
 export type AuthUser = {
   id: string;
@@ -21,9 +25,12 @@ export type AuthUser = {
 
 export type ClientAuthSession = {
   accessToken: string;
+  authLevel: number;
   expiresAt: number;
+  idleTimeoutSeconds: number | null;
   loginMethod: AuthLoginMethod;
   provider: AuthSessionProvider;
+  sessionScope: AuthSessionScope;
   trustedDevice: boolean;
   user: AuthUser;
 };
@@ -51,6 +58,23 @@ export type LoginEmailResponse = {
 
 export type RefreshSessionResponse = {
   success: boolean;
+  message: string;
+  session: ClientAuthSession;
+};
+
+export type SuperAdminLoginResponse = {
+  success: boolean;
+  challengeId: string;
+  channel: SuperAdminOtpChannel;
+  expiresIn: number;
+  maskedDestination: string;
+  message: string;
+  retryAfter: number;
+};
+
+export type SuperAdminVerifyOtpResponse = {
+  success: boolean;
+  channel: SuperAdminOtpChannel;
   message: string;
   session: ClientAuthSession;
 };
@@ -171,3 +195,22 @@ export const isAuthSessionExpired = (session: ClientAuthSession | null | undefin
 
 export const isAdminFallbackRole = (role: string) =>
   role === "super_admin" || role === "library_owner" || role === "staff";
+
+export const maskEmailAddress = (value: string) => {
+  const trimmed = trimText(value).toLowerCase();
+  if (!trimmed || !trimmed.includes("@")) {
+    return trimmed;
+  }
+
+  const [localPart, domain] = trimmed.split("@");
+  if (!localPart || !domain) {
+    return trimmed;
+  }
+
+  const visibleLocal = localPart.slice(0, Math.min(2, localPart.length));
+  const maskedLocal = `${visibleLocal}${"*".repeat(Math.max(1, localPart.length - visibleLocal.length))}`;
+  return `${maskedLocal}@${domain}`;
+};
+
+export const isVerifiedSuperAdminSession = (session: ClientAuthSession | null | undefined) =>
+  !!session && session.sessionScope === "super_admin" && session.authLevel >= 2;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Check,
+  CheckCircle,
   Flashlight,
   FlashlightOff,
   LayoutDashboard,
@@ -10,10 +11,11 @@ import {
   RefreshCw,
   ScanLine,
   ShieldCheck,
-  Sparkles,
   Volume2,
+  Wifi,
   WifiOff,
   X,
+  XCircle,
 } from "lucide-react";
 import {
   Html5Qrcode,
@@ -36,12 +38,21 @@ import {
   AttendanceScanPayload,
   createAttendanceQueueEntry,
   countAttendanceQueueEntries,
+  enqueueAttendanceQueueEntry,
   readLastAttendanceSyncAt,
   submitAttendanceScan,
   syncQueuedAttendance,
 } from "@/lib/attendanceSync";
 import { sendDeviceHeartbeat } from "@/lib/deviceHeartbeat";
 import { pullDeviceCommands, recordDeviceCommandStatus } from "@/lib/deviceCommands";
+import {
+  readOfflineVerifiedStudent,
+  rememberOfflineVerifiedStudent,
+} from "@/lib/offlineVerifiedStudentCache";
+import {
+  getReadableCameraError,
+  normalizeCameraStartupError,
+} from "@/lib/cameraStartup";
 import {
   DEVICE_COMMAND_POLL_INTERVAL_MS,
   getDeviceCommandTypeLabel,
@@ -90,16 +101,107 @@ type CameraProfile = {
   label: string;
   constraints: ExtendedTrackConstraints;
 };
+type CameraSourceSelection = {
+  cameraSource: MediaTrackConstraints;
+  constraints: MediaTrackConstraints | null;
+  profileLabel: string;
+  selectedCameraId: string | null;
+  sourceType: "cameraId" | "constraints";
+};
+type CameraSourceOption = {
+  constraints: MediaTrackConstraints;
+  label: string;
+};
 type FrameAnalysis = {
   brightness: number;
   glareRatio: number;
   shadowRatio: number;
   edgeScore: number;
 };
+type DeviceTier = "entry" | "balanced" | "performance";
+type ScanDetectionSource = "barcode_detector" | "jsqr";
+type WatchdogRecoveryReason =
+  | "camera_stream_lost"
+  | "no_frames"
+  | "scan_verification_stalled";
+type RecentFrameSignal = {
+  brightness: number;
+  edgeScore: number;
+  lowLight: boolean;
+  glare: boolean;
+  partialDetection: boolean;
+  at: number;
+};
+type DetectionFrameMeta = {
+  rawValue: string;
+  detectedAtMs: number;
+  decodeMs: number;
+  detectionSource: ScanDetectionSource;
+  captureEdge: number;
+  intervalMs: number;
+  brightness: number;
+  edgeScore: number;
+  lowLight: boolean;
+  cameraProfileLabel: string;
+  deviceTier: DeviceTier;
+};
+type ScanLatencyMetric = {
+  status: KioskPhase | "duplicate" | "invalid";
+  detectionSource: ScanDetectionSource;
+  decodeMs: number;
+  verificationMs: number | null;
+  totalMs: number | null;
+  captureEdge: number;
+  intervalMs: number;
+  brightness: number;
+  edgeScore: number;
+  lowLight: boolean;
+  cameraProfileLabel: string;
+  deviceTier: DeviceTier;
+  recordedAt: string;
+};
+type ScanMetricsSnapshot = {
+  total: number;
+  success: number;
+  queued: number;
+  errors: number;
+  duplicates: number;
+  invalid: number;
+  avgDecodeMs: number;
+  avgVerifyMs: number | null;
+  avgTotalMs: number | null;
+  lastStatus: ScanLatencyMetric["status"] | "idle";
+  lastRecordedAt: string | null;
+  lastCaptureEdge: number | null;
+  lastIntervalMs: number | null;
+  lastCameraProfileLabel: string | null;
+  lastLowLight: boolean | null;
+};
+type ScanWorkerSupport = {
+  barcodeDetector: boolean;
+  offscreenCanvas: boolean;
+};
+type ScanWorkerReadyMessage = {
+  type: "ready";
+  support: ScanWorkerSupport;
+};
+type ScanWorkerResultMessage = {
+  type: "result";
+  requestId: number;
+  generation: number;
+  rawValue: string | null;
+  detector: ScanDetectionSource | null;
+  timingMs: number;
+  brightness: number;
+  edgeScore: number;
+  lowLight: boolean;
+};
+type ScanWorkerMessage = ScanWorkerReadyMessage | ScanWorkerResultMessage;
+type ScanDecoderWorker = Worker;
 
 const DEVICE_ID = import.meta.env.VITE_SCAN_DEVICE_ID ?? "LIB_GATE_01";
 const DEVICE_NAME = import.meta.env.VITE_SCAN_DEVICE_NAME ?? "Library ID Scanner";
-const SCAN_API_URL = import.meta.env.VITE_SCAN_API_URL ?? "/api/scan-attendance";
+const SCAN_API_URL = import.meta.env.VITE_SCAN_API_URL ?? "/api/attendance/scan";
 const DEVICE_HEARTBEAT_API_URL = import.meta.env.VITE_DEVICE_HEARTBEAT_API_URL ?? "/api/device-heartbeat";
 const SCAN_DEVICE_TOKEN = import.meta.env.VITE_SCAN_DEVICE_TOKEN ?? "";
 const ENABLE_DEVICE_COMMANDS = import.meta.env.VITE_ENABLE_DEVICE_COMMANDS === "true";
@@ -110,12 +212,32 @@ const SCANNER_REGION_ID = "libriofy-smart-entry-scanner";
 const KIOSK_FULLSCREEN_RETRY_MS = 1000;
 const KIOSK_CAMERA_RETRY_BASE_MS = 2500;
 const KIOSK_CAMERA_RETRY_MAX_MS = 15000;
-const KIOSK_STALL_RELOAD_MS = 60000;
+const CAMERA_START_TIMEOUT_MS = 5000;
+const CAMERA_START_DELAY_MS = 300;
+const CAMERA_CONTAINER_WAIT_TIMEOUT_MS = 5000;
 const DEVICE_HEARTBEAT_INTERVAL_MS = 30000;
-const RESULT_HOLD_MS = 2000;
-const DUPLICATE_SCAN_WINDOW_MS = 25000;
+const RESULT_HOLD_MS = 1200;
+const DUPLICATE_SCAN_WINDOW_MS = 3000;
 const SCAN_ASSIST_INTERVAL_MS = 850;
-const FALLBACK_SCAN_INTERVAL_MS = 120;
+const DETECTION_HIGH_FPS_INTERVAL_MS = 32;
+const DETECTION_BALANCED_INTERVAL_MS = 50;
+const DETECTION_SLOW_INTERVAL_MS = 78;
+const DETECTION_CAPTURE_EDGE = 360;
+const DETECTION_CAPTURE_EDGE_ENTRY = 320;
+const DETECTION_CAPTURE_EDGE_BALANCED = 360;
+const DETECTION_CAPTURE_EDGE_PERFORMANCE = 392;
+const DETECTION_CAPTURE_LOW_LIGHT_BOOST = 56;
+const DETECTION_CAPTURE_PARTIAL_BOOST = 28;
+const DETECTION_CAPTURE_SLOW_REDUCTION = 24;
+const DETECTION_INTERVAL_SETTLE_MS = 8;
+const DETECTION_INTERVAL_LOW_LIGHT_PENALTY_MS = 12;
+const DETECTION_INTERVAL_PARTIAL_PENALTY_MS = 8;
+const DETECTION_INTERVAL_OVERLOAD_PENALTY_MS = 12;
+const DETECTION_MISS_STREAK_SETTLE_THRESHOLD = 16;
+const LOW_LIGHT_STREAK_THRESHOLD = 2;
+const PARTIAL_DETECTION_STREAK_THRESHOLD = 2;
+const SCAN_METRICS_HISTORY_LIMIT = 30;
+const SCAN_METRICS_SUMMARY_LOG_EVERY = 5;
 const FALLBACK_SCAN_MAX_EDGE = 720;
 const SCAN_BOX_DEFAULT_EDGE = 280;
 const SCAN_BOX_MIN_EDGE = 250;
@@ -125,11 +247,36 @@ const GUIDANCE_ROTATION_MS = 1800;
 const DEFAULT_GUIDANCE_HINT = "Align QR inside frame";
 const GUIDANCE_ROTATION = ["Move closer", "Hold steady", "Adjust angle"] as const;
 const DEVICE_BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY", "DEVICE_BLOCKED"]);
+const WATCHDOG_POLL_INTERVAL_MS = 2000;
+const WATCHDOG_RECOVERY_COOLDOWN_MS = 15000;
+const WATCHDOG_SCAN_VERIFICATION_STALL_MS = 15000;
+const WATCHDOG_NO_FRAME_STALL_MS = 8000;
+const ADAPTIVE_PROFILE_SLOW_SCAN_MS = 72;
+const ADAPTIVE_PROFILE_SLOW_STREAK_LIMIT = 18;
+const ADAPTIVE_PROFILE_FAST_SCAN_MS = 40;
+const ADAPTIVE_PROFILE_FAST_STREAK_LIMIT = 42;
+const ADAPTIVE_PROFILE_CHANGE_COOLDOWN_MS = 30000;
+const ADAPTIVE_PROFILE_UPGRADE_COOLDOWN_MS = 120000;
+const SCAN_LOG_PREFIX = "[scan-kiosk]";
+const CAMERA_SOURCE_OPTIONS: CameraSourceOption[] = [
+  {
+    label: "Rear camera",
+    constraints: {
+      facingMode: { ideal: "environment" },
+    },
+  },
+  {
+    label: "Front camera",
+    constraints: {
+      facingMode: "user",
+    },
+  },
+];
 const CAMERA_PROFILES: CameraProfile[] = [
   {
     label: "Sharp rear camera",
     constraints: {
-      facingMode: "environment",
+      facingMode: { ideal: "environment" },
       width: { ideal: 1280 },
       height: { ideal: 720 },
       frameRate: { ideal: 15, max: 24 },
@@ -141,7 +288,7 @@ const CAMERA_PROFILES: CameraProfile[] = [
   {
     label: "Balanced rear camera",
     constraints: {
-      facingMode: "environment",
+      facingMode: { ideal: "environment" },
       width: { ideal: 960 },
       height: { ideal: 540 },
       frameRate: { ideal: 12, max: 20 },
@@ -153,7 +300,7 @@ const CAMERA_PROFILES: CameraProfile[] = [
   {
     label: "Performance rear camera",
     constraints: {
-      facingMode: "environment",
+      facingMode: { ideal: "environment" },
       width: { ideal: 640 },
       height: { ideal: 480 },
       frameRate: { ideal: 10, max: 15 },
@@ -163,13 +310,148 @@ const CAMERA_PROFILES: CameraProfile[] = [
     },
   },
 ];
+const REAR_CAMERA_LABEL_PATTERN = /\b(rear|back|environment|world)\b/i;
+const FRONT_CAMERA_LABEL_PATTERN = /\b(front|user|selfie|facetime)\b/i;
+const isRearCameraLabel = (label: string) =>
+  REAR_CAMERA_LABEL_PATTERN.test(label) && !FRONT_CAMERA_LABEL_PATTERN.test(label);
+
 const getDefaultCameraProfileIndex = () => {
   if (typeof navigator === "undefined") {
     return 0;
   }
 
+  const navigatorWithDeviceMemory = navigator as Navigator & { deviceMemory?: number };
   const cores = navigator.hardwareConcurrency ?? 6;
-  return cores <= 4 ? 1 : 0;
+  const memory = navigatorWithDeviceMemory.deviceMemory ?? 4;
+
+  if (cores <= 2 || memory <= 3) {
+    return 2;
+  }
+
+  return cores <= 4 || memory <= 4 ? 1 : 0;
+};
+
+const getDeviceTier = (): DeviceTier => {
+  if (typeof navigator === "undefined") {
+    return "balanced";
+  }
+
+  const navigatorWithHints = navigator as Navigator & {
+    deviceMemory?: number;
+    userAgentData?: {
+      mobile?: boolean;
+    };
+  };
+  const cores = navigator.hardwareConcurrency ?? 4;
+  const memory = navigatorWithHints.deviceMemory ?? 4;
+  const userAgent = navigator.userAgent.toLowerCase();
+  const mobile = navigatorWithHints.userAgentData?.mobile ?? /android|iphone|mobile/.test(userAgent);
+  const tablet = /ipad|tablet/.test(userAgent) || (/android/.test(userAgent) && !/mobile/.test(userAgent));
+
+  if (cores <= 4 || memory <= 4) {
+    return "entry";
+  }
+
+  if ((tablet && cores >= 6 && memory >= 6) || (!mobile && cores >= 8 && memory >= 8)) {
+    return "performance";
+  }
+
+  return "balanced";
+};
+
+const getCaptureEdgeForDeviceTier = (deviceTier: DeviceTier) => {
+  if (deviceTier === "performance") {
+    return DETECTION_CAPTURE_EDGE_PERFORMANCE;
+  }
+
+  if (deviceTier === "entry") {
+    return DETECTION_CAPTURE_EDGE_ENTRY;
+  }
+
+  return DETECTION_CAPTURE_EDGE_BALANCED;
+};
+
+const getDetectionIntervalsForDeviceTier = (deviceTier: DeviceTier) => {
+  if (deviceTier === "performance") {
+    return {
+      fast: 28,
+      balanced: 44,
+      slow: 68,
+    };
+  }
+
+  if (deviceTier === "entry") {
+    return {
+      fast: 40,
+      balanced: 62,
+      slow: 92,
+    };
+  }
+
+  return {
+    fast: DETECTION_HIGH_FPS_INTERVAL_MS,
+    balanced: DETECTION_BALANCED_INTERVAL_MS,
+    slow: DETECTION_SLOW_INTERVAL_MS,
+  };
+};
+
+const averageRounded = (values: number[]) => {
+  if (!values.length) {
+    return null;
+  }
+
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Math.round(total / values.length);
+};
+
+const createEmptyScanMetricsSnapshot = (): ScanMetricsSnapshot => ({
+  total: 0,
+  success: 0,
+  queued: 0,
+  errors: 0,
+  duplicates: 0,
+  invalid: 0,
+  avgDecodeMs: 0,
+  avgVerifyMs: null,
+  avgTotalMs: null,
+  lastStatus: "idle",
+  lastRecordedAt: null,
+  lastCaptureEdge: null,
+  lastIntervalMs: null,
+  lastCameraProfileLabel: null,
+  lastLowLight: null,
+});
+
+const createScanMetricsSnapshot = (history: ScanLatencyMetric[]): ScanMetricsSnapshot => {
+  if (!history.length) {
+    return createEmptyScanMetricsSnapshot();
+  }
+
+  const verifyValues = history
+    .map((entry) => entry.verificationMs)
+    .filter((value): value is number => typeof value === "number");
+  const totalValues = history
+    .map((entry) => entry.totalMs)
+    .filter((value): value is number => typeof value === "number");
+  const lastEntry = history[history.length - 1];
+
+  return {
+    total: history.length,
+    success: history.filter((entry) => entry.status === "success").length,
+    queued: history.filter((entry) => entry.status === "queued").length,
+    errors: history.filter((entry) => entry.status === "error").length,
+    duplicates: history.filter((entry) => entry.status === "duplicate").length,
+    invalid: history.filter((entry) => entry.status === "invalid").length,
+    avgDecodeMs: averageRounded(history.map((entry) => entry.decodeMs)) ?? 0,
+    avgVerifyMs: averageRounded(verifyValues),
+    avgTotalMs: averageRounded(totalValues),
+    lastStatus: lastEntry.status,
+    lastRecordedAt: lastEntry.recordedAt,
+    lastCaptureEdge: lastEntry.captureEdge,
+    lastIntervalMs: lastEntry.intervalMs,
+    lastCameraProfileLabel: lastEntry.cameraProfileLabel,
+    lastLowLight: lastEntry.lowLight,
+  };
 };
 
 const backgroundParticles = [
@@ -199,96 +481,108 @@ const confettiPieces = [
 
 const withBase = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\//, "")}`;
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
-
-const getReadableError = (error: unknown, fallback = "Unable to verify this ID right now.") => {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
+const summarizeQrForLog = (value: string) => {
+  const normalized = trimText(value);
+  if (!normalized) {
+    return "";
   }
 
-  return fallback;
+  if (normalized.length <= 48) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 20)}...${normalized.slice(-12)}`;
+};
+const logScanInfo = (event: string, detail?: Record<string, unknown>) => {
+  console.info(SCAN_LOG_PREFIX, event, detail ?? {});
+};
+const logScanWarn = (event: string, detail?: Record<string, unknown>) => {
+  console.warn(SCAN_LOG_PREFIX, event, detail ?? {});
 };
 
+const getReadableError = (error: unknown, fallback = "Unable to verify this ID right now.") =>
+  getReadableCameraError(error, fallback);
+
+const formatScanTimeLabel = (timestamp: string) =>
+  new Date(timestamp).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+const createCameraStartupError = (message: string) => {
+  const error = new Error(message);
+  error.name = "CameraStartupError";
+  return error;
+};
+const withCameraTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, errorMessage: string) => {
+  let timeoutId: number | null = null;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(createCameraStartupError(errorMessage));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+};
+const waitForElementById = async (id: string, timeoutMs: number) => {
+  const startAt = Date.now();
+
+  while (Date.now() - startAt < timeoutMs) {
+    const element = document.getElementById(id);
+    if (element) {
+      return element;
+    }
+
+    await sleep(50);
+  }
+
+  throw createCameraStartupError("SCANNER_CONTAINER_MISSING");
+};
 
 const getCameraErrorState = (error: unknown): CameraErrorState => {
-  if (!window.isSecureContext) {
-    return {
-      title: "Camera access required",
-      detail: "Open this kiosk over HTTPS to use the camera.",
-    };
-  }
-
-  if (!navigator.mediaDevices?.getUserMedia) {
-    return {
-      title: "Camera not available",
-      detail: "This browser does not support live camera access.",
-    };
-  }
-
-  if (error instanceof DOMException) {
-    if (
-      error.name === "NotAllowedError" ||
-      error.name === "PermissionDeniedError" ||
-      error.name === "SecurityError"
-    ) {
-      return {
-        title: "Camera access required",
-        detail: "Please allow camera permission.",
-      };
-    }
-
-    if (
-      error.name === "NotFoundError" ||
-      error.name === "DevicesNotFoundError" ||
-      error.name === "OverconstrainedError"
-    ) {
-      return {
-        title: "No camera detected",
-        detail: "No rear camera was found on this tablet.",
-      };
-    }
-
-    if (
-      error.name === "NotReadableError" ||
-      error.name === "TrackStartError" ||
-      error.name === "AbortError"
-    ) {
-      return {
-        title: "Camera not available",
-        detail: "Camera is already in use by another app or tab.",
-      };
-    }
-  }
-
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-
-    if (message.includes("permission")) {
-      return {
-        title: "Camera access required",
-        detail: "Please allow camera permission.",
-      };
-    }
-
-    if (message.includes("https") || message.includes("secure context")) {
-      return {
-        title: "Camera access required",
-        detail: "Open this kiosk over HTTPS to use the camera.",
-      };
-    }
-
-    if (message.includes("camera") && message.includes("use")) {
-      return {
-        title: "Camera not available",
-        detail: "Camera is already in use by another app or tab.",
-      };
-    }
-  }
+  const normalized = normalizeCameraStartupError(error, {
+    isSecureContext: window.isSecureContext,
+    supportsMediaDevices: Boolean(navigator.mediaDevices?.getUserMedia),
+  });
 
   return {
-    title: "Camera not available",
-    detail: "Unable to start the rear camera right now.",
+    title: normalized.title,
+    detail: normalized.detail,
   };
+};
+
+const stopMediaStream = (stream: MediaStream | null) => {
+  stream?.getTracks().forEach((track) => track.stop());
+};
+
+const readCameraPermissionState = async (): Promise<PermissionState | null> => {
+  const navigatorWithPermissions = navigator as Navigator & {
+    permissions?: {
+      query?: (descriptor: PermissionDescriptor) => Promise<{ state: PermissionState }>;
+    };
+  };
+
+  if (typeof navigatorWithPermissions.permissions?.query !== "function") {
+    return null;
+  }
+
+  try {
+    const result = await navigatorWithPermissions.permissions.query({
+      name: "camera" as PermissionName,
+    });
+    return result.state;
+  } catch {
+    return null;
+  }
 };
 
 const rabbitSpeechByMood: Record<RabbitMood, string> = {
@@ -534,7 +828,7 @@ const ResultOverlay = ({
                 <Check className="h-12 w-12" strokeWidth={3.2} />
               </motion.div>
               <div className="space-y-3">
-                <p className="text-sm font-semibold uppercase tracking-[0.26em] text-emerald-100/70">ID verified</p>
+                <p className="text-sm font-semibold uppercase tracking-[0.26em] text-emerald-100/70">Access granted</p>
                 <h1 className="text-4xl font-bold tracking-[-0.04em] text-white sm:text-5xl">
                   Welcome {payload.name}
                 </h1>
@@ -577,22 +871,34 @@ const ResultOverlay = ({
               </motion.div>
               <div className="space-y-3">
                 <p className="text-sm font-semibold uppercase tracking-[0.26em] text-cyan-100/70">
-                  Stored locally
+                  {payload.verifiedOffline ? "Offline verified" : "Stored locally"}
                 </p>
                 <h1 className="text-4xl font-bold tracking-[-0.04em] text-white sm:text-5xl">
-                  Saved offline
+                  {payload.name || payload.studentName
+                    ? payload.verifiedOffline
+                      ? `Access granted for ${payload.name || payload.studentName}`
+                      : "Saved offline"
+                    : payload.verifiedOffline
+                      ? "Access granted offline"
+                      : "Saved offline"}
                 </h1>
               </div>
               <div className="rounded-[26px] border border-white/10 bg-white/[0.05] px-6 py-5">
                 <p className="text-2xl font-semibold tracking-[-0.03em] text-white">
-                  Queueing for sync <span className="text-cyan-200/65">-</span> Entry stored
+                  {payload.seat
+                    ? `Seat ${payload.seat} `
+                    : payload.verifiedOffline
+                      ? "Offline verified "
+                      : "Queueing for sync "}
+                  <span className="text-cyan-200/65">-</span>{" "}
+                  {payload.verifiedOffline ? "Sync pending" : "Entry stored"}
                 </p>
                 <p className="mt-2 text-base text-cyan-50/82">Time {payload.time}</p>
                 <p className="mt-2 text-sm text-cyan-50/72">{payload.message}</p>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/12 px-4 py-2 text-sm text-cyan-50/90">
                 <Volume2 className="h-4 w-4" />
-                <span>Will sync automatically</span>
+                <span>{payload.verifiedOffline ? "Verified locally, syncing later" : "Will sync automatically"}</span>
               </div>
             </div>
           <div className="flex justify-center lg:justify-end">
@@ -637,6 +943,11 @@ const ResultOverlay = ({
 
 const ScanPage = () => {
   const navigate = useNavigate();
+  const deviceTier = useMemo(() => getDeviceTier(), []);
+  const scanDebugEnabled = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("scanDebug") === "1";
+  }, []);
   const [phase, setPhase] = useState<KioskPhase>("idle");
   const [scanPayload, setScanPayload] = useState<ScanPayload | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -657,18 +968,31 @@ const ScanPage = () => {
   const [scanBoxEdge, setScanBoxEdge] = useState(SCAN_BOX_DEFAULT_EDGE);
   const [scanFlashVisible, setScanFlashVisible] = useState(false);
   const [frameReactionActive, setFrameReactionActive] = useState(false);
+  const [scanMetricsSnapshot, setScanMetricsSnapshot] = useState<ScanMetricsSnapshot>(() =>
+    createEmptyScanMetricsSnapshot(),
+  );
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetPin, setResetPin] = useState("");
   const [resetError, setResetError] = useState<string | null>(null);
   const [adminPanelUnlocked, setAdminPanelUnlocked] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRunningRef = useRef(false);
   const scannerStartPromiseRef = useRef<Promise<void> | null>(null);
+  const isStartingRef = useRef(false);
+  const cameraStartFailureLockedRef = useRef(false);
+  const fullscreenGestureReadyRef = useRef(false);
   const scannerStartedRef = useRef(false);
   const scannerPausedRef = useRef(false);
+  const activeCameraModeLabelRef = useRef(CAMERA_SOURCE_OPTIONS[0].label);
   const cameraProfileIndexRef = useRef(getDefaultCameraProfileIndex());
+  const cameraInitializingSinceRef = useRef(0);
+  const cameraErrorSinceRef = useRef(0);
   const scanAssistTimerRef = useRef<number | null>(null);
   const previewAnalysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const scannerReadyAtRef = useRef(0);
+  const scanProcessingStartedAtRef = useRef(0);
+  const activeScanRunIdRef = useRef(0);
+  const lastWatchdogRecoveryAtRef = useRef(0);
   const resetTimerRef = useRef<number | null>(null);
   const resetHoldTimerRef = useRef<number | null>(null);
   const flashTimerRef = useRef<number | null>(null);
@@ -680,6 +1004,25 @@ const ScanPage = () => {
   const fallbackScanFrameRef = useRef<number | null>(null);
   const fallbackScanCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fallbackScanAtRef = useRef(0);
+  const scanWorkerRef = useRef<ScanDecoderWorker | null>(null);
+  const scanWorkerSupportRef = useRef<ScanWorkerSupport>({ barcodeDetector: false, offscreenCanvas: false });
+  const workerDecodeInFlightRef = useRef(false);
+  const workerDecodeRequestIdRef = useRef(0);
+  const workerGenerationRef = useRef(0);
+  const lastWorkerTimingMsRef = useRef(0);
+  const lastResolvedScanIntervalMsRef = useRef(DETECTION_BALANCED_INTERVAL_MS);
+  const lastCaptureEdgeRef = useRef(DETECTION_CAPTURE_EDGE);
+  const lastFrameSeenAtRef = useRef(0);
+  const lastVideoCurrentTimeRef = useRef(-1);
+  const slowScanStreakRef = useRef(0);
+  const fastScanStreakRef = useRef(0);
+  const decodeMissStreakRef = useRef(0);
+  const lowLightStreakRef = useRef(0);
+  const partialDetectionStreakRef = useRef(0);
+  const lastAdaptiveProfileChangeAtRef = useRef(0);
+  const recentFrameSignalRef = useRef<RecentFrameSignal | null>(null);
+  const lastDetectionMetaRef = useRef<DetectionFrameMeta | null>(null);
+  const scanMetricsHistoryRef = useRef<ScanLatencyMetric[]>([]);
   const processingRef = useRef(false);
   const mountedRef = useRef(true);
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
@@ -693,7 +1036,9 @@ const ScanPage = () => {
   const bindingRedirectInFlightRef = useRef(false);
   const cameraRetryCountRef = useRef(0);
   const torchBusyRef = useRef(false);
-  const handleScanResultRef = useRef<(rawValue: string) => Promise<void>>(async () => undefined);
+  const handleScanResultRef = useRef<
+    (rawValue: string, detectionSource: ScanDetectionSource) => Promise<void>
+  >(async () => undefined);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [torchBusy, setTorchBusy] = useState(false);
@@ -718,6 +1063,124 @@ const ScanPage = () => {
       }).format(now),
     [now],
   );
+
+  const publishScanMetric = useCallback(
+    (metric: ScanLatencyMetric) => {
+      const nextHistory = [...scanMetricsHistoryRef.current, metric].slice(-SCAN_METRICS_HISTORY_LIMIT);
+      scanMetricsHistoryRef.current = nextHistory;
+
+      const snapshot = createScanMetricsSnapshot(nextHistory);
+      setScanMetricsSnapshot(snapshot);
+      (window as Window & { __LIBRIOFY_SCAN_METRICS__?: ScanMetricsSnapshot }).__LIBRIOFY_SCAN_METRICS__ =
+        snapshot;
+
+      logScanInfo("scan-latency", {
+        status: metric.status,
+        source: metric.detectionSource,
+        decodeMs: metric.decodeMs,
+        verifyMs: metric.verificationMs,
+        totalMs: metric.totalMs,
+        captureEdge: metric.captureEdge,
+        intervalMs: metric.intervalMs,
+        brightness: Math.round(metric.brightness),
+        edgeScore: Number(metric.edgeScore.toFixed(1)),
+        lowLight: metric.lowLight,
+        cameraProfile: metric.cameraProfileLabel,
+        deviceTier: metric.deviceTier,
+      });
+
+      if (snapshot.total % SCAN_METRICS_SUMMARY_LOG_EVERY === 0) {
+        logScanInfo("scan-session-metrics", snapshot as unknown as Record<string, unknown>);
+      }
+    },
+    [],
+  );
+
+  const resolveDetectionMetaForRawValue = useCallback(
+    (rawValue: string, detectionSource: ScanDetectionSource): DetectionFrameMeta => {
+      const cachedMeta = lastDetectionMetaRef.current;
+      if (cachedMeta && cachedMeta.rawValue === rawValue) {
+        return cachedMeta;
+      }
+
+      return {
+        rawValue,
+        detectedAtMs: Date.now(),
+        decodeMs: lastWorkerTimingMsRef.current,
+        detectionSource,
+        captureEdge: lastCaptureEdgeRef.current,
+        intervalMs: lastResolvedScanIntervalMsRef.current,
+        brightness: recentFrameSignalRef.current?.brightness ?? 0,
+        edgeScore: recentFrameSignalRef.current?.edgeScore ?? 0,
+        lowLight: recentFrameSignalRef.current?.lowLight ?? false,
+        cameraProfileLabel: CAMERA_PROFILES[cameraProfileIndexRef.current]?.label ?? cameraProfileLabel,
+        deviceTier,
+      };
+    },
+    [cameraProfileLabel, deviceTier],
+  );
+
+  const resolveWorkerCaptureEdge = useCallback(
+    (cropEdge: number) => {
+      const recentSignal = recentFrameSignalRef.current;
+      const lowLightActive =
+        Boolean(recentSignal?.lowLight) || lowLightStreakRef.current >= LOW_LIGHT_STREAK_THRESHOLD;
+      const partialDetectionActive =
+        Boolean(recentSignal?.partialDetection) ||
+        partialDetectionStreakRef.current >= PARTIAL_DETECTION_STREAK_THRESHOLD;
+      let preferredEdge = getCaptureEdgeForDeviceTier(deviceTier);
+
+      if (lowLightActive) {
+        preferredEdge += DETECTION_CAPTURE_LOW_LIGHT_BOOST;
+      } else if (partialDetectionActive) {
+        preferredEdge += DETECTION_CAPTURE_PARTIAL_BOOST;
+      }
+
+      if (!lowLightActive && lastWorkerTimingMsRef.current > 88) {
+        preferredEdge -= DETECTION_CAPTURE_SLOW_REDUCTION;
+      }
+
+      const proportionalEdge = Math.round(
+        cropEdge *
+          (lowLightActive ? 0.72 : partialDetectionActive ? 0.66 : deviceTier === "entry" ? 0.54 : 0.58),
+      );
+      const resolvedEdge = Math.max(
+        260,
+        Math.min(Math.min(cropEdge, FALLBACK_SCAN_MAX_EDGE), Math.max(preferredEdge, proportionalEdge)),
+      );
+      lastCaptureEdgeRef.current = resolvedEdge;
+      return resolvedEdge;
+    },
+    [deviceTier],
+  );
+
+  const resolveTargetInterval = useCallback(() => {
+    const intervals = getDetectionIntervalsForDeviceTier(deviceTier);
+    const recentSignal = recentFrameSignalRef.current;
+    const workerTimingMs = lastWorkerTimingMsRef.current;
+    let intervalMs =
+      workerTimingMs >= 70 ? intervals.slow : workerTimingMs >= 45 ? intervals.balanced : intervals.fast;
+
+    if (recentSignal?.lowLight || lowLightStreakRef.current >= LOW_LIGHT_STREAK_THRESHOLD) {
+      intervalMs += DETECTION_INTERVAL_LOW_LIGHT_PENALTY_MS;
+    }
+
+    if (recentSignal?.partialDetection || partialDetectionStreakRef.current >= PARTIAL_DETECTION_STREAK_THRESHOLD) {
+      intervalMs += DETECTION_INTERVAL_PARTIAL_PENALTY_MS;
+    }
+
+    if (workerTimingMs >= 95) {
+      intervalMs += DETECTION_INTERVAL_OVERLOAD_PENALTY_MS;
+    }
+
+    if (decodeMissStreakRef.current >= DETECTION_MISS_STREAK_SETTLE_THRESHOLD) {
+      intervalMs += DETECTION_INTERVAL_SETTLE_MS;
+    }
+
+    const resolvedIntervalMs = Math.max(24, Math.min(110, intervalMs));
+    lastResolvedScanIntervalMsRef.current = resolvedIntervalMs;
+    return resolvedIntervalMs;
+  }, [deviceTier]);
 
   const clearResetTimer = useCallback(() => {
     if (resetTimerRef.current !== null) {
@@ -754,8 +1217,40 @@ const ScanPage = () => {
     }
   }, []);
 
+  const invalidateActiveScan = useCallback((reason: string) => {
+    activeScanRunIdRef.current += 1;
+    scanProcessingStartedAtRef.current = 0;
+    logScanInfo("scan-invalidated", { reason, activeScanRunId: activeScanRunIdRef.current });
+  }, []);
+
+  useEffect(() => {
+    if (cameraInitializing) {
+      if (cameraInitializingSinceRef.current === 0) {
+        cameraInitializingSinceRef.current = Date.now();
+      }
+      return;
+    }
+
+    cameraInitializingSinceRef.current = 0;
+  }, [cameraInitializing]);
+
+  useEffect(() => {
+    if (cameraError) {
+      if (cameraErrorSinceRef.current === 0) {
+        cameraErrorSinceRef.current = Date.now();
+      }
+      return;
+    }
+
+    cameraErrorSinceRef.current = 0;
+  }, [cameraError]);
+
   const requestKioskFullscreen = useCallback(async () => {
-    if (typeof document === "undefined" || document.fullscreenElement) {
+    if (
+      typeof document === "undefined" ||
+      document.fullscreenElement ||
+      !fullscreenGestureReadyRef.current
+    ) {
       return;
     }
 
@@ -812,16 +1307,6 @@ const ScanPage = () => {
     }
   }, []);
 
-  const getActiveCameraProfile = useCallback(
-    () => CAMERA_PROFILES[cameraProfileIndexRef.current] ?? CAMERA_PROFILES[0],
-    [],
-  );
-
-  const getActiveVideoConstraints = useCallback(
-    () => getActiveCameraProfile().constraints,
-    [getActiveCameraProfile],
-  );
-
   const resolveScanBoxEdge = useCallback((viewfinderWidth: number, viewfinderHeight: number) => {
     const shortestEdge = Math.max(0, Math.floor(Math.min(viewfinderWidth, viewfinderHeight)));
     const minEdge = Math.min(SCAN_BOX_MIN_EDGE, shortestEdge || SCAN_BOX_MIN_EDGE);
@@ -857,6 +1342,185 @@ const ScanPage = () => {
     [resolveScanBoxEdge],
   );
 
+  const getScannerMediaTrack = useCallback(() => {
+    const video = getScannerVideoElement();
+    const stream = video?.srcObject;
+    if (!(stream instanceof MediaStream)) {
+      return null;
+    }
+
+    return stream.getVideoTracks()[0] ?? null;
+  }, [getScannerVideoElement]);
+
+  const terminateScanWorker = useCallback(() => {
+    scanWorkerRef.current?.terminate();
+    scanWorkerRef.current = null;
+    workerDecodeInFlightRef.current = false;
+    workerDecodeRequestIdRef.current = 0;
+    workerGenerationRef.current += 1;
+    scanWorkerSupportRef.current = { barcodeDetector: false, offscreenCanvas: false };
+  }, []);
+
+  const ensureScanWorker = useCallback(() => {
+    if (scanWorkerRef.current) {
+      return scanWorkerRef.current;
+    }
+
+    const worker = new Worker(new URL("../workers/scanDecoder.worker.ts", import.meta.url), {
+      type: "module",
+    });
+
+    worker.onmessage = (event: MessageEvent<ScanWorkerMessage>) => {
+      const message = event.data;
+
+      if (message.type === "ready") {
+        scanWorkerSupportRef.current = message.support;
+        logScanInfo("scan-worker-ready", {
+          ...message.support,
+          deviceTier,
+        });
+        return;
+      }
+
+      if (
+        message.generation !== workerGenerationRef.current ||
+        message.requestId !== workerDecodeRequestIdRef.current
+      ) {
+        return;
+      }
+
+      workerDecodeInFlightRef.current = false;
+      lastWorkerTimingMsRef.current = message.timingMs;
+      const recentSignal = recentFrameSignalRef.current;
+      const resolvedBrightness = message.brightness > 0 ? message.brightness : recentSignal?.brightness ?? 0;
+      const resolvedEdgeScore = message.edgeScore > 0 ? message.edgeScore : recentSignal?.edgeScore ?? 0;
+      const lowLightActive = message.lowLight || Boolean(recentSignal?.lowLight);
+      const partialDetectionActive =
+        !lowLightActive && !(recentSignal?.glare ?? false) && resolvedEdgeScore >= 28;
+      recentFrameSignalRef.current = {
+        brightness: resolvedBrightness,
+        edgeScore: resolvedEdgeScore,
+        lowLight: lowLightActive,
+        glare: recentSignal?.glare ?? false,
+        partialDetection: partialDetectionActive,
+        at: Date.now(),
+      };
+
+      lowLightStreakRef.current = lowLightActive ? Math.min(lowLightStreakRef.current + 1, 12) : 0;
+      partialDetectionStreakRef.current = partialDetectionActive
+        ? Math.min(partialDetectionStreakRef.current + 1, 12)
+        : 0;
+
+      if (
+        message.timingMs > ADAPTIVE_PROFILE_SLOW_SCAN_MS &&
+        !lowLightActive &&
+        !partialDetectionActive &&
+        cameraProfileIndexRef.current < CAMERA_PROFILES.length - 1
+      ) {
+        slowScanStreakRef.current += 1;
+      } else {
+        slowScanStreakRef.current = 0;
+      }
+
+      if (
+        message.timingMs <= ADAPTIVE_PROFILE_FAST_SCAN_MS &&
+        !lowLightActive &&
+        !partialDetectionActive &&
+        cameraProfileIndexRef.current > getDefaultCameraProfileIndex()
+      ) {
+        fastScanStreakRef.current += 1;
+      } else {
+        fastScanStreakRef.current = 0;
+      }
+
+      if (!message.rawValue) {
+        decodeMissStreakRef.current += 1;
+        return;
+      }
+
+      decodeMissStreakRef.current = 0;
+      const detectionMeta: DetectionFrameMeta = {
+        rawValue: message.rawValue,
+        detectedAtMs: Date.now(),
+        decodeMs: message.timingMs,
+        detectionSource: message.detector ?? "jsqr",
+        captureEdge: lastCaptureEdgeRef.current,
+        intervalMs: lastResolvedScanIntervalMsRef.current,
+        brightness: resolvedBrightness,
+        edgeScore: resolvedEdgeScore,
+        lowLight: lowLightActive,
+        cameraProfileLabel: CAMERA_PROFILES[cameraProfileIndexRef.current]?.label ?? cameraProfileLabel,
+        deviceTier,
+      };
+      lastDetectionMetaRef.current = detectionMeta;
+
+      logScanInfo("qr-detected", {
+        source: detectionMeta.detectionSource,
+        length: message.rawValue.length,
+        preview: summarizeQrForLog(message.rawValue),
+        timingMs: message.timingMs,
+        captureEdge: detectionMeta.captureEdge,
+        intervalMs: detectionMeta.intervalMs,
+        brightness: Math.round(detectionMeta.brightness),
+        edgeScore: Number(detectionMeta.edgeScore.toFixed(1)),
+        lowLight: detectionMeta.lowLight,
+        cameraProfile: detectionMeta.cameraProfileLabel,
+        deviceTier: detectionMeta.deviceTier,
+      });
+      void handleScanResultRef.current(message.rawValue, detectionMeta.detectionSource).catch(() => undefined);
+    };
+
+    worker.onerror = (error) => {
+      workerDecodeInFlightRef.current = false;
+      logScanWarn("scan-worker-error", {
+        message: error.message || "Worker crashed",
+      });
+    };
+
+    worker.postMessage({ type: "init" });
+    scanWorkerRef.current = worker;
+    return worker;
+  }, [cameraProfileLabel, deviceTier]);
+
+  const captureFrameForWorker = useCallback(async () => {
+    const video = getScannerVideoElement();
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      return null;
+    }
+
+    const { cropEdge, sourceX, sourceY } = getScanCropRect(video);
+    const targetEdge = resolveWorkerCaptureEdge(cropEdge);
+
+    if (typeof createImageBitmap === "function") {
+      try {
+        return await createImageBitmap(video, sourceX, sourceY, cropEdge, cropEdge, {
+          resizeWidth: targetEdge,
+          resizeHeight: targetEdge,
+          resizeQuality: "medium",
+        });
+      } catch {
+        // Continue with the synchronous canvas fallback below.
+      }
+    }
+
+    const canvas = fallbackScanCanvasRef.current ?? document.createElement("canvas");
+    fallbackScanCanvasRef.current = canvas;
+
+    if (canvas.width !== targetEdge) canvas.width = targetEdge;
+    if (canvas.height !== targetEdge) canvas.height = targetEdge;
+
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return null;
+    }
+
+    context.imageSmoothingEnabled = false;
+    context.clearRect(0, 0, targetEdge, targetEdge);
+    context.drawImage(video, sourceX, sourceY, cropEdge, cropEdge, 0, 0, targetEdge, targetEdge);
+
+    return createImageBitmap(canvas);
+  }, [getScanCropRect, getScannerVideoElement, resolveWorkerCaptureEdge]);
+
   const readFallbackQrFromFrame = useCallback(() => {
     try {
       const video = getScannerVideoElement();
@@ -876,6 +1540,8 @@ const ScanPage = () => {
       if (!context) {
         return null;
       }
+
+      context.imageSmoothingEnabled = false;
 
       const decodeFrame = () => {
         const imageData = context.getImageData(0, 0, targetEdge, targetEdge);
@@ -898,6 +1564,15 @@ const ScanPage = () => {
       context.filter = "grayscale(1) contrast(1.22) brightness(1.05)";
       context.drawImage(video, sourceX, sourceY, cropEdge, cropEdge, 0, 0, targetEdge, targetEdge);
       context.filter = "none";
+      const contrastRead = decodeFrame();
+      if (contrastRead) {
+        return contrastRead;
+      }
+
+      context.clearRect(0, 0, targetEdge, targetEdge);
+      context.filter = "grayscale(1) contrast(1.42) brightness(1.12)";
+      context.drawImage(video, sourceX, sourceY, cropEdge, cropEdge, 0, 0, targetEdge, targetEdge);
+      context.filter = "none";
 
       return decodeFrame();
     } catch {
@@ -908,6 +1583,14 @@ const ScanPage = () => {
   const startFallbackScanLoop = useCallback(() => {
     clearFallbackScanFrame();
     fallbackScanAtRef.current = 0;
+    workerDecodeInFlightRef.current = false;
+    workerGenerationRef.current += 1;
+    decodeMissStreakRef.current = 0;
+    lastFrameSeenAtRef.current = Date.now();
+    lastVideoCurrentTimeRef.current = -1;
+
+    const decodeGeneration = workerGenerationRef.current;
+    const worker = ensureScanWorker();
 
     const loop = () => {
       if (
@@ -921,24 +1604,103 @@ const ScanPage = () => {
         return;
       }
 
+      const video = getScannerVideoElement();
+      if (video && video.currentTime !== lastVideoCurrentTimeRef.current) {
+        lastVideoCurrentTimeRef.current = video.currentTime;
+        lastFrameSeenAtRef.current = Date.now();
+      }
+
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-      if (now - fallbackScanAtRef.current >= FALLBACK_SCAN_INTERVAL_MS) {
+      const targetIntervalMs = resolveTargetInterval();
+      if (!workerDecodeInFlightRef.current && now - fallbackScanAtRef.current >= targetIntervalMs) {
         fallbackScanAtRef.current = now;
 
-        // html5-qrcode stays primary; jsQR keeps glossy or slightly blurred QR cards readable.
-        const rawValue = readFallbackQrFromFrame();
-        if (rawValue) {
-          fallbackScanFrameRef.current = null;
-          void handleScanResultRef.current(rawValue).catch(() => undefined);
-          return;
-        }
+        workerDecodeInFlightRef.current = true;
+        const requestId = workerDecodeRequestIdRef.current + 1;
+        workerDecodeRequestIdRef.current = requestId;
+
+        void captureFrameForWorker()
+          .then((bitmap) => {
+            if (!bitmap) {
+              workerDecodeInFlightRef.current = false;
+              return;
+            }
+
+            if (
+              scanWorkerSupportRef.current.offscreenCanvas ||
+              scanWorkerSupportRef.current.barcodeDetector
+            ) {
+              worker.postMessage(
+                {
+                  type: "decode",
+                  requestId,
+                  generation: decodeGeneration,
+                  bitmap,
+                },
+                [bitmap],
+              );
+              return;
+            }
+
+            bitmap.close();
+            const rawValue = readFallbackQrFromFrame();
+            workerDecodeInFlightRef.current = false;
+            if (!rawValue) {
+              decodeMissStreakRef.current += 1;
+              return;
+            }
+
+            decodeMissStreakRef.current = 0;
+            const detectionMeta: DetectionFrameMeta = {
+              rawValue,
+              detectedAtMs: Date.now(),
+              decodeMs: lastWorkerTimingMsRef.current,
+              detectionSource: "jsqr",
+              captureEdge: lastCaptureEdgeRef.current,
+              intervalMs: targetIntervalMs,
+              brightness: recentFrameSignalRef.current?.brightness ?? 0,
+              edgeScore: recentFrameSignalRef.current?.edgeScore ?? 0,
+              lowLight: recentFrameSignalRef.current?.lowLight ?? false,
+              cameraProfileLabel: CAMERA_PROFILES[cameraProfileIndexRef.current]?.label ?? cameraProfileLabel,
+              deviceTier,
+            };
+            lastDetectionMetaRef.current = detectionMeta;
+
+            logScanInfo("qr-detected", {
+              source: detectionMeta.detectionSource,
+              length: rawValue.length,
+              preview: summarizeQrForLog(rawValue),
+              mode: "main-thread-fallback",
+              captureEdge: detectionMeta.captureEdge,
+              intervalMs: detectionMeta.intervalMs,
+              cameraProfile: detectionMeta.cameraProfileLabel,
+              deviceTier: detectionMeta.deviceTier,
+            });
+            void handleScanResultRef.current(rawValue, "jsqr").catch(() => undefined);
+          })
+          .catch((error) => {
+            workerDecodeInFlightRef.current = false;
+            logScanWarn("scan-capture-failed", {
+              message: getReadableError(error, "Unable to capture a scan frame."),
+            });
+          });
       }
 
       fallbackScanFrameRef.current = window.requestAnimationFrame(loop);
     };
 
     fallbackScanFrameRef.current = window.requestAnimationFrame(loop);
-  }, [cameraError, clearFallbackScanFrame, readFallbackQrFromFrame]);
+  }, [
+    cameraError,
+    cameraProfileLabel,
+    captureFrameForWorker,
+    clearFallbackScanFrame,
+    deviceTier,
+    ensureScanWorker,
+    getScannerVideoElement,
+    readFallbackQrFromFrame,
+    resolveTargetInterval,
+  ]);
 
   const analyzePreviewFrame = useCallback((): FrameAnalysis | null => {
     try {
@@ -1139,14 +1901,13 @@ const ScanPage = () => {
         }
 
         await scanner.applyVideoConstraints({
-          ...getActiveVideoConstraints(),
           advanced: [supportedControls],
         } as MediaTrackConstraints);
       } catch {
         // Ignore post-start track tuning failures.
       }
     },
-    [getActiveVideoConstraints],
+    [],
   );
 
   const syncTorchState = useCallback((scanner: Html5Qrcode | null) => {
@@ -1263,14 +2024,37 @@ const ScanPage = () => {
     }
   }, []);
 
-  const stopScanner = useCallback(async () => {
+  const stopScanner = useCallback(async (reason = "unspecified") => {
     scannerStartPromiseRef.current = null;
+    scannerRunningRef.current = false;
+    isStartingRef.current = false;
     clearCameraRecoveryTimer();
     clearFallbackScanFrame();
     fallbackScanAtRef.current = 0;
+    workerDecodeInFlightRef.current = false;
+    workerGenerationRef.current += 1;
+    lastFrameSeenAtRef.current = 0;
+    lastVideoCurrentTimeRef.current = -1;
+    lastResolvedScanIntervalMsRef.current = DETECTION_BALANCED_INTERVAL_MS;
+    lastCaptureEdgeRef.current = getCaptureEdgeForDeviceTier(deviceTier);
     torchBusyRef.current = false;
+    scannerReadyAtRef.current = 0;
+    scanProcessingStartedAtRef.current = 0;
+    slowScanStreakRef.current = 0;
+    fastScanStreakRef.current = 0;
+    decodeMissStreakRef.current = 0;
+    lowLightStreakRef.current = 0;
+    partialDetectionStreakRef.current = 0;
+    recentFrameSignalRef.current = null;
+    lastDetectionMetaRef.current = null;
+    logScanInfo("scanner-stop", {
+      reason,
+      started: scannerStartedRef.current,
+      paused: scannerPausedRef.current,
+    });
 
     const scanner = scannerRef.current;
+    scannerRef.current = null;
     if (!scanner) {
       scannerStartedRef.current = false;
       scannerPausedRef.current = false;
@@ -1280,6 +2064,9 @@ const ScanPage = () => {
         setTorchEnabled(false);
         setTorchSupported(false);
       }
+
+      cameraInitializingSinceRef.current = 0;
+      cameraErrorSinceRef.current = 0;
       clearScannerRegion();
 
       if (mountedRef.current) {
@@ -1290,9 +2077,7 @@ const ScanPage = () => {
     }
 
     try {
-      if (scannerStartedRef.current) {
-        await scanner.stop();
-      }
+      await scanner.stop();
     } catch {
       // Ignore camera stop failures so the kiosk can recover.
     }
@@ -1314,12 +2099,35 @@ const ScanPage = () => {
       setTorchSupported(false);
     }
 
+    cameraInitializingSinceRef.current = 0;
+    cameraErrorSinceRef.current = 0;
+
     if (mountedRef.current) {
       setCameraReady(false);
     }
-  }, [clearCameraRecoveryTimer, clearFallbackScanFrame, clearScannerRegion]);
+  }, [clearCameraRecoveryTimer, clearFallbackScanFrame, clearScannerRegion, deviceTier]);
 
-  const chooseRearCameraSource = useCallback(async (): Promise<string | MediaTrackConstraints> => {
+  const buildCameraStartConstraints = useCallback(
+    (baseConstraints: MediaTrackConstraints, selectedCameraId: string | null): MediaTrackConstraints => {
+      const activeProfile = CAMERA_PROFILES[cameraProfileIndexRef.current] ?? CAMERA_PROFILES[0];
+      const { facingMode: _ignoredFacingMode, ...profileWithoutFacingMode } = activeProfile.constraints;
+
+      if (selectedCameraId) {
+        return {
+          ...profileWithoutFacingMode,
+          deviceId: { exact: selectedCameraId },
+        };
+      }
+
+      return {
+        ...activeProfile.constraints,
+        ...baseConstraints,
+      };
+    },
+    [],
+  );
+
+  const chooseRearCameraSource = useCallback(async (): Promise<CameraSourceSelection[]> => {
     if (!window.isSecureContext) {
       throw new Error("HTTPS_REQUIRED");
     }
@@ -1328,72 +2136,96 @@ const ScanPage = () => {
       throw new Error("MEDIA_DEVICES_UNSUPPORTED");
     }
 
+    const [rearCameraOption, frontCameraOption] = CAMERA_SOURCE_OPTIONS;
+    const activeProfile = CAMERA_PROFILES[cameraProfileIndexRef.current] ?? CAMERA_PROFILES[0];
+    const permissionState = await readCameraPermissionState();
     let warmupStream: MediaStream | null = null;
-    let selectedProfile = getActiveCameraProfile();
-    let lastError: unknown = null;
+    let videoInputs: MediaDeviceInfo[] = [];
+    let rearCameras: MediaDeviceInfo[] = [];
+
+    if (permissionState !== "granted") {
+      warmupStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: true,
+      });
+    }
 
     try {
-      for (let profileIndex = cameraProfileIndexRef.current; profileIndex < CAMERA_PROFILES.length; profileIndex += 1) {
-        const candidateProfile = CAMERA_PROFILES[profileIndex];
-
-        try {
-          warmupStream = await navigator.mediaDevices.getUserMedia({
-            video: candidateProfile.constraints,
-            audio: false,
-          });
-          cameraProfileIndexRef.current = profileIndex;
-          selectedProfile = candidateProfile;
-          setCameraProfileLabel(candidateProfile.label);
-          break;
-        } catch (error) {
-          lastError = error;
-
-          if (!(error instanceof DOMException) || error.name !== "OverconstrainedError") {
-            throw error;
-          }
-        }
-      }
-
-      if (!warmupStream) {
-        throw lastError ?? new Error("No supported camera profile was accepted.");
-      }
-
-      const activeTrack = warmupStream.getVideoTracks()[0];
-      const activeSettings = activeTrack?.getSettings();
-      const videoInputs =
-        typeof navigator.mediaDevices.enumerateDevices === "function"
-          ? (await navigator.mediaDevices.enumerateDevices()).filter(
-              (device) => device.kind === "videoinput",
-            )
-          : [];
-
-      const rearCamera = videoInputs.find((device) =>
-        /back|rear|environment|world|traseira|trasera|camera 0/i.test(device.label),
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      videoInputs = devices.filter(
+        (device): device is MediaDeviceInfo => device.kind === "videoinput" && Boolean(device.deviceId),
       );
-
-      if (rearCamera?.deviceId) {
-        return rearCamera.deviceId;
-      }
-
-      if (activeSettings?.deviceId) {
-        return activeSettings.deviceId;
-      }
-
-      if (videoInputs[0]?.deviceId) {
-        return videoInputs[0].deviceId;
-      }
-
-      return selectedProfile.constraints;
+      rearCameras = videoInputs.filter((device) => isRearCameraLabel(device.label.trim()));
+    } catch (error) {
+      logScanWarn("camera-enumeration-failed", {
+        message: getReadableError(error, "Unable to enumerate cameras."),
+        permissionState,
+      });
     } finally {
-      warmupStream?.getTracks().forEach((track) => track.stop());
-
-      if (warmupStream) {
-        await sleep(120);
-      }
+      stopMediaStream(warmupStream);
     }
-  }, [getActiveCameraProfile]);
 
-  const pauseScanner = useCallback((shouldPauseVideo = true) => {
+    const exactCameraCandidates = [...videoInputs]
+      .sort((left, right) => {
+        const leftLabel = left.label.trim();
+        const rightLabel = right.label.trim();
+        const leftScore = isRearCameraLabel(leftLabel) ? 0 : FRONT_CAMERA_LABEL_PATTERN.test(leftLabel) ? 2 : 1;
+        const rightScore = isRearCameraLabel(rightLabel) ? 0 : FRONT_CAMERA_LABEL_PATTERN.test(rightLabel) ? 2 : 1;
+
+        if (leftScore !== rightScore) {
+          return leftScore - rightScore;
+        }
+
+        return leftLabel.localeCompare(rightLabel);
+      })
+      .map((camera, index) => {
+        const cameraLabel = camera.label.trim() || `Camera ${index + 1}`;
+        const cameraConstraints = buildCameraStartConstraints({}, camera.deviceId);
+
+        return {
+          cameraSource: cameraConstraints,
+          constraints: cameraConstraints,
+          profileLabel: `${cameraLabel} / ${activeProfile.label}`,
+          selectedCameraId: camera.deviceId,
+          sourceType: "cameraId" as const,
+        };
+      });
+
+    const fallbackCandidates: CameraSourceSelection[] = [
+      {
+        cameraSource: buildCameraStartConstraints(rearCameraOption.constraints, null),
+        constraints: buildCameraStartConstraints(rearCameraOption.constraints, null),
+        profileLabel: `${rearCameraOption.label} / ${activeProfile.label}`,
+        selectedCameraId: null,
+        sourceType: "constraints",
+      },
+      {
+        cameraSource: buildCameraStartConstraints(frontCameraOption.constraints, null),
+        constraints: buildCameraStartConstraints(frontCameraOption.constraints, null),
+        profileLabel: `${frontCameraOption.label} / ${activeProfile.label}`,
+        selectedCameraId: null,
+        sourceType: "constraints",
+      },
+    ];
+
+    const cameraSources = [...exactCameraCandidates, ...fallbackCandidates];
+
+    logScanInfo("camera-source-candidates", {
+      activeProfile: activeProfile.label,
+      enumeratedVideoInputs: videoInputs.length,
+      permissionState,
+      rearCameraMatches: rearCameras.length,
+      sources: cameraSources.map((source) => ({
+        profileLabel: source.profileLabel,
+        selectedCameraId: source.selectedCameraId,
+        sourceType: source.sourceType,
+      })),
+    });
+
+    return cameraSources;
+  }, [buildCameraStartConstraints]);
+
+  const pauseScanner = useCallback((shouldPauseVideo = true, reason = "unspecified") => {
     const scanner = scannerRef.current;
     if (!scanner || !scannerStartedRef.current || scannerPausedRef.current) {
       return;
@@ -1403,13 +2235,94 @@ const ScanPage = () => {
       scanner.pause(shouldPauseVideo);
       scannerPausedRef.current = true;
       clearFallbackScanFrame();
+      workerDecodeInFlightRef.current = false;
+      workerGenerationRef.current += 1;
+      decodeMissStreakRef.current = 0;
+      lastDetectionMetaRef.current = null;
+      logScanInfo("scanner-pause", {
+        reason,
+        shouldPauseVideo,
+      });
     } catch {
       // Ignore pause errors and let the next restart recover.
     }
   }, [clearFallbackScanFrame]);
 
-  const startScanner = useCallback(async () => {
+  const applyScannerReadyState = useCallback(
+    (scanner: Html5Qrcode, source: "start" | "resume" | "reuse") => {
+      scannerRunningRef.current = true;
+      cameraStartFailureLockedRef.current = false;
+      scannerStartedRef.current = true;
+      scannerPausedRef.current = false;
+      scannerReadyAtRef.current = Date.now();
+      lastFrameSeenAtRef.current = scannerReadyAtRef.current;
+      lastVideoCurrentTimeRef.current = -1;
+      cameraRetryCountRef.current = 0;
+      slowScanStreakRef.current = 0;
+      fastScanStreakRef.current = 0;
+      decodeMissStreakRef.current = 0;
+      lowLightStreakRef.current = 0;
+      partialDetectionStreakRef.current = 0;
+      recentFrameSignalRef.current = null;
+      lastDetectionMetaRef.current = null;
+      lastResolvedScanIntervalMsRef.current = DETECTION_BALANCED_INTERVAL_MS;
+      lastCaptureEdgeRef.current = getCaptureEdgeForDeviceTier(deviceTier);
+      cameraInitializingSinceRef.current = 0;
+      cameraErrorSinceRef.current = 0;
+      clearCameraRecoveryTimer();
+      syncTorchState(scanner);
+      try {
+        startFallbackScanLoop();
+      } catch (error) {
+        logScanWarn("scanner-fallback-loop-start-failed", {
+          source,
+          message: getReadableError(error, "Unable to start scan assist."),
+        });
+      }
+
+      let resolution: string | null = null;
+      try {
+        const runningSettings = scanner.getRunningTrackSettings();
+        resolution =
+          runningSettings.width && runningSettings.height
+            ? `${runningSettings.width}x${runningSettings.height}`
+            : null;
+      } catch (error) {
+        logScanWarn("scanner-track-settings-unavailable", {
+          source,
+          message: getReadableError(error, "Unable to read camera settings."),
+        });
+      }
+      const profileLabel = activeCameraModeLabelRef.current;
+
+      if (mountedRef.current) {
+        setCameraInitializing(false);
+        setCameraReady(true);
+        setCameraError(null);
+        setGuidanceHint(DEFAULT_GUIDANCE_HINT);
+        setLightingHint(null);
+        setPartialDetectionActive(false);
+        setStatusMessage(isOnlineRef.current ? "Ready to scan" : "Offline queue ready");
+        setCameraProfileLabel(resolution ? `${profileLabel} | ${resolution}` : profileLabel);
+      }
+
+      logScanInfo("scanner-ready", {
+        source,
+        profile: profileLabel,
+        resolution,
+        deviceTier,
+      });
+    },
+    [clearCameraRecoveryTimer, deviceTier, startFallbackScanLoop, syncTorchState],
+  );
+
+  const startScanner = useCallback(async (reason = "unspecified") => {
     if (!mountedRef.current || processingRef.current) {
+      return;
+    }
+
+    if (isStartingRef.current) {
+      logScanInfo("scanner-start-skipped", { reason, cause: "already-starting" });
       return;
     }
 
@@ -1419,52 +2332,58 @@ const ScanPage = () => {
     }
 
     const existingScanner = scannerRef.current;
+    logScanInfo("scanner-start-requested", {
+      reason,
+      hasExistingScanner: Boolean(existingScanner),
+      started: scannerStartedRef.current,
+      paused: scannerPausedRef.current,
+    });
     if (existingScanner && scannerStartedRef.current) {
       if (!scannerPausedRef.current) {
-      if (mountedRef.current) {
-        setCameraInitializing(false);
-        setCameraReady(true);
-        setCameraError(null);
-        setGuidanceHint(DEFAULT_GUIDANCE_HINT);
-          setLightingHint(null);
-          setPartialDetectionActive(false);
-          setStatusMessage(isOnlineRef.current ? "Ready to scan" : "Offline queue ready");
+        applyScannerReadyState(existingScanner, "reuse");
+        return;
       }
-
-      scannerReadyAtRef.current = Date.now();
-      syncTorchState(existingScanner);
-      cameraRetryCountRef.current = 0;
-      clearCameraRecoveryTimer();
-      startFallbackScanLoop();
-
-      return;
-    }
 
       try {
         existingScanner.resume();
-        scannerPausedRef.current = false;
-
-        if (mountedRef.current) {
-          setCameraInitializing(false);
-          setCameraReady(true);
-          setCameraError(null);
-          setGuidanceHint(DEFAULT_GUIDANCE_HINT);
-          setLightingHint(null);
-          setPartialDetectionActive(false);
-          setStatusMessage(isOnlineRef.current ? "Ready to scan" : "Offline queue ready");
-        }
-
-        scannerReadyAtRef.current = Date.now();
-        syncTorchState(existingScanner);
-        startFallbackScanLoop();
-
+        applyScannerReadyState(existingScanner, "resume");
         return;
-      } catch {
-        await stopScanner();
+      } catch (error) {
+        logScanWarn("scanner-resume-failed", {
+          reason,
+          message: getReadableError(error, "Unable to resume the camera."),
+        });
+        await stopScanner("resume-failed");
       }
     }
 
+    if (
+      cameraStartFailureLockedRef.current &&
+      reason !== "manual-retry" &&
+      reason !== "device-command-restart"
+    ) {
+      logScanInfo("scanner-start-skipped", {
+        reason,
+        cause: "blocked-after-failure",
+      });
+      return;
+    }
+
+    if (scannerRunningRef.current) {
+      logScanInfo("scanner-start-skipped", {
+        reason,
+        cause: "already-running",
+      });
+      return;
+    }
+
+    scannerRunningRef.current = true;
+    let lastAttemptedCameraSource: CameraSourceSelection | null = null;
+    isStartingRef.current = true;
     const startup = (async () => {
+      console.info("Starting camera...");
+      logScanInfo("Starting camera...", { reason });
+
       if (mountedRef.current) {
         setCameraInitializing(true);
         setCameraReady(false);
@@ -1472,23 +2391,28 @@ const ScanPage = () => {
         setStatusMessage("Starting camera...");
       }
 
-      await stopScanner();
+      if (scannerRef.current) {
+        await scannerRef.current.stop().catch(() => undefined);
+      }
 
-      const cameraSource = await chooseRearCameraSource();
+      await stopScanner(`before-start:${reason}`);
+      await waitForElementById(SCANNER_REGION_ID, CAMERA_CONTAINER_WAIT_TIMEOUT_MS);
+      if (!document.getElementById(SCANNER_REGION_ID)) {
+        logScanWarn("scanner-start-aborted", {
+          reason,
+          cause: "container-missing",
+        });
+        throw createCameraStartupError("SCANNER_CONTAINER_MISSING");
+      }
+      await sleep(CAMERA_START_DELAY_MS);
+
+      const cameraSources = await chooseRearCameraSource();
       if (!mountedRef.current) {
         return;
       }
 
-      const scanner = new Html5Qrcode(SCANNER_REGION_ID, {
-        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-        useBarCodeDetectorIfSupported: true,
-        verbose: false,
-      });
-
-      scannerRef.current = scanner;
-
       const scanConfig: Html5QrcodeCameraScanConfig = {
-        fps: 12,
+        fps: 2,
         aspectRatio: 1,
         disableFlip: false,
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
@@ -1500,61 +2424,142 @@ const ScanPage = () => {
 
           return { width: edge, height: edge };
         },
-        videoConstraints: getActiveVideoConstraints(),
       };
 
-      try {
-        await scanner.start(
-          cameraSource,
-          scanConfig,
-          (decodedText) => {
-            void handleScanResultRef.current(decodedText).catch(() => undefined);
-          },
-          () => undefined,
-        );
-        await applyPreferredTrackControls(scanner);
-      } catch (error) {
-        scannerRef.current = null;
+      let startedScanner: Html5Qrcode | null = null;
+      let startedCameraSource: CameraSourceSelection | null = null;
+      let startedProfileLabel: string | null = null;
+      let lastStartError: unknown = null;
+
+      for (const cameraSource of cameraSources) {
+        lastAttemptedCameraSource = cameraSource;
+        const scanner = new Html5Qrcode(SCANNER_REGION_ID, {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          useBarCodeDetectorIfSupported: false,
+          verbose: false,
+        });
+
+        scannerRef.current = scanner;
+        activeCameraModeLabelRef.current = cameraSource.profileLabel;
+        setCameraProfileLabel(cameraSource.profileLabel);
 
         try {
-          scanner.clear();
-        } catch {
-          // Ignore renderer cleanup failures.
-        }
+          logScanInfo("scanner-start-attempt", {
+            reason,
+            profileLabel: cameraSource.profileLabel,
+            selectedCameraId: cameraSource.selectedCameraId,
+            constraints: cameraSource.constraints,
+            sourceType: cameraSource.sourceType,
+          });
+          await withCameraTimeout(
+            scanner.start(
+              cameraSource.cameraSource,
+              scanConfig,
+              () => undefined,
+              () => undefined,
+            ),
+            CAMERA_START_TIMEOUT_MS,
+            "CAMERA_START_TIMEOUT",
+          );
+          startedScanner = scanner;
+          startedCameraSource = cameraSource;
+          startedProfileLabel = cameraSource.profileLabel;
+          console.info("Camera stream received");
+          logScanInfo("camera-stream-received", {
+            reason,
+            profileLabel: cameraSource.profileLabel,
+            selectedCameraId: cameraSource.selectedCameraId,
+            constraints: cameraSource.constraints,
+            sourceType: cameraSource.sourceType,
+          });
+          await applyPreferredTrackControls(scanner);
+          break;
+        } catch (error) {
+          const normalizedCameraError = normalizeCameraStartupError(error, {
+            isSecureContext: window.isSecureContext,
+            supportsMediaDevices: Boolean(navigator.mediaDevices?.getUserMedia),
+          });
+          lastStartError = error;
+          console.error(SCAN_LOG_PREFIX, "camera-start-attempt-failed-raw", error);
+          logScanWarn("camera-start-attempt-failed", {
+            browserErrorName: normalizedCameraError.browserErrorName,
+            errorKind: normalizedCameraError.kind,
+            reason,
+            profileLabel: cameraSource.profileLabel,
+            selectedCameraId: cameraSource.selectedCameraId,
+            constraints: cameraSource.constraints,
+            sourceType: cameraSource.sourceType,
+            message: normalizedCameraError.rawMessage || normalizedCameraError.detail,
+            retryable: normalizedCameraError.retryable,
+            stack: normalizedCameraError.stack,
+          });
+          scannerRef.current = null;
 
-        throw error;
+          try {
+            await scanner.stop();
+          } catch {
+            // Ignore stream shutdown failures during camera startup recovery.
+          }
+
+          try {
+            scanner.clear();
+          } catch {
+            // Ignore renderer cleanup failures.
+          }
+
+          if (
+            error instanceof DOMException &&
+            ["NotAllowedError", "PermissionDeniedError", "SecurityError"].includes(error.name)
+          ) {
+            throw error;
+          }
+
+          await sleep(120);
+        }
+      }
+
+      if (!startedScanner || !startedProfileLabel) {
+        throw lastStartError ?? createCameraStartupError("CAMERA_START_TIMEOUT");
       }
 
       if (!mountedRef.current) {
-        await stopScanner();
+        await stopScanner("component-unmounted");
         return;
       }
 
-      scannerStartedRef.current = true;
-      scannerPausedRef.current = false;
-      scannerReadyAtRef.current = Date.now();
-      cameraRetryCountRef.current = 0;
-      clearCameraRecoveryTimer();
-      setCameraReady(true);
-      setCameraInitializing(false);
-      setCameraError(null);
-      setGuidanceHint(DEFAULT_GUIDANCE_HINT);
-      setLightingHint(null);
-      setPartialDetectionActive(false);
-      setStatusMessage(isOnlineRef.current ? "Ready to scan" : "Offline queue ready");
-      syncTorchState(scanner);
-      startFallbackScanLoop();
-
-      const runningSettings = scanner.getRunningTrackSettings();
-      if (runningSettings.width && runningSettings.height) {
-        setCameraProfileLabel(
-          `${getActiveCameraProfile().label} · ${runningSettings.width}x${runningSettings.height}`,
-        );
-      }
+      setCameraProfileLabel(startedProfileLabel);
+      applyScannerReadyState(startedScanner, "start");
+      logScanInfo("scanner-start-success", {
+        reason,
+        profileLabel: startedCameraSource?.profileLabel ?? startedProfileLabel,
+        selectedCameraId: startedCameraSource?.selectedCameraId ?? null,
+        constraints: startedCameraSource?.constraints ?? null,
+        sourceType: startedCameraSource?.sourceType ?? null,
+      });
 
     })()
       .catch(async (error) => {
-        await stopScanner();
+        const normalizedCameraError = normalizeCameraStartupError(error, {
+          isSecureContext: window.isSecureContext,
+          supportsMediaDevices: Boolean(navigator.mediaDevices?.getUserMedia),
+        });
+        const retryAttempt = normalizedCameraError.retryable ? cameraRetryCountRef.current + 1 : 0;
+
+        cameraStartFailureLockedRef.current = !normalizedCameraError.retryable;
+        logScanWarn("scanner-start-failed", {
+          browserErrorName: normalizedCameraError.browserErrorName,
+          errorKind: normalizedCameraError.kind,
+          reason,
+          profileLabel: lastAttemptedCameraSource?.profileLabel ?? null,
+          selectedCameraId: lastAttemptedCameraSource?.selectedCameraId ?? null,
+          constraints: lastAttemptedCameraSource?.constraints ?? null,
+          sourceType: lastAttemptedCameraSource?.sourceType ?? null,
+          message: normalizedCameraError.rawMessage || normalizedCameraError.detail,
+          retryable: normalizedCameraError.retryable,
+          stack: normalizedCameraError.stack,
+        });
+        console.error(SCAN_LOG_PREFIX, "scanner-start-failed-raw", error);
+        await stopScanner("start-failed");
 
         if (!mountedRef.current) {
           return;
@@ -1562,27 +2567,54 @@ const ScanPage = () => {
 
         setCameraInitializing(false);
         setCameraReady(false);
-        setCameraError(getCameraErrorState(error));
-        setStatusMessage("Camera unavailable");
+        setCameraError({
+          title: normalizedCameraError.title,
+          detail: normalizedCameraError.detail,
+        });
+        setStatusMessage(normalizedCameraError.title);
+
+        if (normalizedCameraError.retryable) {
+          cameraRetryCountRef.current = retryAttempt;
+          const retryDelayMs = Math.min(
+            KIOSK_CAMERA_RETRY_BASE_MS * 2 ** Math.max(0, retryAttempt - 1),
+            KIOSK_CAMERA_RETRY_MAX_MS,
+          );
+
+          clearCameraRecoveryTimer();
+          cameraRecoveryTimerRef.current = window.setTimeout(() => {
+            if (!mountedRef.current || scannerStartedRef.current || processingRef.current) {
+              return;
+            }
+
+            logScanInfo("camera-retry-scheduled", {
+              attempt: retryAttempt,
+              errorKind: normalizedCameraError.kind,
+              retryDelayMs,
+            });
+            void startScanner(`auto-retry:${normalizedCameraError.kind}`);
+          }, retryDelayMs);
+        }
       })
       .finally(() => {
         scannerStartPromiseRef.current = null;
+        isStartingRef.current = false;
+        if (!scannerStartedRef.current) {
+          scannerRunningRef.current = false;
+        }
       });
 
     scannerStartPromiseRef.current = startup;
     await startup;
   }, [
     applyPreferredTrackControls,
+    applyScannerReadyState,
     chooseRearCameraSource,
     clearCameraRecoveryTimer,
-    getActiveCameraProfile,
-    getActiveVideoConstraints,
-    startFallbackScanLoop,
+    resolveScanBoxEdge,
     stopScanner,
-    syncTorchState,
   ]);
 
-  const resumeScanner = useCallback(async () => {
+  const resumeScanner = useCallback(async (reason = "unspecified") => {
     if (!mountedRef.current || processingRef.current) {
       return;
     }
@@ -1591,49 +2623,26 @@ const ScanPage = () => {
     if (scanner && scannerStartedRef.current) {
       if (scannerPausedRef.current) {
         try {
+          logScanInfo("scanner-resume-requested", { reason, mode: "paused" });
           scanner.resume();
-          scannerPausedRef.current = false;
-          scannerReadyAtRef.current = Date.now();
-          syncTorchState(scanner);
-
-          if (mountedRef.current) {
-            setCameraInitializing(false);
-            setCameraReady(true);
-          setCameraError(null);
-          setGuidanceHint(DEFAULT_GUIDANCE_HINT);
-          setLightingHint(null);
-          setPartialDetectionActive(false);
-          setStatusMessage(isOnlineRef.current ? "Ready to scan" : "Offline queue ready");
-        }
-
-        startFallbackScanLoop();
-        return;
-      } catch {
-        await stopScanner();
+          applyScannerReadyState(scanner, "resume");
+          return;
+        } catch (error) {
+          logScanWarn("scanner-resume-failed", {
+            reason,
+            message: getReadableError(error, "Unable to resume the camera."),
+          });
+          await stopScanner("resume-failed");
         }
       } else {
-        if (mountedRef.current) {
-          setCameraInitializing(false);
-          setCameraReady(true);
-        setCameraError(null);
-        setGuidanceHint(DEFAULT_GUIDANCE_HINT);
-        setLightingHint(null);
-        setPartialDetectionActive(false);
-        setStatusMessage(isOnlineRef.current ? "Ready to scan" : "Offline queue ready");
-      }
-
-      scannerReadyAtRef.current = Date.now();
-      syncTorchState(scanner);
-      cameraRetryCountRef.current = 0;
-      clearCameraRecoveryTimer();
-      startFallbackScanLoop();
-
-      return;
+        logScanInfo("scanner-resume-requested", { reason, mode: "already-running" });
+        applyScannerReadyState(scanner, "reuse");
+        return;
       }
     }
 
-    await startScanner();
-  }, [clearCameraRecoveryTimer, startFallbackScanLoop, startScanner, stopScanner, syncTorchState]);
+    await startScanner(`resume:${reason}`);
+  }, [applyScannerReadyState, startScanner, stopScanner]);
 
   const refreshQueueState = useCallback(async () => {
     try {
@@ -1770,17 +2779,17 @@ const ScanPage = () => {
         switch (command.command_type) {
           case "disable_device":
           case "force_logout": {
-            pauseScanner(true);
+            pauseScanner(true, "device-command-disable");
             await stopScanner().catch(() => undefined);
             await updateStatus("completed");
             await redirectToDeviceSetup(commandNotice);
             return "redirected" as const;
           }
           case "restart_scanner": {
-            pauseScanner(true);
+            pauseScanner(true, "device-command-restart");
             await stopScanner().catch(() => undefined);
             await sleep(250);
-            await startScanner();
+            await startScanner("device-command-restart");
             await updateStatus("completed");
             await sendScannerHeartbeat();
             if (mountedRef.current) {
@@ -2053,35 +3062,193 @@ const ScanPage = () => {
 
   const handleRetryCamera = useCallback(() => {
     clearCameraRecoveryTimer();
+    cameraStartFailureLockedRef.current = false;
+    scannerRunningRef.current = false;
     setCameraError(null);
-    setStatusMessage("Restarting camera...");
-    void startScanner();
-  }, [clearCameraRecoveryTimer, startScanner]);
+    setStatusMessage("Starting camera...");
+    void stopScanner("manual-retry")
+      .catch(() => undefined)
+      .finally(() => {
+        void startScanner("manual-retry");
+      });
+  }, [clearCameraRecoveryTimer, startScanner, stopScanner]);
+
+  const buildOfflineQueuedPayload = useCallback(
+    ({
+      entry,
+      libraryId,
+      studentId,
+      parsedSource,
+      fallbackMessage,
+    }: {
+      entry: AttendanceQueueEntry;
+      libraryId: string;
+      studentId: string;
+      parsedSource: "legacy" | "structured" | "signed";
+      fallbackMessage?: string;
+    }): Extract<AttendanceScanPayload, { status: "queued" }> => {
+      const cachedStudent = readOfflineVerifiedStudent({
+        libraryId,
+        studentId,
+      });
+      const verifiedOffline = Boolean(cachedStudent) || parsedSource === "signed";
+      const cachedName = cachedStudent?.name || null;
+
+      return {
+        status: "queued",
+        message:
+          fallbackMessage ||
+          (verifiedOffline
+            ? "Offline verified. Attendance is saved locally and will sync automatically."
+            : "Saved offline. The scan will sync automatically when the connection returns."),
+        time: formatScanTimeLabel(entry.timestamp),
+        entry_id: entry.entry_id,
+        ...(verifiedOffline ? { verifiedOffline: true } : {}),
+        ...(cachedName ? { name: cachedName, studentName: cachedName } : {}),
+        ...(cachedStudent?.seat ? { seat: cachedStudent.seat } : {}),
+      };
+    },
+    [],
+  );
+
+  const recoverScannerFromWatchdog = useCallback(
+    async (reason: WatchdogRecoveryReason) => {
+      const nowTs = Date.now();
+      if (nowTs - lastWatchdogRecoveryAtRef.current < WATCHDOG_RECOVERY_COOLDOWN_MS) {
+        return;
+      }
+
+      lastWatchdogRecoveryAtRef.current = nowTs;
+      logScanWarn("watchdog-trigger", {
+        reason,
+        phase,
+        processing: processingRef.current,
+        started: scannerStartedRef.current,
+        paused: scannerPausedRef.current,
+        lastFrameAgeMs: lastFrameSeenAtRef.current ? nowTs - lastFrameSeenAtRef.current : null,
+      });
+
+      if (reason === "scan_verification_stalled") {
+        invalidateActiveScan(reason);
+        processingRef.current = false;
+        scanProcessingStartedAtRef.current = 0;
+
+        if (mountedRef.current) {
+          setScanPayload({
+            status: "error",
+            code: "SCAN_TIMEOUT",
+            message: "Scanner recovered after a stalled verification. Please scan again.",
+          });
+          setPhase("error");
+          setStatusMessage("Scanner recovered. Please scan again.");
+        }
+
+        scheduleReturnToScanner();
+        return;
+      }
+
+      invalidateActiveScan(reason);
+      processingRef.current = false;
+      scanProcessingStartedAtRef.current = 0;
+
+      if (mountedRef.current) {
+        setStatusMessage("Recovering camera...");
+        setCameraReady(false);
+        setCameraInitializing(true);
+        setCameraError(null);
+      }
+
+      await stopScanner(`watchdog:${reason}`);
+
+      if (mountedRef.current && !resetDialogOpen && !bindingRedirectInFlightRef.current) {
+        await startScanner(`watchdog:${reason}`);
+      }
+    },
+    [
+      invalidateActiveScan,
+      phase,
+      resetDialogOpen,
+      scheduleReturnToScanner,
+      startScanner,
+      stopScanner,
+    ],
+  );
 
   const handleScanResult = useCallback(
-    async (rawValue: string) => {
+    async (rawValue: string, detectionSource: ScanDetectionSource) => {
       let scannerResetScheduled = false;
+      let scanRunId = 0;
+      const normalizedRawValue = trimText(rawValue);
+      const detectionMeta = normalizedRawValue
+        ? resolveDetectionMetaForRawValue(normalizedRawValue, detectionSource)
+        : null;
+      let metricRecorded = false;
+      const recordMetric = (status: ScanLatencyMetric["status"], verificationMs: number | null = null) => {
+        if (metricRecorded || !detectionMeta) {
+          return;
+        }
+
+        metricRecorded = true;
+        publishScanMetric({
+          status,
+          detectionSource: detectionMeta.detectionSource,
+          decodeMs: detectionMeta.decodeMs,
+          verificationMs,
+          totalMs: Math.max(0, Date.now() - detectionMeta.detectedAtMs),
+          captureEdge: detectionMeta.captureEdge,
+          intervalMs: detectionMeta.intervalMs,
+          brightness: detectionMeta.brightness,
+          edgeScore: detectionMeta.edgeScore,
+          lowLight: detectionMeta.lowLight,
+          cameraProfileLabel: detectionMeta.cameraProfileLabel,
+          deviceTier: detectionMeta.deviceTier,
+          recordedAt: new Date().toISOString(),
+        });
+      };
 
       try {
         if (processingRef.current) {
           return;
         }
 
-        const normalizedRawValue = trimText(rawValue);
         if (!normalizedRawValue) {
           return;
         }
 
         processingRef.current = true;
+        scanRunId = activeScanRunIdRef.current + 1;
+        activeScanRunIdRef.current = scanRunId;
+        scanProcessingStartedAtRef.current = 0;
+        pauseScanner(true, "scan-processing");
+        logScanInfo("scan-processing-start", {
+          scanRunId,
+          source: detectionSource,
+          length: normalizedRawValue.length,
+          preview: summarizeQrForLog(normalizedRawValue),
+        });
+
+        const isActiveScan = () => activeScanRunIdRef.current === scanRunId;
 
         const showScanError = async (code: string, message: string) => {
-          await stopScanner().catch(() => undefined);
+          if (!isActiveScan() || !mountedRef.current) {
+            return;
+          }
+
+          scanProcessingStartedAtRef.current = 0;
           setScanPayload({
             status: "error",
             code,
             message,
           });
           setPhase("error");
+          setStatusMessage(message);
+          logScanWarn("scan-processing-error", {
+            scanRunId,
+            code,
+            source: detectionSource,
+            message,
+          });
+          recordMetric(code === "INVALID_QR" ? "invalid" : "error");
           vibrateFeedback([28, 60, 22]);
           await playFeedbackTone("error");
           scheduleReturnToScanner();
@@ -2095,7 +3262,12 @@ const ScanPage = () => {
           now: new Date(),
         });
 
+        if (!isActiveScan() || !mountedRef.current) {
+          return;
+        }
+
         if (!parsed) {
+          await showScanError("INVALID_QR", "Invalid ID.");
           return;
         }
 
@@ -2122,6 +3294,14 @@ const ScanPage = () => {
           lastAcceptedScanRef.current.value === scanIdentifier &&
           nowTs - lastAcceptedScanRef.current.at < DUPLICATE_SCAN_WINDOW_MS
         ) {
+          logScanInfo("scan-duplicate-ignored", {
+            scanRunId,
+            source: detectionSource,
+            scanIdentifier,
+            windowMs: DUPLICATE_SCAN_WINDOW_MS,
+          });
+          scanProcessingStartedAtRef.current = 0;
+          recordMetric("duplicate", 0);
           return;
         }
 
@@ -2135,28 +3315,82 @@ const ScanPage = () => {
           qrCode: parsed.rawValue,
           timestamp: scanTimestamp,
         });
-        await stopScanner().catch(() => undefined);
+
         triggerScanFeedback();
         void playFeedbackTone("detect");
         vibrateFeedback(18);
         setPhase("scanning");
         setStatusMessage(isOnlineRef.current ? "Verifying attendance..." : "Saving offline...");
+        scanProcessingStartedAtRef.current = Date.now();
+        logScanInfo("scan-submit", {
+          scanRunId,
+          source: detectionSource,
+          entryId: scanEntry.entry_id,
+          scanIdentifier,
+          online: isOnlineRef.current,
+        });
 
         let shouldReturnToScanner = true;
         try {
-          const payload = await submitScan(scanEntry);
+          let payload: AttendanceScanPayload;
+
+          if (!isOnlineRef.current) {
+            await enqueueAttendanceQueueEntry(scanEntry);
+            payload = buildOfflineQueuedPayload({
+              entry: scanEntry,
+              libraryId: deviceLibraryId,
+              studentId: scanIdentifier,
+              parsedSource: parsed.source,
+            });
+            await refreshQueueState();
+          } else {
+            payload = await submitScan(scanEntry);
+
+            if (payload.status === "queued") {
+              payload = buildOfflineQueuedPayload({
+                entry: scanEntry,
+                libraryId: deviceLibraryId,
+                studentId: scanIdentifier,
+                parsedSource: parsed.source,
+                fallbackMessage: payload.message,
+              });
+            }
+          }
+
+          if (!isActiveScan() || !mountedRef.current) {
+            return;
+          }
+
+          const verificationMs =
+            scanProcessingStartedAtRef.current > 0 ? Math.max(0, Date.now() - scanProcessingStartedAtRef.current) : 0;
+          scanProcessingStartedAtRef.current = 0;
           setScanPayload(payload);
+          logScanInfo("scan-submit-result", {
+            scanRunId,
+            status: payload.status,
+            code: "code" in payload ? payload.code ?? null : null,
+          });
 
           if (payload.status === "success") {
+            rememberOfflineVerifiedStudent({
+              libraryId: deviceLibraryId,
+              studentId: scanIdentifier,
+              name: payload.studentName || payload.name,
+              seat: payload.seat,
+              verifiedAt: scanTimestamp,
+            });
             setPhase("success");
+            recordMetric("success", verificationMs);
             vibrateFeedback([22, 40, 16]);
             await playFeedbackTone("success");
           } else if (payload.status === "queued") {
             setPhase("queued");
+            recordMetric("queued", verificationMs);
             vibrateFeedback([22, 40, 16]);
             await playFeedbackTone("success");
           } else {
             setPhase("error");
+            recordMetric("error", verificationMs);
             vibrateFeedback([28, 60, 22]);
             await playFeedbackTone("error");
 
@@ -2164,47 +3398,85 @@ const ScanPage = () => {
               shouldReturnToScanner = false;
               scannerResetScheduled = true;
               await sleep(900);
+
+              if (!isActiveScan()) {
+                return;
+              }
+
               await redirectToDeviceSetup(
                 payload.message || "Library credentials changed. Reconnect this kiosk.",
               );
             }
           }
         } catch (error) {
+          if (!isActiveScan() || !mountedRef.current) {
+            return;
+          }
+
+          scanProcessingStartedAtRef.current = 0;
+          const message = getReadableError(error);
           setScanPayload({
             status: "error",
-            message: getReadableError(error),
+            message,
           });
           setPhase("error");
+          setStatusMessage(message);
+          logScanWarn("scan-submit-failed", {
+            scanRunId,
+            source: detectionSource,
+            message,
+          });
+          recordMetric("error");
           vibrateFeedback([28, 60, 22]);
           await playFeedbackTone("error");
         } finally {
-          if (shouldReturnToScanner) {
+          if (shouldReturnToScanner && isActiveScan()) {
             scheduleReturnToScanner();
             scannerResetScheduled = true;
           }
         }
       } catch (error) {
-        await stopScanner().catch(() => undefined);
+        scanProcessingStartedAtRef.current = 0;
+        const message = getReadableError(error);
         setScanPayload({
           status: "error",
-          message: getReadableError(error),
+          message,
         });
         setPhase("error");
+        setStatusMessage(message);
+        logScanWarn("scan-processing-failed", {
+          scanRunId: scanRunId || null,
+          source: detectionSource,
+          message,
+        });
+        recordMetric("error");
         vibrateFeedback([28, 60, 22]);
         await playFeedbackTone("error");
         scheduleReturnToScanner();
         scannerResetScheduled = true;
       } finally {
         if (!scannerResetScheduled) {
-          processingRef.current = false;
+          const scanStillActive = scanRunId > 0 && activeScanRunIdRef.current === scanRunId;
+          if (scanStillActive || scanRunId === 0) {
+            scanProcessingStartedAtRef.current = 0;
+            processingRef.current = false;
+            if (scanStillActive) {
+              void resumeScanner("scan-not-completed");
+            }
+          }
         }
       }
     },
     [
+      buildOfflineQueuedPayload,
+      pauseScanner,
       playFeedbackTone,
+      publishScanMetric,
+      refreshQueueState,
       redirectToDeviceSetup,
+      resolveDetectionMetaForRawValue,
+      resumeScanner,
       scheduleReturnToScanner,
-      stopScanner,
       submitScan,
       triggerScanFeedback,
       vibrateFeedback,
@@ -2240,12 +3512,15 @@ const ScanPage = () => {
           return;
         }
 
-        const lowLight = frame.brightness < 72 || frame.shadowRatio > 0.38;
-        const glare = frame.brightness > 208 || frame.glareRatio > 0.2;
-        const partialDetection = !lowLight && !glare && frame.edgeScore > 30;
-        const needsCloserDistance = !lowLight && !glare && frame.edgeScore < 14;
-        const needsSteadierHands = !lowLight && !glare && frame.edgeScore >= 14 && frame.edgeScore < 22;
-        const needsAngleAdjustment = !lowLight && !glare && frame.edgeScore >= 22 && frame.edgeScore < 30;
+        const lowLight =
+          frame.brightness < 80 ||
+          frame.shadowRatio > 0.42 ||
+          (frame.brightness < 98 && frame.shadowRatio > 0.34);
+        const glare = frame.brightness > 212 || frame.glareRatio > 0.22;
+        const partialDetection = !lowLight && !glare && frame.edgeScore > 28;
+        const needsCloserDistance = !lowLight && !glare && frame.edgeScore < 13;
+        const needsSteadierHands = !lowLight && !glare && frame.edgeScore >= 13 && frame.edgeScore < 21;
+        const needsAngleAdjustment = !lowLight && !glare && frame.edgeScore >= 21 && frame.edgeScore < 28;
         const lightingMessage = lowLight
           ? torchSupported
             ? "Low light detected - turn on torch"
@@ -2254,6 +3529,18 @@ const ScanPage = () => {
             ? "Reduce screen glare"
             : null;
         const elapsedSinceReady = Date.now() - scannerReadyAtRef.current;
+        recentFrameSignalRef.current = {
+          brightness: frame.brightness,
+          edgeScore: frame.edgeScore,
+          lowLight,
+          glare,
+          partialDetection,
+          at: Date.now(),
+        };
+        lowLightStreakRef.current = lowLight ? Math.min(lowLightStreakRef.current + 1, 12) : 0;
+        partialDetectionStreakRef.current = partialDetection
+          ? Math.min(partialDetectionStreakRef.current + 1, 12)
+          : 0;
 
         let nextGuidance = DEFAULT_GUIDANCE_HINT;
         if (lightingMessage) {
@@ -2307,6 +3594,25 @@ const ScanPage = () => {
   ]);
 
   useEffect(() => {
+    const markGestureReady = () => {
+      if (fullscreenGestureReadyRef.current) {
+        return;
+      }
+
+      fullscreenGestureReadyRef.current = true;
+      void requestKioskFullscreen();
+    };
+
+    window.addEventListener("pointerdown", markGestureReady, { passive: true });
+    window.addEventListener("keydown", markGestureReady);
+
+    return () => {
+      window.removeEventListener("pointerdown", markGestureReady);
+      window.removeEventListener("keydown", markGestureReady);
+    };
+  }, [requestKioskFullscreen]);
+
+  useEffect(() => {
     mountedRef.current = true;
     bindingRedirectInFlightRef.current = false;
 
@@ -2314,7 +3620,7 @@ const ScanPage = () => {
       await refreshQueueState();
       void requestKioskFullscreen();
 
-      const cameraStartup = startScanner();
+      const cameraStartup = startScanner("initial-mount");
       if (window.navigator.onLine) {
         void sendScannerHeartbeat();
       }
@@ -2334,6 +3640,7 @@ const ScanPage = () => {
       clearCameraRecoveryTimer();
       clearKioskWatchdogTimer();
       void stopScanner();
+      terminateScanWorker();
       void releaseWakeLock();
       audioContextRef.current?.close().catch(() => undefined);
     };
@@ -2351,6 +3658,7 @@ const ScanPage = () => {
     sendScannerHeartbeat,
     startScanner,
     stopScanner,
+    terminateScanWorker,
   ]);
 
   useEffect(() => {
@@ -2396,10 +3704,14 @@ const ScanPage = () => {
           void pollDeviceCommands();
         }
         if (!showResultOverlay && !processingRef.current) {
-          void resumeScanner();
+          if (cameraError || !scannerRef.current || !cameraReady) {
+            void startScanner("tab-visible");
+          } else {
+            void resumeScanner("tab-visible");
+          }
         }
       } else {
-        pauseScanner(true);
+        void stopScanner("tab-hidden");
         void releaseWakeLock();
       }
     };
@@ -2408,13 +3720,16 @@ const ScanPage = () => {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [
     acquireWakeLock,
-    pauseScanner,
+    cameraError,
+    cameraReady,
     releaseWakeLock,
     requestKioskFullscreen,
     pollDeviceCommands,
     resumeScanner,
     sendScannerHeartbeat,
     showResultOverlay,
+    startScanner,
+    stopScanner,
   ]);
 
   useEffect(() => {
@@ -2465,9 +3780,9 @@ const ScanPage = () => {
       if (!showResultOverlay && !processingRef.current) {
         setPhase("idle");
         setStatusMessage("Ready to scan");
-        void resumeScanner();
+        void resumeScanner("network-online");
       } else if (!scannerRef.current || cameraError) {
-        void startScanner();
+        void startScanner("network-online");
       }
     };
 
@@ -2476,7 +3791,7 @@ const ScanPage = () => {
       if (!showResultOverlay && !processingRef.current) {
         setPhase("idle");
         setStatusMessage("Offline queue ready");
-        void resumeScanner();
+        void resumeScanner("network-offline");
       }
       setStatusMessage("Offline queue ready");
     };
@@ -2543,51 +3858,142 @@ const ScanPage = () => {
   }, [clearFullscreenRetryTimer, requestKioskFullscreen]);
 
   useEffect(() => {
-    if (!cameraError) {
-      cameraRetryCountRef.current = 0;
-      clearCameraRecoveryTimer();
-      return;
-    }
-
-    clearCameraRecoveryTimer();
-
-    const retryCount = Math.min(cameraRetryCountRef.current + 1, 6);
-    cameraRetryCountRef.current = retryCount;
-    const retryDelay = Math.min(KIOSK_CAMERA_RETRY_BASE_MS * retryCount, KIOSK_CAMERA_RETRY_MAX_MS);
-
-    cameraRecoveryTimerRef.current = window.setTimeout(() => {
-      if (!mountedRef.current) {
+    const intervalId = window.setInterval(() => {
+      const recentSignal = recentFrameSignalRef.current;
+      if (
+        !mountedRef.current ||
+        processingRef.current ||
+        scannerPausedRef.current ||
+        !scannerStartedRef.current ||
+        slowScanStreakRef.current < ADAPTIVE_PROFILE_SLOW_STREAK_LIMIT ||
+        Boolean(recentSignal?.lowLight) ||
+        Boolean(recentSignal?.partialDetection) ||
+        cameraProfileIndexRef.current >= CAMERA_PROFILES.length - 1
+      ) {
         return;
       }
 
-      void startScanner();
-    }, retryDelay);
+      const nowTs = Date.now();
+      if (nowTs - lastAdaptiveProfileChangeAtRef.current < ADAPTIVE_PROFILE_CHANGE_COOLDOWN_MS) {
+        return;
+      }
+
+      const nextProfileIndex = Math.min(cameraProfileIndexRef.current + 1, CAMERA_PROFILES.length - 1);
+      if (nextProfileIndex === cameraProfileIndexRef.current) {
+        slowScanStreakRef.current = 0;
+        return;
+      }
+
+      cameraProfileIndexRef.current = nextProfileIndex;
+      lastAdaptiveProfileChangeAtRef.current = nowTs;
+      slowScanStreakRef.current = 0;
+      logScanWarn("adaptive-profile-downgrade", {
+        nextProfile: CAMERA_PROFILES[nextProfileIndex]?.label ?? null,
+      });
+
+      void stopScanner("adaptive-profile-downgrade")
+        .then(() => startScanner("adaptive-profile-downgrade"))
+        .catch(() => undefined);
+    }, 1500);
 
     return () => {
-      clearCameraRecoveryTimer();
+      window.clearInterval(intervalId);
     };
-  }, [cameraError, clearCameraRecoveryTimer, startScanner]);
+  }, [startScanner, stopScanner]);
 
   useEffect(() => {
-    const shouldWatch = cameraInitializing || cameraError || phase === "scanning";
-    if (!shouldWatch) {
+    const intervalId = window.setInterval(() => {
+      const baselineProfileIndex = getDefaultCameraProfileIndex();
+      const recentSignal = recentFrameSignalRef.current;
+      if (
+        !mountedRef.current ||
+        processingRef.current ||
+        scannerPausedRef.current ||
+        !scannerStartedRef.current ||
+        fastScanStreakRef.current < ADAPTIVE_PROFILE_FAST_STREAK_LIMIT ||
+        cameraProfileIndexRef.current <= baselineProfileIndex ||
+        Boolean(recentSignal?.lowLight) ||
+        Boolean(recentSignal?.partialDetection)
+      ) {
+        return;
+      }
+
+      const nowTs = Date.now();
+      if (nowTs - lastAdaptiveProfileChangeAtRef.current < ADAPTIVE_PROFILE_UPGRADE_COOLDOWN_MS) {
+        return;
+      }
+
+      const nextProfileIndex = Math.max(baselineProfileIndex, cameraProfileIndexRef.current - 1);
+      if (nextProfileIndex === cameraProfileIndexRef.current) {
+        fastScanStreakRef.current = 0;
+        return;
+      }
+
+      cameraProfileIndexRef.current = nextProfileIndex;
+      lastAdaptiveProfileChangeAtRef.current = nowTs;
+      fastScanStreakRef.current = 0;
+      logScanInfo("adaptive-profile-upgrade", {
+        nextProfile: CAMERA_PROFILES[nextProfileIndex]?.label ?? null,
+      });
+
+      void stopScanner("adaptive-profile-upgrade")
+        .then(() => startScanner("adaptive-profile-upgrade"))
+        .catch(() => undefined);
+    }, 2000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [startScanner, stopScanner]);
+
+  useEffect(() => {
+    if (resetDialogOpen || bindingRedirectInFlightRef.current) {
       clearKioskWatchdogTimer();
       return;
     }
 
     clearKioskWatchdogTimer();
-    kioskWatchdogTimerRef.current = window.setTimeout(() => {
+    kioskWatchdogTimerRef.current = window.setInterval(() => {
       if (!mountedRef.current) {
         return;
       }
 
-      window.location.reload();
-    }, phase === "scanning" ? KIOSK_STALL_RELOAD_MS : Math.min(KIOSK_STALL_RELOAD_MS, 45000));
+      const nowTs = Date.now();
+      const activeTrack = getScannerMediaTrack();
+
+      if (
+        scannerStartedRef.current &&
+        activeTrack &&
+        activeTrack.readyState !== "live"
+      ) {
+        void recoverScannerFromWatchdog("camera_stream_lost");
+        return;
+      }
+
+      if (
+        scannerStartedRef.current &&
+        !scannerPausedRef.current &&
+        !processingRef.current &&
+        lastFrameSeenAtRef.current > 0 &&
+        nowTs - lastFrameSeenAtRef.current >= WATCHDOG_NO_FRAME_STALL_MS
+      ) {
+        void recoverScannerFromWatchdog("no_frames");
+        return;
+      }
+
+      if (
+        processingRef.current &&
+        scanProcessingStartedAtRef.current > 0 &&
+        nowTs - scanProcessingStartedAtRef.current >= WATCHDOG_SCAN_VERIFICATION_STALL_MS
+      ) {
+        void recoverScannerFromWatchdog("scan_verification_stalled");
+      }
+    }, WATCHDOG_POLL_INTERVAL_MS);
 
     return () => {
       clearKioskWatchdogTimer();
     };
-  }, [cameraError, cameraInitializing, clearKioskWatchdogTimer, phase]);
+  }, [clearKioskWatchdogTimer, getScannerMediaTrack, recoverScannerFromWatchdog, resetDialogOpen]);
 
   useEffect(() => {
     const previousTitle = document.title;
@@ -2603,7 +4009,7 @@ const ScanPage = () => {
 
     document.title = "Libriofy ID Check-In";
     document.body.classList.add("kiosk-mode");
-    themeMeta?.setAttribute("content", "#06091d");
+    themeMeta?.setAttribute("content", "#05060f");
     viewportMeta?.setAttribute(
       "content",
       "width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, viewport-fit=cover, user-scalable=no",
@@ -2660,20 +4066,29 @@ const ScanPage = () => {
     };
   }, []);
 
+  useEffect(() => {
+    (window as Window & { __LIBRIOFY_SCAN_METRICS__?: ScanMetricsSnapshot }).__LIBRIOFY_SCAN_METRICS__ =
+      scanMetricsSnapshot;
+  }, [scanMetricsSnapshot]);
+
   const cameraLive = cameraReady && !cameraInitializing && !cameraError;
-  const assistHighlightActive = partialDetectionActive || frameReactionActive;
   const liveAssistHint = lightingHint ?? guidanceHint;
+  const scanDebugSummary = scanMetricsSnapshot.total
+    ? [
+        `tier ${deviceTier}`,
+        `avg decode ${scanMetricsSnapshot.avgDecodeMs}ms`,
+        scanMetricsSnapshot.avgVerifyMs !== null ? `avg verify ${scanMetricsSnapshot.avgVerifyMs}ms` : null,
+        scanMetricsSnapshot.avgTotalMs !== null ? `avg total ${scanMetricsSnapshot.avgTotalMs}ms` : null,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(" • ")
+    : `tier ${deviceTier} • waiting for scans`;
+  const lastScanDebugDetails =
+    scanMetricsSnapshot.lastCaptureEdge !== null && scanMetricsSnapshot.lastIntervalMs !== null
+      ? `ROI ${scanMetricsSnapshot.lastCaptureEdge}px • loop ${scanMetricsSnapshot.lastIntervalMs}ms • ${scanMetricsSnapshot.lastCameraProfileLabel ?? cameraProfileLabel}`
+      : `Profile ${cameraProfileLabel}`;
   const frameStatusLabel =
     cameraError?.title ?? (partialDetectionActive && phase === "idle" ? "Hold steady" : statusMessage);
-  const heroDescription = cameraError
-    ? cameraError.detail
-    : !isOnline
-      ? "Offline queue mode is active. Scans will keep working and sync later."
-      : phase === "scanning"
-        ? "Verifying the QR..."
-        : cameraInitializing
-          ? "Starting the rear camera for automatic QR scanning."
-          : liveAssistHint;
   const framePrompt = cameraError
     ? cameraError.detail
     : !isOnline
@@ -2700,6 +4115,46 @@ const ScanPage = () => {
       day: "numeric",
     }).format(parsedDate);
   }, [lastSyncAt]);
+  const hasResult = Boolean(scanPayload) && showResultOverlay;
+  const isSuccess = scanPayload?.status === "success";
+  const isQueued = scanPayload?.status === "queued";
+  const isError = scanPayload?.status === "error";
+  const resultName =
+    scanPayload && scanPayload.status === "success"
+      ? scanPayload.studentName || scanPayload.name || "Student"
+      : scanPayload?.status === "queued"
+        ? scanPayload.studentName || scanPayload.name || "Queued scan"
+        : null;
+  const actionLabel =
+    scanPayload && scanPayload.status === "success"
+      ? scanPayload.action === "check-in"
+        ? "Checked In"
+        : "Checked Out"
+      : null;
+  const statusLabel = !isOnline
+    ? "Offline"
+    : cameraError
+      ? "Camera Error"
+      : cameraInitializing
+        ? "Starting..."
+        : phase === "scanning"
+          ? "Scanning..."
+          : "Camera Active";
+  const statusToneClass = !isOnline || cameraError ? "text-rose-300" : "text-emerald-300";
+  const frameGlowClass = isSuccess
+    ? "shadow-[0_0_70px_18px_rgba(34,197,94,0.35)]"
+    : isError
+      ? "shadow-[0_0_70px_18px_rgba(239,68,68,0.35)]"
+      : "shadow-[0_0_70px_18px_rgba(99,102,241,0.25)]";
+  const frameBorderClass = isSuccess
+    ? "border-emerald-300/80"
+    : isError
+      ? "border-rose-300/80"
+      : "border-indigo-300/60";
+  const instructionText =
+    !cameraError && isOnline && phase === "idle" && !hasResult
+      ? "Place your QR code inside the frame"
+      : framePrompt;
   const mobileInlineNotice = !cameraError && isOnline ? lightingHint : null;
   const [mobileTransientNotice, setMobileTransientNotice] = useState<string | null>(null);
 
@@ -2731,15 +4186,14 @@ const ScanPage = () => {
 
   return (
     <main
-      className="relative min-h-[100dvh] overflow-hidden bg-[#06091d] text-white touch-none overscroll-none"
+      className="relative min-h-[100dvh] overflow-hidden bg-[#05060f] text-white touch-none overscroll-none"
       style={{ fontFamily: "'Sora', system-ui, sans-serif" }}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(44,176,235,0.18),transparent_34%),radial-gradient(circle_at_82%_18%,rgba(84,246,190,0.16),transparent_30%),radial-gradient(circle_at_50%_86%,rgba(72,84,255,0.18),transparent_32%),linear-gradient(180deg,#040817_0%,#0A1030_46%,#120B31_100%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(2,6,23,0.15),rgba(2,6,23,0.62)_45%,rgba(3,5,18,0.94)_100%)]" />
-      <div className="absolute left-[-14%] top-[10%] h-72 w-72 rounded-full bg-cyan-400/14 blur-[120px]" />
-      <div className="absolute right-[-10%] top-[16%] h-80 w-80 rounded-full bg-emerald-400/12 blur-[120px]" />
-      <div className="absolute bottom-[-10%] left-[18%] h-72 w-72 rounded-full bg-violet-500/16 blur-[140px]" />
-      <FloatingParticles />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(99,102,241,0.18),transparent_40%),radial-gradient(circle_at_50%_100%,rgba(2,6,23,0.85),transparent_70%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(2,6,23,0.2),rgba(2,6,23,0.72)_55%,rgba(3,5,18,0.96)_100%)]" />
+      <div className="absolute inset-0 opacity-25">
+        <FloatingParticles />
+      </div>
       <button
         type="button"
         aria-label="Hidden device reset"
@@ -2762,294 +4216,170 @@ const ScanPage = () => {
         ) : null}
       </AnimatePresence>
 
-      <div className="scan-kiosk-shell relative z-10">
-        <motion.section
-          className="scan-kiosk-card scan-kiosk-container relative overflow-hidden border border-white/10 bg-white/[0.04] shadow-[0_28px_110px_rgba(0,0,0,0.28)] backdrop-blur-[28px]"
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: "easeOut" }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(102,227,255,0.08),transparent_28%),radial-gradient(circle_at_bottom,rgba(84,246,190,0.08),transparent_26%)]" />
-          <motion.div
-            className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.12),transparent)] opacity-0 blur-xl"
-            animate={{ x: ["0%", "430%"], opacity: [0, 0.18, 0] }}
-            transition={{ duration: 7.2, repeat: Number.POSITIVE_INFINITY, repeatDelay: 1.2, ease: "easeInOut" }}
-          />
-          <div className="relative flex w-full flex-col items-center gap-[clamp(12px,2vw,24px)] text-center">
-            <header className="flex w-full items-center justify-between gap-3 rounded-full border border-white/10 bg-white/[0.05] px-[clamp(14px,3vw,24px)] py-[clamp(12px,2vw,18px)] shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-cyan-300/20 bg-cyan-300/12 shadow-[0_0_26px_rgba(102,227,255,0.22)] min-[481px]:h-11 min-[481px]:w-11 min-[1025px]:h-12 min-[1025px]:w-12">
-              <ScanLine className="h-4 w-4 text-cyan-100 min-[1025px]:h-5 min-[1025px]:w-5" />
-            </div>
-            <div className="text-left">
-              <p className="text-sm font-semibold tracking-[-0.02em] text-white max-[480px]:block min-[481px]:hidden">Libriofy</p>
-              <p className="hidden text-base font-semibold tracking-[-0.02em] text-white min-[481px]:block min-[1025px]:text-xl">
-                Libriofy ID Check-In
-              </p>
-              <div className="scan-kiosk-small hidden items-center gap-2 text-white/60 min-[481px]:flex">
-                <ShieldCheck className={cn("h-4 w-4", isOnline ? "text-emerald-300" : "text-cyan-300")} />
-                <span>{isOnline ? "Library Open" : "Offline Queue Mode"}</span>
+
+      <div className="relative z-10 flex min-h-[100dvh] w-full flex-col items-center justify-center px-4 py-16">
+        <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-4">
+          <span className="text-lg font-semibold tracking-wide text-white/85">Libriofy</span>
+          <div className="flex items-center gap-2">
+            {isOnline ? <Wifi className="h-4 w-4 text-emerald-300" /> : <WifiOff className="h-4 w-4 text-rose-300" />}
+            <span className={cn("text-xs font-medium", statusToneClass)}>{statusLabel}</span>
+          </div>
+        </div>
+
+        <div className="relative flex flex-col items-center gap-6">
+          <div className={cn("absolute -inset-8 rounded-[36px] blur-3xl", frameGlowClass)} />
+          <div
+            className={cn(
+              "relative w-[320px] rounded-3xl border border-white/10 bg-[#0b1124]/95 p-5 shadow-[0_30px_120px_rgba(0,0,0,0.55)] transition-transform duration-300 sm:w-[360px]",
+              frameReactionActive ? "scale-[1.01]" : "scale-100",
+            )}
+          >
+            <div className="relative mx-auto flex items-center justify-center" style={{ width: scanBoxEdge, height: scanBoxEdge }}>
+              <div className={cn("absolute -inset-[2px] rounded-[1.35rem] border", frameBorderClass)} />
+              <div className="absolute inset-0 overflow-hidden rounded-[1.2rem] bg-black">
+                <div
+                  id={SCANNER_REGION_ID}
+                  className={cn(
+                    "absolute inset-0 transition-opacity duration-200 [&_video]:h-full [&_video]:w-full [&_video]:object-cover [&>div]:hidden",
+                    cameraLive ? "opacity-100" : "opacity-45",
+                  )}
+                />
+                {cameraLive && !showResultOverlay && !cameraError ? (
+                  <div className="pointer-events-none absolute inset-0 z-10">
+                    <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-indigo-300 to-transparent animate-[scanLine_2s_ease-in-out_infinite]" />
+                  </div>
+                ) : null}
+                <div className="pointer-events-none absolute inset-0 border border-white/10" />
               </div>
-            </div>
-          </div>
 
-          <div className="text-right">
-            <p className="text-[clamp(18px,3vw,32px)] font-semibold tracking-[-0.04em] text-white">{formattedTime}</p>
-            <p className="scan-kiosk-small hidden text-white/55 min-[481px]:block">{formattedDate}</p>
-          </div>
-            </header>
-          <div className="relative flex w-full flex-col items-center gap-[clamp(12px,2vw,24px)] pt-[clamp(10px,2vh,30px)] text-center">
-                <div className="hidden items-center gap-2 rounded-full border border-cyan-300/18 bg-cyan-300/10 px-4 py-2 text-xs font-medium uppercase tracking-[0.26em] text-cyan-50/90 min-[1025px]:inline-flex">
-                  <ScanLine className="h-3.5 w-3.5" />
-                  <span>ID Verification</span>
-                </div>
+              <div className="pointer-events-none absolute inset-0 z-10">
+                <div className="absolute left-3 top-3 h-7 w-7 rounded-tl-md border-l-2 border-t-2 border-white/70" />
+                <div className="absolute right-3 top-3 h-7 w-7 rounded-tr-md border-r-2 border-t-2 border-white/70" />
+                <div className="absolute bottom-3 left-3 h-7 w-7 rounded-bl-md border-b-2 border-l-2 border-white/70" />
+                <div className="absolute bottom-3 right-3 h-7 w-7 rounded-br-md border-b-2 border-r-2 border-white/70" />
+              </div>
 
-                <div className="w-full max-w-[32rem] space-y-2">
-                  <h1 className="scan-kiosk-title font-semibold tracking-[-0.07em] text-white">
-                    Scan QR for Attendance
-                  </h1>
-                  <p className="scan-kiosk-helper mx-auto text-white/70">
-                    {heroDescription}
-                  </p>
-                </div>
+              {torchSupported ? (
+                <motion.button
+                  type="button"
+                  className={cn(
+                    "absolute right-3 top-3 z-20 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] backdrop-blur-xl transition",
+                    torchEnabled
+                      ? "border-amber-200/25 bg-amber-300/15 text-amber-50 shadow-[0_0_20px_rgba(251,191,36,0.22)]"
+                      : "border-white/12 bg-black/30 text-white/85 hover:bg-white/10",
+                    torchBusy ? "opacity-70" : "",
+                  )}
+                  onClick={() => void toggleTorch()}
+                  disabled={torchBusy || !cameraLive || Boolean(cameraError)}
+                  whileTap={{ scale: 0.96 }}
+                >
+                  {torchEnabled ? <Flashlight className="h-3 w-3" /> : <FlashlightOff className="h-3 w-3" />}
+                  <span>{torchEnabled ? "Torch on" : "Torch"}</span>
+                </motion.button>
+              ) : null}
 
-                <div className="flex flex-wrap items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/80 backdrop-blur-xl min-[1025px]:gap-3 min-[1025px]:px-4 min-[1025px]:py-3">
-                  <span
-                    className={cn(
-                      "rounded-full border px-3 py-1",
-                      isOnline
-                        ? "border-emerald-300/20 bg-emerald-300/12 text-emerald-50"
-                        : "border-amber-300/20 bg-amber-300/12 text-amber-50",
-                    )}
-                  >
-                    {isOnline ? "ONLINE" : "OFFLINE"}
-                  </span>
-                  <span
-                    className={cn(
-                      "rounded-full border px-3 py-1",
-                      isSyncing || pendingCount > 0
-                        ? "border-cyan-300/20 bg-cyan-300/12 text-cyan-50"
-                        : "border-white/10 bg-white/[0.06] text-white/70",
-                    )}
-                  >
-                    {isSyncing ? "SYNCING" : pendingCount > 0 ? `${pendingCount} QUEUED` : "SYNCED"}
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-white/70">
-                    Last sync {formattedLastSyncAt ?? "--"}
-                  </span>
-                </div>
-
-                <div className="relative flex w-full justify-center pt-[clamp(10px,2vh,26px)]">
-                  <motion.div
-                    className="scan-kiosk-frame relative overflow-hidden rounded-[2rem] border border-white/12 bg-[#020816] shadow-[0_28px_90px_rgba(0,0,0,0.4)]"
-                    animate={
-                      frameReactionActive
-                        ? {
-                            scale: [0.985, 1.01, 0.995, 1],
-                            boxShadow: [
-                              "0 28px 90px rgba(0,0,0,0.4)",
-                              "0 28px 120px rgba(84,246,190,0.18)",
-                              "0 28px 90px rgba(0,0,0,0.4)",
-                            ],
-                          }
-                        : {
-                            scale: 1,
-                            boxShadow: "0 28px 90px rgba(0,0,0,0.4)",
-                          }
-                    }
-                    transition={frameReactionActive ? { duration: 0.4, ease: "easeOut" } : { duration: 0.2 }}
-                  >
-                    <div
-                      id={SCANNER_REGION_ID}
-                      className={cn(
-                        "absolute inset-0 bg-black transition-opacity duration-200",
-                        cameraLive ? "opacity-100" : "opacity-45",
-                      )}
-                    />
-                    <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(2,6,23,0.08),rgba(2,6,23,0.42))]" />
-
-                    {!cameraError ? (
-                      <motion.div
-                        className="pointer-events-none absolute left-1/2 top-1/2 z-[2] -translate-x-1/2 -translate-y-1/2 rounded-[1.4rem] border border-white/20"
-                        style={{ width: scanBoxEdge, height: scanBoxEdge }}
-                        animate={
-                          assistHighlightActive
-                            ? {
-                                scale: [0.986, 1.014, 1],
-                                borderColor: [
-                                  "rgba(255,255,255,0.2)",
-                                  "rgba(134,255,221,0.96)",
-                                  "rgba(255,255,255,0.2)",
-                                ],
-                                boxShadow: [
-                                  "0 0 0 rgba(0,0,0,0)",
-                                  "0 0 28px rgba(84,246,190,0.24)",
-                                  "0 0 0 rgba(0,0,0,0)",
-                                ],
-                              }
-                            : {
-                                borderColor: cameraLive ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.12)",
-                                boxShadow: cameraLive
-                                  ? "0 0 0 1px rgba(255,255,255,0.06)"
-                                  : "0 0 0 rgba(0,0,0,0)",
-                              }
-                        }
-                        transition={assistHighlightActive ? { duration: 0.4, ease: "easeOut" } : { duration: 0.2 }}
-                      >
-                        <span className="absolute left-0 top-0 h-12 w-12 rounded-tl-[1.3rem] border-l-[4px] border-t-[4px] border-cyan-200/95" />
-                        <span className="absolute right-0 top-0 h-12 w-12 rounded-tr-[1.3rem] border-r-[4px] border-t-[4px] border-cyan-200/95" />
-                        <span className="absolute bottom-0 left-0 h-12 w-12 rounded-bl-[1.3rem] border-b-[4px] border-l-[4px] border-emerald-200/95" />
-                        <span className="absolute bottom-0 right-0 h-12 w-12 rounded-br-[1.3rem] border-b-[4px] border-r-[4px] border-emerald-200/95" />
-                        {cameraLive && phase !== "scanning" ? (
-                          <motion.div
-                            className="absolute left-4 right-4 top-4 h-[2px] rounded-full bg-gradient-to-r from-transparent via-cyan-100 to-transparent shadow-[0_0_18px_rgba(102,227,255,0.45)]"
-                            animate={{
-                              y: [0, Math.max(0, scanBoxEdge - 34), 0],
-                              opacity: [0.55, 1, 0.55],
-                            }}
-                            transition={{ duration: 2, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
-                          />
-                        ) : null}
-                      </motion.div>
-                    ) : null}
-
-                    {torchSupported ? (
-                      <motion.button
-                        type="button"
-                        className={cn(
-                          "absolute right-4 top-4 z-20 inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] backdrop-blur-xl transition",
-                          torchEnabled
-                            ? "border-amber-200/25 bg-amber-300/15 text-amber-50 shadow-[0_0_24px_rgba(251,191,36,0.22)]"
-                            : "border-white/12 bg-black/30 text-white/85 hover:bg-white/10",
-                          torchBusy ? "opacity-70" : "",
-                        )}
-                        onClick={() => void toggleTorch()}
-                        disabled={torchBusy || !cameraLive || Boolean(cameraError)}
-                        whileTap={{ scale: 0.96 }}
-                      >
-                        {torchEnabled ? <Flashlight className="h-3.5 w-3.5" /> : <FlashlightOff className="h-3.5 w-3.5" />}
-                        <span>{torchEnabled ? "Torch on" : "Torch"}</span>
-                      </motion.button>
-                    ) : null}
-
-                    <AnimatePresence>
-                      {scanFlashVisible ? (
-                        <motion.div
-                          className="pointer-events-none absolute inset-0 z-[5] bg-[radial-gradient(circle,rgba(255,255,255,0.78),rgba(255,255,255,0.12)_35%,transparent_70%)] mix-blend-screen"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: [0, 1, 0] }}
-                          exit={{ opacity: 0 }}
-                          transition={{ duration: 0.18, ease: "easeOut" }}
-                        />
-                      ) : null}
-                    </AnimatePresence>
-
-                    {cameraInitializing && !cameraError ? (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-[rgba(2,6,23,0.58)] px-6 backdrop-blur-sm">
-                        <div className="rounded-[1.75rem] border border-white/10 bg-[#071026]/88 px-8 py-7 text-center shadow-[0_24px_80px_rgba(0,0,0,0.36)]">
-                          <Loader2 className="mx-auto h-11 w-11 animate-spin text-cyan-100" />
-                          <p className="mt-4 text-[clamp(20px,3vw,30px)] font-semibold tracking-[-0.03em] text-white">
-                            Starting camera...
-                          </p>
-                          <p className="scan-kiosk-small mt-2 max-w-xs text-white/68">
-                            Please allow camera permission if prompted.
-                          </p>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {phase === "scanning" && !showResultOverlay ? (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-[rgba(2,6,23,0.42)] px-6 backdrop-blur-[2px]">
-                        <div className="rounded-[1.6rem] border border-cyan-300/16 bg-[#071026]/88 px-6 py-5 text-center shadow-[0_24px_80px_rgba(0,0,0,0.32)]">
-                          <Loader2 className="mx-auto h-10 w-10 animate-spin text-cyan-100" />
-                          <p className="mt-3 text-lg font-semibold tracking-[-0.02em] text-white">
-                            QR detected
-                          </p>
-                          <p className="scan-kiosk-small mt-1 text-white/68">
-                            Verifying attendance...
-                          </p>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {cameraError ? (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-[rgba(14,6,18,0.72)] px-6 backdrop-blur-sm">
-                        <div className="max-w-sm rounded-[1.9rem] border border-rose-300/18 bg-[#110816]/92 px-7 py-7 text-center shadow-[0_24px_80px_rgba(66,8,28,0.42)]">
-                          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-rose-200/20 bg-rose-400/12 text-rose-50">
-                            <X className="h-8 w-8" strokeWidth={2.6} />
-                          </div>
-                          <p className="mt-4 text-[clamp(20px,3vw,30px)] font-semibold tracking-[-0.03em] text-white">
-                            {cameraError.title}
-                          </p>
-                          <p className="scan-kiosk-helper mt-3 text-white/68">
-                            {cameraError.detail}
-                          </p>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="mt-5 rounded-full px-5"
-                            onClick={handleRetryCamera}
-                          >
-                            <RefreshCw className="h-4 w-4" />
-                            Retry camera
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </motion.div>
-                </div>
-
-                <div className="w-full max-w-[34rem] space-y-3">
-                  <p className="scan-kiosk-helper font-medium tracking-[-0.02em] text-white/82">
-                    {framePrompt}
-                  </p>
-                  <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-white/76">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 backdrop-blur-xl">
-                      <ScanLine className="h-4 w-4 text-cyan-100" />
-                      <span>{frameStatusLabel}</span>
-                    </div>
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 backdrop-blur-xl">
-                      <Sparkles className="h-4 w-4 text-cyan-100" />
-                      <span>{cameraProfileLabel}</span>
-                    </div>
-                    <AnimatePresence mode="wait">
-                      {mobileTransientNotice ? (
-                        <motion.div
-                          key={mobileTransientNotice}
-                          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 backdrop-blur-xl"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -4 }}
-                          transition={{ duration: 0.25, ease: "easeOut" }}
-                        >
-                          <ShieldCheck className="h-4 w-4 text-emerald-200" />
-                          <span>{mobileTransientNotice}</span>
-                        </motion.div>
-                      ) : (
-                        <motion.div
-                          key={liveAssistHint}
-                          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 backdrop-blur-xl"
-                          initial={{ opacity: 0.8 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0.8 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <ShieldCheck className="h-4 w-4 text-emerald-200" />
-                          <span>{liveAssistHint}</span>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+              {cameraInitializing && !cameraError ? (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(2,6,23,0.6)] px-6 backdrop-blur-sm">
+                  <div className="rounded-2xl border border-white/10 bg-[#071026]/90 px-6 py-5 text-center shadow-[0_24px_80px_rgba(0,0,0,0.36)]">
+                    <Loader2 className="mx-auto h-9 w-9 animate-spin text-cyan-100" />
+                    <p className="mt-3 text-lg font-semibold tracking-[-0.02em] text-white">Starting camera...</p>
+                    <p className="mt-1 text-xs text-white/60">Please allow camera permission if prompted.</p>
                   </div>
                 </div>
+              ) : null}
+            </div>
 
-                <div className="scan-kiosk-small uppercase tracking-[0.32em] text-white/36">
-                  Device {DEVICE_ID}
+            <div className="mt-5 min-h-[110px] text-center">
+              {cameraError ? (
+                <div className="flex flex-col items-center gap-3">
+                  <XCircle className="h-10 w-10 text-rose-300" />
+                  <p className="text-base font-semibold text-rose-100">{cameraError.title}</p>
+                  <p className="text-sm text-rose-200/80">{cameraError.detail}</p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="rounded-full px-5"
+                    onClick={handleRetryCamera}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Retry camera
+                  </Button>
                 </div>
+              ) : hasResult ? (
+                <div className="flex flex-col items-center gap-2">
+                  {isSuccess ? (
+                    <CheckCircle className="h-10 w-10 text-emerald-300" />
+                  ) : isQueued ? (
+                    <WifiOff className="h-9 w-9 text-amber-300" />
+                  ) : (
+                    <XCircle className="h-10 w-10 text-rose-300" />
+                  )}
+                  <p
+                    className={cn(
+                      "text-lg font-semibold",
+                      isSuccess
+                        ? "text-emerald-200"
+                        : isQueued
+                          ? "text-amber-200"
+                          : "text-rose-200",
+                    )}
+                  >
+                    {resultName ?? (isQueued ? "Saved Offline" : "Scan Failed")}
+                  </p>
+                  <p
+                    className={cn(
+                      "text-sm font-medium",
+                      isSuccess
+                        ? "text-emerald-200/80"
+                        : isQueued
+                          ? "text-amber-200/80"
+                          : "text-rose-200/80",
+                    )}
+                  >
+                    {isSuccess
+                      ? `${actionLabel ?? "Checked In"}${scanPayload?.seat ? " | Seat " + scanPayload.seat : ""}`
+                      : scanPayload?.message ?? "Please try again."}
+                  </p>
+                </div>
+              ) : !isOnline ? (
+                <p className="text-sm text-rose-200/80">
+                  No internet connection. Scans will queue and sync later.
+                </p>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <ScanLine className="h-6 w-6 text-indigo-300 animate-pulse" />
+                  <p className="text-sm text-white/70">{instructionText}</p>
+                  <p className="text-xs text-white/45">{frameStatusLabel}</p>
+                  {mobileTransientNotice ? (
+                    <p className="text-xs text-emerald-200/80">{mobileTransientNotice}</p>
+                  ) : null}
+                </div>
+              )}
+            </div>
           </div>
-          </div>
-        </motion.section>
-      </div>
 
+          {scanDebugEnabled ? (
+            <div className="w-full max-w-[34rem] rounded-[1.4rem] border border-cyan-300/14 bg-[#06101f]/84 px-4 py-3 text-left shadow-[0_18px_50px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.26em] text-cyan-100/72">
+                Scan Debug
+              </div>
+              <p className="mt-2 text-xs font-medium text-white/82">{scanDebugSummary}</p>
+              <p className="mt-1 text-[11px] text-white/58">{lastScanDebugDetails}</p>
+              <p className="mt-1 text-[11px] text-white/50">
+                last status {scanMetricsSnapshot.lastStatus}
+                {scanMetricsSnapshot.lastLowLight === null
+                  ? ""
+                  : scanMetricsSnapshot.lastLowLight
+                    ? " - low-light assist"
+                    : " - normal light"}
+              </p>
+            </div>
+          ) : null}
+          <p className="sr-only">
+            {formattedTime} {formattedDate}
+          </p>
+        </div>
+      </div>
       <AnimatePresence>
         {!isOnline ? (
           <motion.div
@@ -3067,7 +4397,7 @@ const ScanPage = () => {
       </AnimatePresence>
 
       <AnimatePresence>
-        {scanPayload && showResultOverlay ? (
+        {scanDebugEnabled && scanPayload && showResultOverlay ? (
           <ResultOverlay phase={phase} payload={scanPayload} />
         ) : null}
       </AnimatePresence>
@@ -3231,6 +4561,12 @@ const ScanPage = () => {
           </motion.div>
         ) : null}
       </AnimatePresence>
+      <style>{`
+        @keyframes scanLine {
+          0%, 100% { top: 18%; }
+          50% { top: 82%; }
+        }
+      `}</style>
     </main>
   );
 };

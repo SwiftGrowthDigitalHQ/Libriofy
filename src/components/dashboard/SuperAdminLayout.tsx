@@ -6,11 +6,12 @@ import {
   ListChecks, Users2, Wallet
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { SUPER_ADMIN_DASHBOARD_ROUTE, SUPER_ADMIN_LOGIN_ROUTE } from "@/lib/superAdminPaths";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import InstallAppButton from "@/components/pwa/InstallAppButton";
 
 const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
+  { icon: LayoutDashboard, label: "Dashboard", path: SUPER_ADMIN_DASHBOARD_ROUTE },
   { icon: Building2, label: "Libraries", path: "/admin/libraries" },
   { icon: TrendingUp, label: "Revenue", path: "/admin/revenue" },
   { icon: CreditCard, label: "Subscriptions", path: "/admin/subscriptions" },
@@ -68,7 +69,7 @@ const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
           {user && (
             <div className="space-y-1 px-2 py-2">
               <button
-                onClick={async () => { await signOut(); navigate("/auth"); }}
+                onClick={async () => { await signOut(); navigate(SUPER_ADMIN_LOGIN_ROUTE); }}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
               >
                 <LogOut className="w-4 h-4 flex-shrink-0" />
@@ -76,7 +77,7 @@ const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
               </button>
               {!collapsed ? (
                 <button
-                  onClick={async () => { await logoutAllDevices(); navigate("/auth"); }}
+                  onClick={async () => { await logoutAllDevices(); navigate(SUPER_ADMIN_LOGIN_ROUTE); }}
                   className="w-full rounded-lg px-3 py-2 text-left text-xs text-sidebar-foreground/45 transition hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80"
                 >
                   Sign out all devices

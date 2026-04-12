@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock, Wallet } from "lucide-react";
 import PartnerLayout from "@/components/dashboard/PartnerLayout";
@@ -6,12 +6,14 @@ import StatsCard from "@/components/dashboard/StatsCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { usePartnerAffiliate } from "@/hooks/usePartnerAffiliate";
 import { useToast } from "@/hooks/use-toast";
 
 type PartnerDashboardRow = {
   affiliate_id: string;
+  commission_rate?: number | null;
   total_referrals: number;
   total_earnings: number;
   pending_payouts: number;
@@ -48,6 +50,8 @@ const PartnerPayoutsPage = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: partner, isLoading: partnerLoading } = usePartnerAffiliate();
+  const [calcLeads, setCalcLeads] = useState("10");
+  const [calcRate, setCalcRate] = useState("20");
 
   const { data: dashboard, isLoading: dashboardLoading } = useQuery({
     queryKey: ["partner-dashboard-metrics", partner?.id],
@@ -61,11 +65,12 @@ const PartnerPayoutsPage = () => {
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
+      const metrics = data as Record<string, unknown>;
       return {
-        affiliate_id: String(data.affiliate_id),
-        total_referrals: Number(data.total_referrals ?? 0),
-        total_earnings: Number(data.total_earnings ?? 0),
-        pending_payouts: Number(data.pending_payouts ?? 0),
+        affiliate_id: String(metrics.affiliate_id),
+        total_referrals: Number(metrics.total_referrals ?? 0),
+        total_earnings: Number(metrics.total_earnings ?? 0),
+        pending_payouts: Number(metrics.pending_payouts ?? 0),
       };
     },
     enabled: !!partner?.id,
@@ -98,6 +103,10 @@ const PartnerPayoutsPage = () => {
   });
 
   const pendingAmount = dashboard?.pending_payouts ?? 0;
+  const commissionRate = dashboard?.commission_rate ?? partner?.commission_rate ?? 10;
+  const avgCommission = dashboard?.total_referrals
+    ? (dashboard?.total_earnings ?? 0) / Math.max(1, dashboard?.total_referrals ?? 0)
+    : 2000;
 
   const activeRequest = useMemo(
     () => payouts.find((p) => p.status === "pending" || p.status === "approved") ?? null,
@@ -136,6 +145,35 @@ const PartnerPayoutsPage = () => {
           <StatsCard title="Pending Balance" value={dashboardLoading ? "—" : formatInr(pendingAmount)} icon={Clock} iconColor="text-warning" />
           <StatsCard title="Total Sales" value={dashboardLoading ? "—" : String(dashboard?.total_referrals ?? 0)} icon={CheckCircle2} />
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg font-display">Estimated Income Calculator</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Leads</p>
+              <Input value={calcLeads} onChange={(event) => setCalcLeads(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Conversion Rate (%)</p>
+              <Input value={calcRate} onChange={(event) => setCalcRate(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Estimated Earnings</p>
+              <p className="text-lg font-semibold text-foreground">
+                {formatInr(
+                  Math.round(
+                    (Number(calcLeads) || 0) * (Number(calcRate) || 0) / 100 * avgCommission,
+                  ),
+                )}
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground md:col-span-3">
+              Estimate uses your average commission (~{formatInr(Math.round(avgCommission))}). Commission rate is {commissionRate}%.
+            </p>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -230,4 +268,3 @@ const PartnerPayoutsPage = () => {
 };
 
 export default PartnerPayoutsPage;
-

@@ -3,6 +3,8 @@ import type {
   LoginEmailResponse,
   RefreshSessionResponse,
   SendOtpResponse,
+  SuperAdminLoginResponse,
+  SuperAdminVerifyOtpResponse,
   VerifyOtpResponse,
 } from "@/lib/auth.shared";
 import { getDeviceFingerprint, getDeviceLabel } from "@/lib/deviceFingerprint";
@@ -77,6 +79,16 @@ export const verifyOtp = async (phone: string, otp: string) =>
 export const loginWithEmail = async (email: string, password: string) =>
   sendJsonRequest<LoginEmailResponse>("/auth/login-email", {
     body: { email, password },
+  });
+
+export const startSuperAdminLogin = async (email: string, password: string) =>
+  sendJsonRequest<SuperAdminLoginResponse>("/auth/super-admin/login", {
+    body: { email, password },
+  });
+
+export const verifySuperAdminOtp = async (challengeId: string, otp: string) =>
+  sendJsonRequest<SuperAdminVerifyOtpResponse>("/auth/super-admin/verify-otp", {
+    body: { challengeId, otp },
   });
 
 export const refreshAuthSession = async () =>

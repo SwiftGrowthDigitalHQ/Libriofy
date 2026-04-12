@@ -32,14 +32,20 @@ const isStandaloneMode = () =>
     window.matchMedia("(display-mode: window-controls-overlay)").matches ||
     (window.navigator as Navigator & { standalone?: boolean }).standalone === true);
 
+type LegacyMediaQueryList = MediaQueryList & {
+  addListener: (listener: (event: MediaQueryListEvent) => void) => void;
+  removeListener: (listener: (event: MediaQueryListEvent) => void) => void;
+};
+
 const bindMediaQueryListener = (query: MediaQueryList, listener: () => void) => {
   if ("addEventListener" in query) {
     query.addEventListener("change", listener);
     return () => query.removeEventListener("change", listener);
   }
 
-  query.addListener(listener);
-  return () => query.removeListener(listener);
+  const legacyQuery = query as LegacyMediaQueryList;
+  legacyQuery.addListener(listener);
+  return () => legacyQuery.removeListener(listener);
 };
 
 export const PWAProvider = ({ children }: { children: ReactNode }) => {

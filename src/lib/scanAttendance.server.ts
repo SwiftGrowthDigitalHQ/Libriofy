@@ -178,7 +178,7 @@ const resolveStudentRpcTarget = async ({
   libraryId,
   parsedQr,
 }: {
-  supabase: ReturnType<typeof createClient>;
+  supabase: any;
   libraryId: string;
   parsedQr: ValidStudentQrPayload;
 }): Promise<StudentRpcTarget> => {

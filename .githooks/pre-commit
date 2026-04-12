@@ -1,0 +1,3 @@
+#!/bin/sh
+
+node ./scripts/check-delivery-requirements.mjs --staged

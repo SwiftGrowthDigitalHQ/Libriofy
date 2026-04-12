@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { maskPhoneNumber, normalizePhoneNumber } from "@/lib/auth.shared";
+import { SUPER_ADMIN_DASHBOARD_ROUTE } from "@/lib/superAdminPaths";
 import { supabase, supabaseAuth } from "@/integrations/supabase/client";
 
 type AuthPageProps = {
@@ -90,7 +91,7 @@ const getRedirectPath = async (userId: string) => {
   ]);
 
   if (roles?.some((role) => role.role === "super_admin")) {
-    return "/admin";
+    return SUPER_ADMIN_DASHBOARD_ROUTE;
   }
 
   if (roles?.some((role) => role.role === "partner") || affiliate) {
@@ -127,6 +128,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
   const location = useLocation();
   const { toast } = useToast();
   const { getCurrentSession, requestPasswordReset, sendOtp, signIn, signUp, updatePassword, verifyOtp } = useAuth();
+  const routeState = location.state as { from?: string } | null;
   const initialAuthMode: AuthMode =
     initialMode === "signup"
       ? "signup"
@@ -175,13 +177,25 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
       return;
     }
 
-    const nextPath = await getRedirectPath(userId);
+    const requestedPath =
+      typeof routeState?.from === "string" && routeState.from !== "/auth" && routeState.from !== "/login"
+        ? routeState.from
+        : null;
+    const nextPath = requestedPath ?? await getRedirectPath(userId);
+
+    console.log("[AuthPage] login redirect resolved", {
+      currentRoute: location.pathname,
+      currentUser: { email: currentSession?.user.email ?? null, id: userId },
+      redirectTo: nextPath,
+      requestedPath,
+    });
+
     setSuccessState(true);
     navigator.vibrate?.(45);
     window.setTimeout(() => {
       navigate(nextPath, { replace: true });
     }, 850);
-  }, [getCurrentSession, navigate]);
+  }, [getCurrentSession, location.pathname, navigate, routeState?.from]);
 
   const handleSendOtp = async () => {
     const normalizedPhone = normalizePhoneNumber(phone);
@@ -263,7 +277,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
     }
 
     const controller = new AbortController();
-    const credentialRequest = (navigator.credentials as CredentialContainer & {
+    const credentialRequest = (navigator.credentials as CredentialsContainer & {
       get?: (options: { otp: { transport: string[] }; signal: AbortSignal }) => Promise<WebOtpCredentialLike | null>;
     }).get;
 

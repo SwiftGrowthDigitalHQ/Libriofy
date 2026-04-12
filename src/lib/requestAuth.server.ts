@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
 
-import type { AuthUser } from "@/lib/auth.shared";
+import type { AuthUser } from "./auth.shared";
 
 type EnvLike = Record<string, string | undefined>;
 

@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { getStoredAuthUser } from "@/lib/authSession";
 import { classifyAppError, extractErrorMessage } from "@/lib/errorHandling";
+import { captureClientError, isClientMonitoringEnabled } from "@/lib/observability/clientMonitoring";
 
 type LogAppErrorInput = {
   error: unknown;
@@ -29,11 +30,21 @@ export const logAppError = async ({
   source,
   userId,
 }: LogAppErrorInput) => {
-  try {
-    const resolvedUserId = await resolveUserId(userId);
-    const { kind } = classifyAppError(error);
-    const rawMessage = extractErrorMessage(error) || "Unexpected client error";
+  const resolvedUserId = await resolveUserId(userId);
+  const { kind } = classifyAppError(error);
+  const rawMessage = extractErrorMessage(error) || "Unexpected client error";
 
+  if (isClientMonitoringEnabled()) {
+    captureClientError(error, {
+      errorType: kind,
+      route: route || "/",
+      source,
+      userId: resolvedUserId,
+      ...(metadata ?? {}),
+    });
+  }
+
+  try {
     const { error: insertError } = await supabase.from("app_error_logs").insert({
       error_message: rawMessage.slice(0, 1200),
       error_type: kind,

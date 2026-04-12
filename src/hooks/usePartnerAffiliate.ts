@@ -30,17 +30,18 @@ export const usePartnerAffiliate = () => {
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
+      const partner = data as Record<string, unknown>;
       return {
-        id: String(data.id),
-        code: String(data.code ?? ""),
-        name: String(data.name ?? ""),
-        email: String(data.email ?? ""),
-        phone: data.phone == null ? null : String(data.phone),
-        city: data.city == null ? null : String(data.city),
-        payout_method: data.payout_method == null ? null : String(data.payout_method),
-        upi_id: data.upi_id == null ? null : String(data.upi_id),
-        commission_rate: Number(data.commission_rate ?? 0),
-        created_at: String(data.created_at ?? ""),
+        id: String(partner.id),
+        code: String(partner.code ?? ""),
+        name: String(partner.name ?? ""),
+        email: String(partner.email ?? ""),
+        phone: partner.phone == null ? null : String(partner.phone),
+        city: partner.city == null ? null : String(partner.city),
+        payout_method: partner.payout_method == null ? null : String(partner.payout_method),
+        upi_id: partner.upi_id == null ? null : String(partner.upi_id),
+        commission_rate: Number(partner.commission_rate ?? 0),
+        created_at: String(partner.created_at ?? ""),
       };
     },
     enabled: !!user?.id,
