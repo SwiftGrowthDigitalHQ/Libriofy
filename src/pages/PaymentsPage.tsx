@@ -636,26 +636,21 @@ const resolvePaymentSearchStudentIds = async ({
   return (data ?? []).map((student) => student.id);
 };
 
-const applyPaymentStatusFilter = <T,>(
+const applyPaymentStatusFilter = <T extends { in: (column: string, values: readonly string[]) => T; lt: (column: string, value: string) => T }>(
   query: T,
   filter: PaymentTableStatusFilter,
   overdueDateIso: string,
 ) => {
-  const typedQuery = query as {
-    in: (column: string, values: readonly string[]) => T;
-    lt: (column: string, value: string) => T;
-  };
-
   if (filter === "paid") {
-    return typedQuery.in("status", SUCCESSFUL_PAYMENT_STATUSES);
+    return query.in("status", SUCCESSFUL_PAYMENT_STATUSES);
   }
 
   if (filter === "pending") {
-    return typedQuery.in("status", PENDING_PAYMENT_STATUSES);
+    return query.in("status", PENDING_PAYMENT_STATUSES);
   }
 
   if (filter === "overdue") {
-    return typedQuery.in("status", PENDING_PAYMENT_STATUSES).lt("period_end", overdueDateIso);
+    return query.in("status", PENDING_PAYMENT_STATUSES).lt("period_end", overdueDateIso);
   }
 
   return query;

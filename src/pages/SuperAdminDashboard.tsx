@@ -14,6 +14,7 @@ import CityDistributionTableCard from "@/components/dashboard/growth/CityDistrib
 import LibraryGrowthChartCard from "@/components/dashboard/growth/LibraryGrowthChartCard";
 import TopPerformingLibrariesCard from "@/components/dashboard/growth/TopPerformingLibrariesCard";
 import PlatformHealthCard from "@/components/dashboard/growth/PlatformHealthCard";
+import type { AdoptionLevel } from "@/components/dashboard/growth/StateDistributionTableCard";
 import CoverageGoalTrackerCard from "@/components/dashboard/growth/CoverageGoalTrackerCard";
 import AiMarketInsightCard from "@/components/dashboard/growth/AiMarketInsightCard";
 import AiLeadFinderCard from "@/components/dashboard/growth/AiLeadFinderCard";
@@ -194,7 +195,7 @@ const SuperAdminDashboard = () => {
   const stateDistributionRows = useMemo(() => {
     const rows = stateAnalytics.map((row) => {
       const librariesCount = Number(row.libraries || 0);
-      const adoption = librariesCount >= 4 ? "High" : librariesCount >= 1 ? "Medium" : "None";
+      const adoption: AdoptionLevel = librariesCount >= 4 ? "High" : librariesCount >= 1 ? "Medium" : "None";
       return { state: row.state, libraries: librariesCount, adoption };
     });
     return rows.sort((a, b) => b.libraries - a.libraries || a.state.localeCompare(b.state));

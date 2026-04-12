@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
-import SeatGrid, { type SeatItem, type SeatSlotKey } from "@/components/dashboard/SeatGrid";
+import SeatGrid, { type SeatItem, type SeatSlotKey, type SeatSlotStatus } from "@/components/dashboard/SeatGrid";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useAuth } from "@/hooks/useAuth";
@@ -153,9 +153,10 @@ const SeatMapPage = () => {
     queryFn: async (): Promise<StudentSlotAssignmentRow[]> => {
       if (!resolvedLibraryId) return [];
       const { data, error } = await supabase
-        .from("student_slot_assignments" as any)
+        .from("student_slot_assignments")
         .select("*")
-        .eq("library_id", resolvedLibraryId);
+        .eq("library_id", resolvedLibraryId)
+        .returns<StudentSlotAssignmentRow[]>();
       if (error) {
         if (isMissingRelationError(error, "student_slot_assignments")) {
           setSlotAssignmentsTableAvailable(false);
@@ -246,6 +247,7 @@ const SeatMapPage = () => {
         const assignedSlot = slotBySeatPosition.get(slotLayout.key) ?? null;
         const bookingKey = `${seat.id}:${slotLayout.key}`;
         const studentNames = bookingsBySeatAndSlot.get(bookingKey) ?? [];
+        const status: SeatSlotStatus = studentNames.length > 0 ? "booked" : "available";
 
         return {
           key: slotLayout.key,
@@ -253,7 +255,7 @@ const SeatMapPage = () => {
           shortLabel: slotLayout.shortLabel,
           slotId: assignedSlot?.id ?? null,
           slotName: assignedSlot?.name ?? slotLayout.label,
-          status: studentNames.length > 0 ? "booked" : "available",
+          status,
           student: summarizeValue(studentNames),
           timeLabel: assignedSlot ? buildSlotRangeLabel(assignedSlot) : undefined,
         };

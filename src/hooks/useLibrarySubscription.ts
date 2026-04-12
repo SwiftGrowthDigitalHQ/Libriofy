@@ -29,22 +29,21 @@ export const useLibrarySubscription = (libraryIdOverride?: string | null) => {
 
       if (normalizedPlanCode) {
         const { data: planData, error: planError } = await supabase
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .from("subscription_plans" as any)
+          .from("subscription_plans")
           .select("code, name, price, seats_limit, lockers_limit")
           .eq("code", normalizedPlanCode)
+          .returns<SubscriptionPlanCatalogRecord[]>()
           .maybeSingle();
 
         if (planError) throw planError;
 
         if (planData) {
-          const planRecord = planData as Record<string, unknown>;
           currentPlan = {
-            code: String(planRecord.code ?? normalizedPlanCode),
-            name: planRecord.name == null ? null : String(planRecord.name),
-            price: planRecord.price == null ? null : Number(planRecord.price),
-            seats_limit: planRecord.seats_limit == null ? null : Number(planRecord.seats_limit),
-            lockers_limit: planRecord.lockers_limit == null ? null : Number(planRecord.lockers_limit),
+            code: planData.code ?? normalizedPlanCode,
+            name: planData.name ?? null,
+            price: planData.price ?? null,
+            seats_limit: planData.seats_limit ?? null,
+            lockers_limit: planData.lockers_limit ?? null,
           };
         }
       }

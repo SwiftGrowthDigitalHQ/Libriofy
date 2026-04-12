@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase, supabaseAuth } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -89,10 +90,10 @@ const PartnerRegistrationPage = () => {
       const userId = authData?.user?.id ?? null;
       if (userId) {
         const { data, error } = await supabase
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .from("affiliates" as any)
+          .from("affiliates")
           .select("code")
           .eq("user_id", userId)
+          .returns<Database["public"]["Tables"]["affiliates"]["Row"][]>()
           .maybeSingle();
         if (!error && data?.code) {
           setPartnerCode(String(data.code));

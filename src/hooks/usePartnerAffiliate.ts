@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { Database } from "@/integrations/supabase/types";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 
@@ -23,14 +24,14 @@ export const usePartnerAffiliate = () => {
     queryFn: async (): Promise<PartnerAffiliate | null> => {
       if (!user?.id) return null;
       const { data, error } = await supabase
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .from("affiliates" as any)
+        .from("affiliates")
         .select("id, code, name, email, phone, city, payout_method, upi_id, commission_rate, created_at")
         .eq("user_id", user.id)
+        .returns<Database["public"]["Tables"]["affiliates"]["Row"][]>()
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
-      const partner = data as Record<string, unknown>;
+      const partner = data;
       return {
         id: String(partner.id),
         code: String(partner.code ?? ""),

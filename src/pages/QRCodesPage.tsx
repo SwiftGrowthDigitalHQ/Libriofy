@@ -265,7 +265,7 @@ const QRCodesPage = () => {
           name: `${student.full_name}-${student.seat_number || "seat"}`,
           node: bulkRefs.current[student.id],
         }))
-        .filter((item): item is { name: string; node: HTMLElement } => !!item.node);
+        .filter((item): item is { name: string; node: HTMLDivElement } => !!item.node);
       await downloadBulkIdCardZip({
         items,
         zipName: `${libraryName}-id-cards`,

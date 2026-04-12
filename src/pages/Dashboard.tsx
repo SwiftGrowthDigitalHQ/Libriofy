@@ -736,12 +736,13 @@ const Dashboard = () => {
           .select("id, status, monthly_price")
           .eq("library_id", resolvedLibraryId),
         supabase
-          .from("automated_calls" as any)
+          .from("automated_calls")
           .select("call_status, created_at, estimated_recovery_impact, pickup_status")
           .eq("library_id", resolvedLibraryId)
           .gte("created_at", startCurrentMonth.toISOString())
           .lte("created_at", now.toISOString())
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .returns<AutomatedCallDashboardRow[]>(),
       ]);
 
       if (libraryRes.error) throw libraryRes.error;

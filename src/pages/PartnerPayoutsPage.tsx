@@ -58,14 +58,14 @@ const PartnerPayoutsPage = () => {
     queryFn: async (): Promise<PartnerDashboardRow | null> => {
       if (!partner?.id) return null;
       const { data, error } = await supabase
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .from("admin_affiliate_dashboard" as any)
+        .from("admin_affiliate_dashboard")
         .select("affiliate_id, total_referrals, total_earnings, pending_payouts")
         .eq("affiliate_id", partner.id)
+        .returns<PartnerDashboardRow[]>()
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
-      const metrics = data as Record<string, unknown>;
+      const metrics = data;
       return {
         affiliate_id: String(metrics.affiliate_id),
         total_referrals: Number(metrics.total_referrals ?? 0),

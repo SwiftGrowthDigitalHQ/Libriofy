@@ -34,18 +34,7 @@ export type StudentRenewalRow = Pick<
   "expiry_date" | "full_name" | "id" | "phone" | "plan" | "qr_code" | "seat_number" | "status"
 >;
 
-export type ReminderLogRow = {
-  created_at: string;
-  delivery_channel: string | null;
-  error_message: string | null;
-  id: string;
-  message: string;
-  phone: string | null;
-  reminder_type: string;
-  sent_at: string | null;
-  status: string;
-  student_id: string | null;
-};
+export type ReminderLogRow = Database["public"]["Tables"]["reminder_logs"]["Row"];
 
 export type ReminderLogWithStudent = ReminderLogRow & {
   student: Pick<Database["public"]["Tables"]["students"]["Row"], "full_name" | "phone" | "seat_number"> | null;
@@ -107,42 +96,44 @@ const getRenewalDateRange = () => {
   };
 };
 
-const applyRenewalFilter = <T>(query: T, filter: RenewalStatusFilter) => {
-  const typedQuery = query as {
-    eq: (column: string, value: string) => T;
-    gt: (column: string, value: string) => T;
-    gte: (column: string, value: string) => T;
-    is: (column: string, value: null) => T;
-    lte: (column: string, value: string) => T;
-    neq: (column: string, value: string) => T;
-    not: (column: string, operator: string, value: null) => T;
-    or: (filters: string) => T;
-  };
+type RenewalFilterQuery<T> = {
+  eq: (column: string, value: string) => T;
+  gt: (column: string, value: string) => T;
+  gte: (column: string, value: string) => T;
+  is: (column: string, value: null) => T;
+  lte: (column: string, value: string) => T;
+  neq: (column: string, value: string) => T;
+  not: (column: string, operator: string, value: null) => T;
+  or: (filters: string) => T;
+};
+
+const applyRenewalFilter = <T extends RenewalFilterQuery<T>>(query: T, filter: RenewalStatusFilter) => {
   const { soonIso, todayIso } = getRenewalDateRange();
 
   if (filter === "expired") {
-    return typedQuery.eq("status", "expired");
+    return query.eq("status", "expired");
   }
 
   if (filter === "expiring_soon") {
-    return typedQuery.not("expiry_date", "is", null).gte("expiry_date", todayIso).lte("expiry_date", soonIso).neq("status", "expired");
+    return query
+      .not("expiry_date", "is", null)
+      .gte("expiry_date", todayIso)
+      .lte("expiry_date", soonIso)
+      .neq("status", "expired");
   }
 
   if (filter === "active") {
-    return typedQuery.eq("status", "active").not("expiry_date", "is", null).gt("expiry_date", soonIso);
+    return query.eq("status", "active").not("expiry_date", "is", null).gt("expiry_date", soonIso);
   }
 
   if (filter === "no_expiry") {
-    return typedQuery.is("expiry_date", null);
+    return query.is("expiry_date", null);
   }
 
   return query;
 };
 
-const applyRenewalSearch = <T>(query: T, search: string) => {
-  const typedQuery = query as {
-    or: (filters: string) => T;
-  };
+const applyRenewalSearch = <T extends { or: (filters: string) => T }>(query: T, search: string) => {
   const trimmedSearch = search.trim();
 
   if (!trimmedSearch) {
@@ -150,24 +141,21 @@ const applyRenewalSearch = <T>(query: T, search: string) => {
   }
 
   const pattern = `%${escapeIlikeValue(trimmedSearch)}%`;
-  return typedQuery.or(`full_name.ilike.${pattern},phone.ilike.${pattern}`);
+  return query.or(`full_name.ilike.${pattern},phone.ilike.${pattern}`);
 };
 
-const applyReminderLogStatusFilter = <T>(query: T, filter: ReminderLogStatusFilter) => {
-  const typedQuery = query as {
-    eq: (column: string, value: string) => T;
-  };
+const applyReminderLogStatusFilter = <T extends { eq: (column: string, value: string) => T }>(query: T, filter: ReminderLogStatusFilter) => {
 
   if (filter === "success") {
-    return typedQuery.eq("status", "sent");
+    return query.eq("status", "sent");
   }
 
   if (filter === "failed") {
-    return typedQuery.eq("status", "failed");
+    return query.eq("status", "failed");
   }
 
   if (filter === "pending") {
-    return typedQuery.eq("status", "queued");
+    return query.eq("status", "queued");
   }
 
   return query;
@@ -287,7 +275,7 @@ export const fetchRenewalsOverview = async (libraryId: string | null): Promise<R
       .eq("library_id", libraryId)
       .or(`status.eq.expired,expiry_date.lt.${todayIso}`),
     supabase
-      .from("reminder_logs" as any)
+      .from("reminder_logs")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
       .in("reminder_type", [...REMINDER_LOG_TYPES])
@@ -295,13 +283,13 @@ export const fetchRenewalsOverview = async (libraryId: string | null): Promise<R
       .gte("sent_at", `${todayIso}T00:00:00`)
       .lt("sent_at", `${nextDayIso}T00:00:00`),
     supabase
-      .from("reminder_logs" as any)
+      .from("reminder_logs")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
       .in("reminder_type", [...REMINDER_LOG_TYPES])
       .eq("status", "queued"),
     supabase
-      .from("reminder_logs" as any)
+      .from("reminder_logs")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
       .in("reminder_type", [...REMINDER_LOG_TYPES])
@@ -382,16 +370,17 @@ export const fetchRenewalReminderLogsPage = async ({
 
   const safeLimit = Math.max(1, limit);
   let countQuery = supabase
-    .from("reminder_logs" as any)
+    .from("reminder_logs")
     .select("id", { count: "exact", head: true })
     .eq("library_id", libraryId)
     .in("reminder_type", [...REMINDER_LOG_TYPES]);
 
   let query = supabase
-    .from("reminder_logs" as any)
+    .from("reminder_logs")
     .select("id, created_at, reminder_type, phone, message, status, sent_at, delivery_channel, error_message, student_id")
     .eq("library_id", libraryId)
-    .in("reminder_type", [...REMINDER_LOG_TYPES]);
+    .in("reminder_type", [...REMINDER_LOG_TYPES])
+    .returns<ReminderLogRow[]>();
 
   countQuery = applyReminderLogStatusFilter(countQuery, filter);
   query = applyReminderLogStatusFilter(query, filter);
@@ -410,11 +399,11 @@ export const fetchRenewalReminderLogsPage = async ({
     throw error;
   }
 
-  const logs = ((data ?? []) as ReminderLogRow[]).filter(Boolean);
+  const logs = (data ?? []).filter(Boolean);
   const hasMore = logs.length > safeLimit;
   const visibleLogs = hasMore ? logs.slice(0, safeLimit) : logs;
   const enrichedLogs = await attachStudentsToReminderLogs(visibleLogs);
-  const nextCursor = hasMore && visibleLogs.length > 0 ? visibleLogs[visibleLogs.length - 1].created_at : null;
+  const nextCursor = hasMore && visibleLogs.length > 0 ? visibleLogs[visibleLogs.length - 1].created_at ?? null : null;
 
   return {
     data: enrichedLogs,
@@ -441,10 +430,11 @@ export const fetchLatestRenewalReminderLogs = async ({
 
   const safeLimit = Math.max(1, limit);
   let query = supabase
-    .from("reminder_logs" as any)
+    .from("reminder_logs")
     .select("id, created_at, reminder_type, phone, message, status, sent_at, delivery_channel, error_message, student_id")
     .eq("library_id", libraryId)
-    .in("reminder_type", [...REMINDER_LOG_TYPES]);
+    .in("reminder_type", [...REMINDER_LOG_TYPES])
+    .returns<ReminderLogRow[]>();
 
   query = applyReminderLogStatusFilter(query, filter);
   query = query.order("created_at", { ascending: false }).limit(safeLimit);
@@ -459,5 +449,5 @@ export const fetchLatestRenewalReminderLogs = async ({
     throw error;
   }
 
-  return attachStudentsToReminderLogs(((data ?? []) as ReminderLogRow[]).filter(Boolean));
+  return attachStudentsToReminderLogs((data ?? []).filter(Boolean));
 };

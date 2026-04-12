@@ -45,9 +45,9 @@ const SuperAdminLeads = () => {
     queryFn: async (): Promise<LeadRow[]> => {
       const { data, error } = await supabase
         .from("leads")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .select("id, partner_id, library_name, owner_name, phone, city, seats, status, created_at, converted_at, affiliates(code, name)" as any)
-        .order("created_at", { ascending: false });
+        .select("id, partner_id, library_name, owner_name, phone, city, seats, status, created_at, converted_at, affiliates(code, name)")
+        .order("created_at", { ascending: false })
+        .returns<LeadRow[]>();
       if (error) throw error;
       return (data ?? []) as LeadRow[];
     },
@@ -207,4 +207,3 @@ const SuperAdminLeads = () => {
 };
 
 export default SuperAdminLeads;
-

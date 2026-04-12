@@ -172,9 +172,9 @@ const normalizeStudent = (value: unknown): StudentListItem => {
     name: String(record.name ?? record.full_name ?? record.fullName ?? "Unknown student"),
     phone: toNullableString(record.phone ?? record.phone_number ?? record.phoneNumber),
     photoUrl: resolveStudentPhotoUrl({
-      photoThumbnailPath: record.photoThumbnailPath ?? record.photo_thumbnail_path,
-      photoUrl: record.photoUrl ?? record.photo_url,
-      photoVersion: record.photoVersion ?? record.photo_version,
+      photoThumbnailPath: toNullableString(record.photoThumbnailPath ?? record.photo_thumbnail_path),
+      photoUrl: toNullableString(record.photoUrl ?? record.photo_url),
+      photoVersion: toNumber(record.photoVersion ?? record.photo_version, 0) || null,
     }),
     plan: toNullableString(record.plan ?? record.plan_name ?? record.planName),
     seatId: toNullableString(record.seatId ?? record.seat_id),
@@ -259,8 +259,14 @@ const getDerivedStatus = (amountDue: number, overdueDays: number): StudentPaymen
   return "Unpaid";
 };
 
-const applyStudentBaseFilters = (
-  query: ReturnType<typeof supabase.from<"students", FallbackStudentRow>>,
+type StudentFilterQuery<T> = {
+  eq: (column: string, value: string) => T;
+  ilike: (column: string, pattern: string) => T;
+  or: (filters: string) => T;
+};
+
+const applyStudentBaseFilters = <T extends StudentFilterQuery<T>>(
+  query: T,
   params: StudentsListParams,
   capabilities: StudentSchemaCapabilities = { aadhaarDocuments: true, gender: true, photoAssets: true },
 ) => {
@@ -309,22 +315,23 @@ const fetchStudentRowsWithSchemaFallback = async (params: StudentsListParams) =>
   let lastSchemaError: unknown = null;
 
   for (const capabilities of STUDENT_SCHEMA_ATTEMPTS) {
-    const { data, error, count } = await applyStudentBaseFilters(
+    const query = applyStudentBaseFilters(
       supabase
         .from("students")
         .select(createStudentSelectClause(capabilities), {
           count: "exact",
         })
-        .order("full_name", { ascending: true }),
+        .order("full_name", { ascending: true }) as unknown as StudentFilterQuery<any>,
       params,
       capabilities,
     );
+    const { data, error, count } = await query;
 
     if (!error) {
       return {
         capabilities,
         count: count ?? 0,
-        rows: (data ?? []) as FallbackStudentRow[],
+        rows: (data ?? []) as unknown as FallbackStudentRow[],
       };
     }
 
@@ -441,7 +448,11 @@ const fetchStudentSupplementsWithFallback = async (studentIds: string[]) => {
       .filter(Boolean)
       .join(", ");
 
-    const { data, error } = await supabase.from("students").select(selectClause).in("id", studentIds);
+    const { data, error } = await supabase
+      .from("students")
+      .select(selectClause)
+      .in("id", studentIds)
+      .returns<StudentHttpSupplementRow[]>();
 
     if (!error) {
       return {

@@ -193,14 +193,14 @@ const SuperAdminSubscriptions = () => {
     queryKey: ["admin-subscription-plans"],
     queryFn: async (): Promise<SubscriptionPlanAdminRow[]> => {
       const { data, error } = await supabase
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .from("subscription_plans" as any)
+        .from("subscription_plans")
         .select("*")
         .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: true })
+        .returns<Database["public"]["Tables"]["subscription_plans"]["Row"][]>();
       if (error) throw error;
 
-      return (data as Array<Record<string, unknown>>).map((row) => ({
+      return (data ?? []).map((row) => ({
         id: String(row.id),
         code: normalizePlanCode(String(row.code ?? "")),
         name: String(row.name ?? ""),
@@ -390,16 +390,14 @@ const SuperAdminSubscriptions = () => {
 
       if (editingPlan) {
         const { error } = await supabase
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .from("subscription_plans" as any)
-          .update(payload)
+          .from("subscription_plans")
+          .update(payload as Database["public"]["Tables"]["subscription_plans"]["Update"])
           .eq("id", editingPlan.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .from("subscription_plans" as any)
-          .insert(payload);
+          .from("subscription_plans")
+          .insert(payload as Database["public"]["Tables"]["subscription_plans"]["Insert"]);
         if (error) throw error;
       }
     },
@@ -428,8 +426,7 @@ const SuperAdminSubscriptions = () => {
   const deletePlanMutation = useMutation({
     mutationFn: async (planId: string) => {
       const { error } = await supabase
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .from("subscription_plans" as any)
+        .from("subscription_plans")
         .delete()
         .eq("id", planId);
       if (error) throw error;

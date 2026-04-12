@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import type { Json } from "@/integrations/supabase/types";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
@@ -213,7 +214,8 @@ const PartnerLeadsPage = () => {
         .from("leads")
         .select(buildLeadSelect(legacySchema))
         .eq("partner_id", partner.id)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .returns<LeadRow[]>();
       if (!error) {
         return (data ?? []) as LeadRow[];
       }
@@ -224,7 +226,8 @@ const PartnerLeadsPage = () => {
           .from("leads")
           .select(buildLeadSelect(true))
           .eq("partner_id", partner.id)
-          .order("created_at", { ascending: false });
+          .order("created_at", { ascending: false })
+          .returns<LeadRow[]>();
         if (fallback.error) throw fallback.error;
         return ((fallback.data ?? []) as LeadRow[]).map((lead) => ({
           ...lead,
@@ -261,13 +264,13 @@ const PartnerLeadsPage = () => {
     onError: (error: Error) => toast({ title: "Unable to update lead", description: error.message, variant: "destructive" }),
   });
 
-  const logActivity = async (leadId: string, action: string, metadata?: Record<string, unknown>) => {
+  const logActivity = async (leadId: string, action: string, metadata?: Json) => {
     if (!partner?.id) return;
     const { error } = await supabase.from("partner_lead_activity").insert({
       lead_id: leadId,
       partner_id: partner.id,
       action_type: action,
-      metadata: metadata ?? {},
+      metadata: metadata ?? null,
     });
     if (error) {
       const message = String(error.message ?? "");

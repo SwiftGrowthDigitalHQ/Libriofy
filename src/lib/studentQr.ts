@@ -578,18 +578,20 @@ export const parseStudentQrPayload = async (
         now: options.now,
       });
 
-      if (verified.valid) {
-        return {
+      if (verified.valid === true) {
+        const verifiedPayload: StudentQrVerifiedPayload = {
           ...verified,
           rawValue: trimmed,
-        } satisfies StudentQrVerifiedPayload;
+        };
+        return verifiedPayload;
       }
 
-      return {
+      const invalidPayload: StudentQrInvalidPayload = {
         ...verified,
         rawValue: trimmed,
         source: candidate.source,
-      } satisfies StudentQrInvalidPayload;
+      };
+      return invalidPayload;
     }
 
     if (allowLegacy) {

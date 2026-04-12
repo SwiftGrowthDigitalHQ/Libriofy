@@ -175,11 +175,11 @@ const SuperAdminPartners = () => {
     queryFn: async (): Promise<Array<Record<string, unknown>>> => {
       if (!salesPartner?.affiliate_id) return [];
       const { data, error } = await supabase
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .from("affiliate_commissions" as any)
-        .select("id, commission_rate, commission_earned, status, created_at, libraries(name, city), subscription_payments(amount)" as any)
+        .from("affiliate_commissions")
+        .select("id, commission_rate, commission_earned, status, created_at, libraries(name, city), subscription_payments(amount)")
         .eq("affiliate_id", salesPartner.affiliate_id)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .returns<Array<Record<string, unknown>>>();
       if (error) throw error;
       return (data ?? []) as Array<Record<string, unknown>>;
     },

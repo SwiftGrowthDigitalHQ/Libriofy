@@ -76,7 +76,7 @@ const createInitialForm = (): StudentFormState => ({
   start_date: new Date().toISOString().slice(0, 10),
 });
 
-const buildPlanLabel = (plan: Pick<PlanRow, "name" | "price">) => `${plan.name} - Rs ${Number(plan.price).toLocaleString("en-IN")}`;
+const buildPlanLabel = (plan: Pick<PlanRow, "id" | "name" | "price">) => `${plan.name} - Rs ${Number(plan.price).toLocaleString("en-IN")}`;
 
 const buildSlotLabel = (slot: Pick<SlotRow, "end_time" | "name" | "start_time">) =>
   `${slot.name} (${formatTimeLabel(slot.start_time)} - ${formatTimeLabel(slot.end_time)})`;

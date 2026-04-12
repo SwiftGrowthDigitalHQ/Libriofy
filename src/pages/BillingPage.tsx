@@ -151,14 +151,14 @@ const BillingPage = () => {
     queryKey: ["subscription-plans"],
     queryFn: async (): Promise<SubscriptionPlanDto[]> => {
       const { data, error } = await supabase
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .from("subscription_plans" as any)
+        .from("subscription_plans")
         .select("code, name, description, price, seats_limit, lockers_limit, features, is_active, sort_order")
         .order("sort_order", { ascending: true })
-        .order("price", { ascending: true });
+        .order("price", { ascending: true })
+        .returns<Database["public"]["Tables"]["subscription_plans"]["Row"][]>();
       if (error) throw error;
 
-      return (data as Array<Record<string, unknown>>).map((row) => ({
+      return (data ?? []).map((row) => ({
         code: normalizePlanCode(String(row.code ?? "")),
         name: String(row.name ?? ""),
         description: row.description == null ? null : String(row.description),
