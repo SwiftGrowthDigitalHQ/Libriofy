@@ -583,10 +583,6 @@ export default defineConfig(({ mode }) => {
               return "vendor-routing";
             }
 
-            if (id.includes("react") || id.includes("scheduler")) {
-              return "vendor-react";
-            }
-
             if (
               id.includes("date-fns") ||
               id.includes("zod") ||
