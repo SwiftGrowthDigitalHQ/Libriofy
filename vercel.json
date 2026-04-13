@@ -53,7 +53,7 @@
       "destination": "/api/health/ops"
     },
     {
-      "source": "/((?!assets/|favicon.ico|robots.txt|sitemap.xml|service-worker.js|manifest.webmanifest|release.json).*)",
+      "source": "/((?!api/|assets/|favicon.ico|robots.txt|sitemap.xml|service-worker.js|manifest.webmanifest|release.json).*)",
       "destination": "/index.html"
     }
   ]

@@ -10,6 +10,11 @@ type ApiStatusPayload = {
   value?: unknown;
 };
 
+type ApiMaintenanceStatusResult = {
+  allowDatabaseFallback: boolean;
+  status: MaintenanceStatus | null;
+};
+
 const DEFAULT_TIMEOUT_MS = 3500;
 
 const readEnvMaintenanceMode = (): MaintenanceStatus | null => {
@@ -27,9 +32,14 @@ const readEnvMaintenanceMode = (): MaintenanceStatus | null => {
   };
 };
 
-const fetchApiMaintenanceStatus = async (timeoutMs = DEFAULT_TIMEOUT_MS): Promise<MaintenanceStatus | null> => {
+const fetchApiMaintenanceStatus = async (
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<ApiMaintenanceStatusResult> => {
   if (typeof window === "undefined") {
-    return null;
+    return {
+      allowDatabaseFallback: true,
+      status: null,
+    };
   }
 
   const controller = new AbortController();
@@ -46,13 +56,30 @@ const fetchApiMaintenanceStatus = async (timeoutMs = DEFAULT_TIMEOUT_MS): Promis
     });
 
     if (!response.ok) {
-      return null;
+      return {
+        allowDatabaseFallback: response.status !== 404,
+        status: null,
+      };
+    }
+
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (contentType.includes("text/html")) {
+      return {
+        allowDatabaseFallback: false,
+        status: null,
+      };
     }
 
     const payload = (await response.json().catch(() => null)) as ApiStatusPayload | null;
-    return normalizeMaintenanceStatusPayload(payload, "api");
+    return {
+      allowDatabaseFallback: true,
+      status: normalizeMaintenanceStatusPayload(payload, "api"),
+    };
   } catch {
-    return null;
+    return {
+      allowDatabaseFallback: true,
+      status: null,
+    };
   } finally {
     window.clearTimeout(timeoutId);
   }
@@ -92,13 +119,15 @@ export const loadMaintenanceStatus = async ({
   timeoutMs?: number;
 } = {}): Promise<MaintenanceStatus> => {
   const apiStatus = await fetchApiMaintenanceStatus(timeoutMs);
-  if (apiStatus) {
-    return apiStatus;
+  if (apiStatus.status) {
+    return apiStatus.status;
   }
 
-  const databaseStatus = await fetchDatabaseMaintenanceStatus();
-  if (databaseStatus) {
-    return databaseStatus;
+  if (apiStatus.allowDatabaseFallback) {
+    const databaseStatus = await fetchDatabaseMaintenanceStatus();
+    if (databaseStatus) {
+      return databaseStatus;
+    }
   }
 
   const envStatus = readEnvMaintenanceMode();
@@ -136,4 +165,3 @@ export const setMaintenanceMode = async (enabled: boolean): Promise<MaintenanceS
     updatedAt: data?.updated_at ?? null,
   };
 };
-

@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import PartnerPortalHome from "./PartnerPortalHome";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,16 +7,6 @@ const PartnerEntryPage = () => {
   const location = useLocation();
   const { user, loading } = useAuth();
   const { data: roles, isLoading: rolesLoading } = useUserRole();
-
-  useEffect(() => {
-    console.log("[PartnerEntryPage] route check", {
-      currentRoute: location.pathname,
-      currentUser: user ? { id: user.id, email: user.email } : null,
-      roles: roles?.map((role) => role.role) ?? [],
-      loading,
-      rolesLoading,
-    });
-  }, [location.pathname, loading, rolesLoading, roles, user]);
 
   if (loading || (user && rolesLoading)) {
     return null;
@@ -32,9 +21,6 @@ const PartnerEntryPage = () => {
   }
 
   const destination = getRoleHomeRoute(roles);
-  console.log("[PartnerEntryPage] redirecting non-partner user", {
-    destination,
-  });
   return <Navigate to={destination === "/auth" ? "/dashboard" : destination} replace />;
 };
 
