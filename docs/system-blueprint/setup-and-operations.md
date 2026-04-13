@@ -45,7 +45,6 @@ npx supabase db push
 5. Make sure repo hooks are active:
 
 ```bash
-npm run setup:hooks
 ```
 
 6. Start the app:
@@ -254,7 +253,6 @@ Full infra runbook: [devops-and-infra.md](./devops-and-infra.md)
 
 1. Apply migrations to the target Supabase project.
 2. Regenerate the Supabase type snapshot after schema changes.
-3. Run `npm run check:schema-sync`.
 4. Verify RLS and RPC access for any new tables or functions.
 
 ### Edge Functions
@@ -324,7 +322,6 @@ Branch mapping:
 
 Validation gates before deploy:
 
-- `npm run check:schema-sync`
 - documentation coverage for the actual git range
 - `npm test`
 - `npm run build:production`
@@ -445,15 +442,10 @@ Full runbook: `docs/backup-and-recovery.md`
 
 ## 8. Git Guardrails
 
-- `npm install` runs `prepare`, which configures `git config core.hooksPath .githooks`.
-- `pre-commit` blocks commits when schema sync fails or when delivery-relevant code changes do not include docs updates.
-- `pre-push` blocks pushes when schema sync fails or when the pushed diff has no documentation update.
 - GitHub Actions also checks docs coverage for the real PR or push range before deployment.
 - Manual check commands:
 
 ```bash
-npm run check:schema-sync
-npm run check:delivery
 npm run backup:monitor
 npm run ops:health
 npm run go-live:check

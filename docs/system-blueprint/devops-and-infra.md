@@ -67,7 +67,6 @@ Rules:
 
 | Control | Why it exists |
 | --- | --- |
-| `npm run check:schema-sync` | blocks migration and type drift |
 | docs coverage check | blocks undocumented feature or infra changes |
 | `/health/ready` | stable platform readiness probe |
 | `x-request-id` | correlates incidents across logs and alerts |

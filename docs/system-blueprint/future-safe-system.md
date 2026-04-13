@@ -43,8 +43,6 @@ Policy alone is not enough.
 
 Libriofy now treats these checks as gatekeepers:
 
-- `pre-commit` must pass schema sync and documentation coverage
-- `pre-push` must pass schema sync and documentation coverage
 - if either hook fails, the change is not ready
 
 GitHub Actions is also part of the enforcement layer:
@@ -119,7 +117,6 @@ For any new feature or major change, follow this order:
 3. Add or update Postgres RPCs or Edge Functions if needed.
 4. Update the typed schema snapshot.
 5. Update frontend queries and UI.
-6. Run `npm run check:schema-sync` if migrations changed.
 7. Add or update docs in this folder.
 8. Run a smoke test on the real end-to-end flow.
 
@@ -134,7 +131,6 @@ A feature is not complete until all of these exist:
 | Durable storage | which table or storage bucket keeps the data? |
 | Authorization rule | who can read or mutate it? |
 | Operational behavior | what happens on failure, retry, or webhook replay? |
-| Schema sync proof | if migrations changed, did `src/integrations/supabase/types.ts` change and did `npm run check:schema-sync` pass? |
 | Documentation update | where is the new flow recorded in `docs/system-blueprint/`? |
 
 ## Schema Sync Policy
@@ -145,8 +141,6 @@ That means:
 
 - generated Supabase types must stay aligned in the same change
 - tables, views, and enums must never drift from migrations
-- the repo guardrail for this is `npm run check:schema-sync`
-- commit and push are blocked by repo hooks until the guard passes
 
 If the checker fails, fix the types snapshot before the work is considered complete.
 

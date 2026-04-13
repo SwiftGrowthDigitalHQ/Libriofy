@@ -69,9 +69,6 @@ If the generated Supabase types disagree with migrations, trust the migrations f
 - Every feature, behavior change, or architectural decision must update the relevant docs in `docs/system-blueprint/`.
 - A task is not complete until the code diff and the doc diff both exist.
 - If `supabase/migrations/` changes, `src/integrations/supabase/types.ts` must be updated in the same change.
-- Run `npm run check:schema-sync` after migration-driven schema changes to confirm tables, views, and enums still match the generated snapshot.
-- Git hooks enforce these rules at commit and push time through `.githooks/pre-commit` and `.githooks/pre-push`.
-- Run `npm run setup:hooks` if the local repo has not yet configured `core.hooksPath` to `.githooks`.
 
 ## Module Map
 

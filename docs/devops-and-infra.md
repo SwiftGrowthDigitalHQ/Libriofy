@@ -122,7 +122,6 @@ Main workflow: `.github/workflows/ci-cd.yml`
 Every PR and push to `staging` or `main` runs:
 
 1. dependency install
-2. `npm run check:schema-sync`
 3. documentation coverage check on the actual git range
 4. `npm test`
 5. `npm run build:production`
@@ -194,7 +193,6 @@ Required workflow for schema changes:
 
 1. add or update a migration
 2. update generated types in the same change
-3. run `npm run check:schema-sync`
 4. update related docs
 
 No commit, push, or deploy should be trusted if schema sync is failing.
@@ -322,8 +320,6 @@ Minimum onboarding sequence:
 2. read `docs/system-blueprint/devops-and-infra.md`
 3. copy `.env.example` and `.env.ops.example`
 4. run `npm install`
-5. run `npm run setup:hooks`
-6. verify `npm run check:schema-sync`
 7. verify `npm test`
 8. verify `npm run build:production`
 9. review `.github/workflows/ci-cd.yml` and `render.yaml`

@@ -3,7 +3,6 @@
 ## Snapshot
 
 - Generated type snapshot: `48` tables, `12` views, `34` typed RPC signatures in `src/integrations/supabase/types.ts`
-- `npm run check:schema-sync` currently enforces public tables, views, and enums against `supabase/migrations/`
 
 ## Source Of Truth Warning
 
@@ -13,7 +12,6 @@ Use this order of trust when working on the database:
 2. `src/integrations/supabase/types.ts`
 3. frontend assumptions in `src/api/*`, `src/hooks/*`, and `src/pages/*`
 
-Public tables, views, and enums are now guarded against drift by `npm run check:schema-sync`.
 
 For RPC signatures, treat migrations and SQL definitions as the behavioral source of truth and regenerate types when function typing changes are needed.
 

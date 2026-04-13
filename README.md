@@ -11,25 +11,6 @@ Complete architecture, flows, database, API, setup, and handover docs live in:
 - [docs/backup-and-recovery.md](docs/backup-and-recovery.md)
 - [docs/go-live-checklist.md](docs/go-live-checklist.md)
 
-Every feature or behavior change must update the relevant docs in `docs/system-blueprint/`. Work without doc updates is not considered complete.
-
-If a change touches `supabase/migrations/`, update `src/integrations/supabase/types.ts` in the same change and run:
-
-```bash
-npm run check:schema-sync
-```
-
-Commit and push are now guarded by repo git hooks:
-
-- `pre-commit` runs schema sync plus documentation coverage on staged changes
-- `pre-push` runs schema sync plus documentation coverage on the pushed diff
-
-If hooks are not active locally, run:
-
-```bash
-npm run setup:hooks
-```
-
 ## Fix: "Database setup incomplete"
 
 If `/dashboard` shows `public.user_roles was not found`, your Supabase project is linked but migrations were not applied on that project.
