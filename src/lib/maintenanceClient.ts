@@ -57,7 +57,7 @@ const fetchApiMaintenanceStatus = async (
 
     if (!response.ok) {
       return {
-        allowDatabaseFallback: response.status !== 404,
+        allowDatabaseFallback: response.status === 404,
         status: null,
       };
     }
@@ -77,7 +77,7 @@ const fetchApiMaintenanceStatus = async (
     };
   } catch {
     return {
-      allowDatabaseFallback: true,
+      allowDatabaseFallback: false,
       status: null,
     };
   } finally {

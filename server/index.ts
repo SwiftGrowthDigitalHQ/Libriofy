@@ -255,7 +255,20 @@ app.get("/health/ops", async (_req, res) => {
 
 app.get("/api/settings", async (_req, res) => {
   try {
-    const status = await resolveMaintenanceStatus(process.env);
+    const status = await resolveMaintenanceStatus(process.env).catch((error) => {
+      captureServerError(error, {
+        method: _req.method,
+        path: _req.originalUrl || _req.path,
+        requestId: res.locals.requestId,
+        source: "api_settings_fallback",
+      });
+
+      return {
+        maintenanceMode: false,
+        source: "fallback" as const,
+        updatedAt: null,
+      };
+    });
     res.setHeader("Cache-Control", "no-store");
     res.status(200).json({
       maintenanceMode: status.maintenanceMode,

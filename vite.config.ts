@@ -168,7 +168,11 @@ const maintenanceSettingsPlugin = (env: Record<string, string>): Plugin => ({
       }
 
       try {
-        const status = await resolveMaintenanceStatus(env);
+        const status = await resolveMaintenanceStatus(env).catch(() => ({
+          maintenanceMode: false,
+          source: "fallback" as const,
+          updatedAt: null,
+        }));
         res.statusCode = 200;
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");

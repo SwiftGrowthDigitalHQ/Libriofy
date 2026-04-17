@@ -1873,18 +1873,22 @@ export const resolveEmailLoginRequest = async (
       ? (requestBody as Record<string, unknown>)
       : {};
 
-  const redis = getRedisConnection(env);
-  const ipRetryAfter = await enforceRateLimit(
-    redis,
-    "email-login-ip",
-    trimText(context.ip),
-    EMAIL_LOGIN_IP_LIMIT,
-    RATE_LIMIT_WINDOW_SECONDS,
-  );
-  if (ipRetryAfter) {
-    return buildError(429, "Too many login attempts from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
-      retryAfter: ipRetryAfter,
-    });
+  try {
+    const redis = getRedisConnection(env);
+    const ipRetryAfter = await enforceRateLimit(
+      redis,
+      "email-login-ip",
+      trimText(context.ip),
+      EMAIL_LOGIN_IP_LIMIT,
+      RATE_LIMIT_WINDOW_SECONDS,
+    );
+    if (ipRetryAfter) {
+      return buildError(429, "Too many login attempts from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
+        retryAfter: ipRetryAfter,
+      });
+    }
+  } catch (error) {
+    console.warn("[auth] Email login rate limit unavailable, continuing without Redis", error);
   }
 
   const email = trimText(body.email).toLowerCase();

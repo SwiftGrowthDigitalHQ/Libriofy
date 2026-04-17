@@ -23,7 +23,7 @@ type JsonRequestOptions = {
   method?: "GET" | "POST";
 };
 
-const AUTH_API_BASE = import.meta.env.VITE_AUTH_API_BASE ?? "";
+const AUTH_API_BASE = (import.meta.env.VITE_AUTH_API_BASE ?? "/api/auth").replace(/\/+$/, "");
 
 const toApiUrl = (path: string) => `${AUTH_API_BASE}${path}`;
 
@@ -67,38 +67,38 @@ const sendJsonRequest = async <T>(path: string, options: JsonRequestOptions = {}
 };
 
 export const sendOtp = async (phone: string) =>
-  sendJsonRequest<SendOtpResponse>("/auth/send-otp", {
+  sendJsonRequest<SendOtpResponse>("/send-otp", {
     body: { phone },
   });
 
 export const verifyOtp = async (phone: string, otp: string) =>
-  sendJsonRequest<VerifyOtpResponse>("/auth/verify-otp", {
+  sendJsonRequest<VerifyOtpResponse>("/verify-otp", {
     body: { otp, phone },
   });
 
 export const loginWithEmail = async (email: string, password: string) =>
-  sendJsonRequest<LoginEmailResponse>("/auth/login-email", {
+  sendJsonRequest<LoginEmailResponse>("/login-email", {
     body: { email, password },
   });
 
 export const startSuperAdminLogin = async (email: string, password: string) =>
-  sendJsonRequest<SuperAdminLoginResponse>("/auth/super-admin/login", {
+  sendJsonRequest<SuperAdminLoginResponse>("/super-admin/login", {
     body: { email, password },
   });
 
 export const verifySuperAdminOtp = async (challengeId: string, otp: string) =>
-  sendJsonRequest<SuperAdminVerifyOtpResponse>("/auth/super-admin/verify-otp", {
+  sendJsonRequest<SuperAdminVerifyOtpResponse>("/super-admin/verify-otp", {
     body: { challengeId, otp },
   });
 
 export const refreshAuthSession = async () =>
-  sendJsonRequest<RefreshSessionResponse>("/auth/refresh");
+  sendJsonRequest<RefreshSessionResponse>("/refresh");
 
 export const logoutCurrentSession = async () =>
-  sendJsonRequest<{ message: string; success: true }>("/auth/logout");
+  sendJsonRequest<{ message: string; success: true }>("/logout");
 
 export const logoutAllSessions = async (accessToken?: string | null) =>
-  sendJsonRequest<{ message: string; success: true }>("/auth/logout-all", {
+  sendJsonRequest<{ message: string; success: true }>("/logout-all", {
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
   });
 

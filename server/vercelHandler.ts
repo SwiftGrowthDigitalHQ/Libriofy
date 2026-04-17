@@ -358,7 +358,11 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
         return;
       }
 
-      const status = await resolveMaintenanceStatus(process.env);
+      const status = await resolveMaintenanceStatus(process.env).catch(() => ({
+        maintenanceMode: false,
+        source: "fallback" as const,
+        updatedAt: null,
+      }));
       sendJson(res, 200, {
         maintenanceMode: status.maintenanceMode,
         maintenance_mode: status.maintenanceMode,
