@@ -30,7 +30,7 @@ const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHead
   res.end(JSON.stringify(body));
 };
 
-export default function handler(req: ApiRequest, res: ApiResponse) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
   const method = (req.method || "GET").toUpperCase();
 
@@ -53,14 +53,19 @@ export default function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
 
+    const { resolveMaintenanceStatus } = await import("../src/lib/maintenance.server");
+    const status = await resolveMaintenanceStatus(process.env).catch(() => ({
+      maintenanceMode: false,
+      source: "fallback" as const,
+      updatedAt: null,
+    }));
+
     sendJson(res, 200, {
-      ok: true,
-      diagnostic: true,
-      pathname,
-      method,
-      nodeVersion: process.version,
-      bootedAt: INLINE_BOOT_AT,
-      entrypoint: "api/[...route].ts",
+      maintenanceMode: status.maintenanceMode,
+      maintenance_mode: status.maintenanceMode,
+      source: status.source,
+      updatedAt: status.updatedAt,
+      updated_at: status.updatedAt,
     });
     return;
   }
