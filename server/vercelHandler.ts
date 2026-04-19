@@ -319,7 +319,11 @@ const handleHealthRoute = async (req: ApiRequest, res: ApiResponse, pathname: st
   }
 
   if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-    const maintenance = await resolveMaintenanceStatus(process.env);
+    const maintenance = await resolveMaintenanceStatus(process.env).catch(() => ({
+      maintenanceMode: false,
+      source: "fallback" as const,
+      updatedAt: null,
+    }));
     sendJson(res, 200, {
       appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
       maintenanceMode: maintenance.maintenanceMode,

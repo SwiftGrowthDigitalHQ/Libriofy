@@ -23,9 +23,20 @@ type JsonRequestOptions = {
   method?: "GET" | "POST";
 };
 
-const AUTH_API_BASE = (import.meta.env.VITE_AUTH_API_BASE ?? "/api/auth").replace(/\/+$/, "");
+const AUTH_API_PREFIX = "/api/auth";
 
-const toApiUrl = (path: string) => `${AUTH_API_BASE}${path}`;
+const normalizeAuthApiBase = (rawBase: string | undefined) => {
+  const trimmed = typeof rawBase === "string" ? rawBase.trim() : "";
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed.replace(/\/(?:api\/)?auth\/?$/i, "").replace(/\/+$/, "");
+};
+
+const AUTH_API_BASE = normalizeAuthApiBase(import.meta.env.VITE_AUTH_API_BASE);
+
+const toApiUrl = (path: string) => `${AUTH_API_BASE}${AUTH_API_PREFIX}${path}`;
 
 const buildRequestHeaders = async (headers?: Record<string, string>) => ({
   "Content-Type": "application/json",
