@@ -1,23 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
-import { logAttendanceFailure } from "../src/lib/attendanceFailureLogger";
-import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server";
-import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server";
 import { extractClientIp, extractUserAgent, normalizeParsedRequestBody } from "../src/lib/httpRequest.server";
 import { resolveMaintenanceStatus } from "../src/lib/maintenance.server";
-import {
-  resolveEmailLoginRequest,
-  resolveLogoutAllRequest,
-  resolveLogoutRequest,
-  resolveRefreshSessionRequest,
-  resolveSendOtpRequest,
-  resolveSuperAdminLoginRequest,
-  resolveSuperAdminVerifyOtpRequest,
-  resolveTwilioStatusCallbackRequest,
-  resolveVerifyOtpRequest,
-} from "../src/lib/otpAuth.server";
-import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server";
-import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server";
 
 type ApiHeaders = Record<string, string | string[] | undefined>;
 
@@ -151,6 +135,8 @@ const logServerlessAttendanceFailure = async (route: string, source: string, err
     if (!supabase) {
       return;
     }
+
+    const { logAttendanceFailure } = await import("../src/lib/attendanceFailureLogger");
 
     await logAttendanceFailure({
       client: supabase,
@@ -391,6 +377,7 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
       }
 
       const body = readParsedBody(req);
+      const { validateAndBindScannerDevice } = await import("../src/lib/deviceSetup.server");
       const result = await validateAndBindScannerDevice(
         process.env,
         String(body.library_id ?? body.libraryId ?? "").trim(),
@@ -415,6 +402,7 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
       }
 
       try {
+        const { resolveDeviceHeartbeatRequest } = await import("../src/lib/deviceHeartbeat.server");
         const result = await resolveDeviceHeartbeatRequest(process.env, readParsedBody(req));
         sendJson(res, result.statusCode, result.body);
       } catch (error) {
@@ -442,6 +430,7 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
       }
 
       try {
+        const { resolveScanAttendanceRequest } = await import("../src/lib/scanAttendance.server");
         const result = await resolveScanAttendanceRequest(process.env, readParsedBody(req), {
           deviceToken: readDeviceToken(req.headers ?? {}),
         });
@@ -469,6 +458,7 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
         return;
       }
 
+      const { resolveStudentQrSigningRequest } = await import("../src/lib/studentQr.server");
       const result = await resolveStudentQrSigningRequest(process.env, readParsedBody(req), {
         authorization: readHeaderValue(req.headers ?? {}, "authorization"),
       });
@@ -477,31 +467,58 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
     }
 
     case "/api/auth/send-otp":
-      await handleAuthRoute(req, res, (body, context) => resolveSendOtpRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveSendOtpRequest } = await import("../src/lib/otpAuth.server");
+        return resolveSendOtpRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/verify-otp":
-      await handleAuthRoute(req, res, (body, context) => resolveVerifyOtpRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveVerifyOtpRequest } = await import("../src/lib/otpAuth.server");
+        return resolveVerifyOtpRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/login-email":
-      await handleAuthRoute(req, res, (body, context) => resolveEmailLoginRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveEmailLoginRequest } = await import("../src/lib/otpAuth.server");
+        return resolveEmailLoginRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/super-admin/login":
-      await handleAuthRoute(req, res, (body, context) => resolveSuperAdminLoginRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveSuperAdminLoginRequest } = await import("../src/lib/otpAuth.server");
+        return resolveSuperAdminLoginRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/super-admin/verify-otp":
-      await handleAuthRoute(req, res, (body, context) => resolveSuperAdminVerifyOtpRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveSuperAdminVerifyOtpRequest } = await import("../src/lib/otpAuth.server");
+        return resolveSuperAdminVerifyOtpRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/refresh":
-      await handleAuthRoute(req, res, (body, context) => resolveRefreshSessionRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveRefreshSessionRequest } = await import("../src/lib/otpAuth.server");
+        return resolveRefreshSessionRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/logout":
-      await handleAuthRoute(req, res, (body, context) => resolveLogoutRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveLogoutRequest } = await import("../src/lib/otpAuth.server");
+        return resolveLogoutRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/logout-all":
-      await handleAuthRoute(req, res, (body, context) => resolveLogoutAllRequest(process.env, body, context));
+      await handleAuthRoute(req, res, async (body, context) => {
+        const { resolveLogoutAllRequest } = await import("../src/lib/otpAuth.server");
+        return resolveLogoutAllRequest(process.env, body, context);
+      });
       return;
     case "/api/auth/twilio-status":
-      await handleAuthRoute(req, res, (body) => resolveTwilioStatusCallbackRequest(process.env, body));
+      await handleAuthRoute(req, res, async (body) => {
+        const { resolveTwilioStatusCallbackRequest } = await import("../src/lib/otpAuth.server");
+        return resolveTwilioStatusCallbackRequest(process.env, body);
+      });
       return;
     case "/api/ai/partner":
       await handlePartnerAiRoute(req, res);
