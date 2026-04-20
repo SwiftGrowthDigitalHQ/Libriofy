@@ -33,8 +33,40 @@
   ],
   "rewrites": [
     {
-      "source": "/auth/:path*",
-      "destination": "/api/auth/:path*"
+      "source": "/auth/send-otp",
+      "destination": "/api/auth/send-otp"
+    },
+    {
+      "source": "/auth/verify-otp",
+      "destination": "/api/auth/verify-otp"
+    },
+    {
+      "source": "/auth/login-email",
+      "destination": "/api/auth/login-email"
+    },
+    {
+      "source": "/auth/super-admin/login",
+      "destination": "/api/auth/super-admin/login"
+    },
+    {
+      "source": "/auth/super-admin/verify-otp",
+      "destination": "/api/auth/super-admin/verify-otp"
+    },
+    {
+      "source": "/auth/refresh",
+      "destination": "/api/auth/refresh"
+    },
+    {
+      "source": "/auth/logout",
+      "destination": "/api/auth/logout"
+    },
+    {
+      "source": "/auth/logout-all",
+      "destination": "/api/auth/logout-all"
+    },
+    {
+      "source": "/auth/twilio-status",
+      "destination": "/api/auth/twilio-status"
     },
     {
       "source": "/health",

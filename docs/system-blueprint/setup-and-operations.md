@@ -119,7 +119,7 @@ Some helper code currently supports fallback names such as `VITE_SUPABASE_SERVIC
 | --- | --- | --- |
 | `VITE_SUPABASE_URL` | yes | Supabase browser client |
 | `VITE_SUPABASE_ANON_KEY` | yes | Supabase browser client |
-| `VITE_AUTH_API_BASE` | optional | separate auth API host |
+| `VITE_AUTH_API_BASE` | optional | separate auth API host; leave unset for same-origin Vercel/serverless auth |
 | `VITE_API_BASE_URL` | optional | students API wrapper fallback |
 | `VITE_SCAN_API_URL` | optional | scanner submit endpoint |
 | `VITE_DEVICE_HEARTBEAT_API_URL` | optional | kiosk heartbeat endpoint |
@@ -292,7 +292,7 @@ npm run build
 
 2. Deploy the built assets from `dist/` to the Vercel project defined by `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`.
 3. Confirm the deployed domain points to the correct API host through:
-   - `VITE_AUTH_API_BASE`
+   - `VITE_AUTH_API_BASE` when auth is on a separate upstream host, otherwise leave it unset
    - `VITE_API_BASE_URL`
    - `VITE_SCAN_API_URL`
    - `VITE_DEVICE_HEARTBEAT_API_URL`

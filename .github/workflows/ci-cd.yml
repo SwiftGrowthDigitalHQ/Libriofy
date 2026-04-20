@@ -92,7 +92,6 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_SUPABASE_PROJECT_ID: ${{ secrets.VITE_SUPABASE_PROJECT_ID }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_AUTH_API_BASE: ${{ secrets.VITE_AUTH_API_BASE }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           VITE_SCAN_API_URL: ${{ secrets.VITE_SCAN_API_URL }}
           VITE_DEVICE_HEARTBEAT_API_URL: ${{ secrets.VITE_DEVICE_HEARTBEAT_API_URL }}
@@ -149,7 +148,6 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_SUPABASE_PROJECT_ID: ${{ secrets.VITE_SUPABASE_PROJECT_ID }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_AUTH_API_BASE: ${{ secrets.VITE_AUTH_API_BASE }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           VITE_SCAN_API_URL: ${{ secrets.VITE_SCAN_API_URL }}
           VITE_DEVICE_HEARTBEAT_API_URL: ${{ secrets.VITE_DEVICE_HEARTBEAT_API_URL }}

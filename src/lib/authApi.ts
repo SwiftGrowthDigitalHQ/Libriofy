@@ -31,7 +31,16 @@ const normalizeAuthApiBase = (rawBase: string | undefined) => {
     return "";
   }
 
-  return trimmed.replace(/\/(?:api\/)?auth\/?$/i, "").replace(/\/+$/, "");
+  const normalizedBase = trimmed.replace(/\/(?:api\/)?auth\/?$/i, "").replace(/\/+$/, "");
+
+  if (typeof window !== "undefined") {
+    const currentOrigin = window.location.origin.replace(/\/+$/, "");
+    if (normalizedBase === currentOrigin) {
+      return "";
+    }
+  }
+
+  return normalizedBase;
 };
 
 const AUTH_API_BASE = normalizeAuthApiBase(import.meta.env.VITE_AUTH_API_BASE);

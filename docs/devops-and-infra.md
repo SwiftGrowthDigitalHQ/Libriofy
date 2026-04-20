@@ -50,6 +50,7 @@ Rule: staging is the recovery proving ground. Production recovery is never the f
   - SPA rewrite rules
   - security headers
 - Frontend deployments should only contain public `VITE_*` values.
+- Leave `VITE_AUTH_API_BASE` unset when Vercel serves the auth endpoints locally through the same origin. Set it only for a separate upstream auth host.
 
 ### Backend API
 
