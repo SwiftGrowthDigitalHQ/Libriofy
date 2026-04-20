@@ -1,3 +1,17 @@
+import { normalizeParsedRequestBody } from "../src/lib/httpRequest.server";
+import { resolveMaintenanceStatus } from "../src/lib/maintenance.server";
+import {
+  resolveEmailLoginRequest,
+  resolveLogoutAllRequest,
+  resolveLogoutRequest,
+  resolveRefreshSessionRequest,
+  resolveSendOtpRequest,
+  resolveSuperAdminLoginRequest,
+  resolveSuperAdminVerifyOtpRequest,
+  resolveTwilioStatusCallbackRequest,
+  resolveVerifyOtpRequest,
+} from "../src/lib/otpAuth.server";
+
 type ApiHeaders = Record<string, string | string[] | undefined>;
 
 type ApiRequest = {
@@ -75,10 +89,7 @@ const readRequestContext = (req: ApiRequest): AuthContext => {
   };
 };
 
-const readParsedBody = async (req: ApiRequest) => {
-  const { normalizeParsedRequestBody } = await import("../src/lib/httpRequest.server");
-  return normalizeParsedRequestBody(req.body, readHeaderValue(req.headers, "content-type"));
-};
+const readParsedBody = (req: ApiRequest) => normalizeParsedRequestBody(req.body, readHeaderValue(req.headers, "content-type"));
 
 const sendAuthResponse = (res: ApiResponse, result: ResolverResult) => {
   sendJson(res, result.statusCode, result.body, result.cookies?.length ? { "Set-Cookie": result.cookies } : undefined);
@@ -100,7 +111,7 @@ const handleAuthRoute = async (req: ApiRequest, res: ApiResponse, resolver: Auth
   }
 
   try {
-    const result = await resolver(await readParsedBody(req), readRequestContext(req));
+    const result = await resolver(readParsedBody(req), readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
     sendJson(res, 500, {
@@ -125,7 +136,6 @@ const handleSettingsRoute = async (req: ApiRequest, res: ApiResponse) => {
     return;
   }
 
-  const { resolveMaintenanceStatus } = await import("../src/lib/maintenance.server");
   const status = await resolveMaintenanceStatus(process.env).catch(() => ({
     maintenanceMode: false,
     source: "fallback" as const,
@@ -150,7 +160,6 @@ const handleHealthRoute = async (req: ApiRequest, res: ApiResponse, pathname: st
   }
 
   if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-    const { resolveMaintenanceStatus } = await import("../src/lib/maintenance.server");
     const maintenance = await resolveMaintenanceStatus(process.env).catch(() => ({
       maintenanceMode: false,
       source: "fallback" as const,
@@ -192,47 +201,38 @@ const handleApiRoute = async (req: ApiRequest, res: ApiResponse, pathname: strin
       await handleHealthRoute(req, res, pathname);
       return;
     case "/api/auth/send-otp": {
-      const { resolveSendOtpRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveSendOtpRequest(process.env, body, context));
       return;
     }
     case "/api/auth/verify-otp": {
-      const { resolveVerifyOtpRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveVerifyOtpRequest(process.env, body, context));
       return;
     }
     case "/api/auth/login-email": {
-      const { resolveEmailLoginRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveEmailLoginRequest(process.env, body, context));
       return;
     }
     case "/api/auth/super-admin/login": {
-      const { resolveSuperAdminLoginRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveSuperAdminLoginRequest(process.env, body, context));
       return;
     }
     case "/api/auth/super-admin/verify-otp": {
-      const { resolveSuperAdminVerifyOtpRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveSuperAdminVerifyOtpRequest(process.env, body, context));
       return;
     }
     case "/api/auth/refresh": {
-      const { resolveRefreshSessionRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveRefreshSessionRequest(process.env, body, context));
       return;
     }
     case "/api/auth/logout": {
-      const { resolveLogoutRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveLogoutRequest(process.env, body, context));
       return;
     }
     case "/api/auth/logout-all": {
-      const { resolveLogoutAllRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body, context) => resolveLogoutAllRequest(process.env, body, context));
       return;
     }
     case "/api/auth/twilio-status": {
-      const { resolveTwilioStatusCallbackRequest } = await import("../src/lib/otpAuth.server");
       await handleAuthRoute(req, res, (body) => resolveTwilioStatusCallbackRequest(process.env, body));
       return;
     }
