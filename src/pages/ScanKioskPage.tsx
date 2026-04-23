@@ -1,5 +1,14 @@
 ﻿import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import ScannerCamera from "@/components/scanner/ScannerCamera";
+import type {
+  ActivityFeedItem,
+  LastScanCardData,
+  ScannerDetailBadge,
+  ScannerLiveState,
+  ScannerStatItem,
+  ScannerUiTone,
+} from "@/components/scanner/types";
 
 import {
   type AttendanceQueueEntry,
@@ -30,7 +39,6 @@ import type {
   ScanControllerState,
   ScanDetectionPayload,
 } from "@/lib/scan/types";
-import { cn } from "@/lib/utils";
 
 const DEVICE_ID = import.meta.env.VITE_SCAN_DEVICE_ID ?? "LIB_GATE_01";
 const DEVICE_NAME = import.meta.env.VITE_SCAN_DEVICE_NAME ?? "Library ID Scanner";
@@ -44,9 +52,11 @@ const DEVICE_BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY
 const DUPLICATE_SCAN_WINDOW_MS = 3000;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_SCAN_VALUE_LENGTH = 4096;
-const RESULT_HOLD_MS = 1500;
+const RESULT_HOLD_MS = 2000;
 const SYNC_INTERVAL_MS = 25000;
 const MAX_LOG_ENTRIES = 12;
+const MAX_ACTIVITY_ITEMS = 12;
+const MAX_SCAN_HISTORY = 8;
 
 let pendingShutdown: Promise<void> | null = null;
 
@@ -71,6 +81,27 @@ type ScannerLogEntry = {
   detail?: unknown;
   event: string;
   level: ScanControllerLogLevel;
+};
+
+type RawActivityItem = {
+  at: string;
+  badge?: string;
+  detail: string;
+  id: string;
+  title: string;
+  tone: ScannerUiTone;
+};
+
+type ScanHistoryItem = {
+  at: string;
+  confidence: number;
+  detail: string;
+  id: string;
+  name: string;
+  seat: string | null;
+  statusLabel: string;
+  studentKey: string | null;
+  tone: ScannerUiTone;
 };
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -101,6 +132,208 @@ const formatScanTime = (timestamp: string) => {
     hour: "numeric",
     minute: "2-digit",
   });
+};
+
+const createUiId = (prefix: string) =>
+  `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const formatRelativeTimestamp = (timestamp: string, nowMs: number) => {
+  const time = new Date(timestamp).getTime();
+  if (Number.isNaN(time)) {
+    return "just now";
+  }
+
+  const diffMs = Math.max(0, nowMs - time);
+  const diffSeconds = Math.round(diffMs / 1000);
+
+  if (diffSeconds < 10) {
+    return "just now";
+  }
+
+  if (diffSeconds < 60) {
+    return `${diffSeconds}s ago`;
+  }
+
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+  });
+};
+
+const formatClockLabel = (timestamp: string) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "--:--";
+  }
+
+  return date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+};
+
+const getDetailRecord = (detail: unknown): Record<string, unknown> | null =>
+  detail && typeof detail === "object" && !Array.isArray(detail)
+    ? (detail as Record<string, unknown>)
+    : null;
+
+const getToneFromPayload = (payload: AttendanceScanPayload): ScannerUiTone => {
+  if (payload.status === "success") {
+    return payload.duplicate ? "warning" : "success";
+  }
+
+  if (payload.status === "queued") {
+    return payload.verifiedOffline ? "info" : "warning";
+  }
+
+  const message = payload.message ?? "";
+  const code = payload.code?.toUpperCase() ?? "";
+  if (code.includes("DUPLICATE") || code.includes("ALREADY") || /already|duplicate/i.test(message)) {
+    return "warning";
+  }
+
+  return "danger";
+};
+
+const getConfidenceFromPayload = (payload: AttendanceScanPayload) => {
+  if (payload.status === "success") {
+    return payload.duplicate ? 88 : 99;
+  }
+
+  if (payload.status === "queued") {
+    return payload.verifiedOffline ? 93 : 78;
+  }
+
+  const code = payload.code?.toUpperCase() ?? "";
+  if (code === "INVALID_QR" || code === "QR_TOO_LARGE") {
+    return 18;
+  }
+
+  return 34;
+};
+
+const describeScanPayload = (payload: AttendanceScanPayload) => {
+  if (payload.status === "success") {
+    if (payload.duplicate) {
+      return "Attendance was already recorded for this student.";
+    }
+
+    return payload.seat
+      ? `Attendance verified and seat ${payload.seat} confirmed in the live ledger.`
+      : "Attendance verified and committed to the live ledger.";
+  }
+
+  if (payload.status === "queued") {
+    return payload.verifiedOffline
+      ? "Verified locally and queued for background sync."
+      : "Stored safely on-device and waiting for network sync.";
+  }
+
+  return payload.message || "The verification pipeline could not confirm this scan.";
+};
+
+const getPayloadDisplayName = (payload: AttendanceScanPayload) => {
+  if (payload.status === "error") {
+    return null;
+  }
+
+  return trimText(payload.studentName) || trimText(payload.name) || null;
+};
+
+const getPayloadSeat = (payload: AttendanceScanPayload) => {
+  if (payload.status === "error") {
+    return null;
+  }
+
+  return trimText(payload.seat) || null;
+};
+
+const getActivityFromLogEntry = (entry: ScannerLogEntry): Omit<RawActivityItem, "id"> | null => {
+  const detail = getDetailRecord(entry.detail);
+
+  switch (entry.event) {
+    case "camera-start":
+      return {
+        at: entry.at,
+        badge: "Boot",
+        detail: "Secure camera pipeline is warming up for the kiosk session.",
+        title: "Camera initialization started",
+        tone: "info",
+      };
+    case "camera-ready":
+      return {
+        at: entry.at,
+        badge: "Ready",
+        detail:
+          typeof detail?.activeCameraLabel === "string" && detail.activeCameraLabel
+            ? `${detail.activeCameraLabel} locked and ready for continuous verification.`
+            : "Camera is live and ready for continuous verification.",
+        title: "Camera feed is online",
+        tone: "success",
+      };
+    case "camera-error":
+    case "scanner-bootstrap-failed":
+      return {
+        at: entry.at,
+        badge: "Error",
+        detail:
+          typeof detail?.message === "string" && detail.message
+            ? detail.message
+            : "The camera pipeline needs attention before scanning can continue.",
+        title: "Camera attention required",
+        tone: "danger",
+      };
+    case "watchdog-restart":
+      return {
+        at: entry.at,
+        badge: "Recovery",
+        detail: "The watchdog restarted the scanner to restore a healthy live feed.",
+        title: "Automatic recovery engaged",
+        tone: "warning",
+      };
+    case "queue-sync-complete":
+      return {
+        at: entry.at,
+        badge: "Sync",
+        detail:
+          typeof detail?.syncedCount === "number"
+            ? `${detail.syncedCount} queued scans were pushed to the server.`
+            : "Queued scans finished syncing.",
+        title: "Background sync completed",
+        tone: "info",
+      };
+    case "queue-sync-failed":
+      return {
+        at: entry.at,
+        badge: "Sync",
+        detail:
+          typeof detail?.message === "string" && detail.message
+            ? detail.message
+            : "The queue could not sync right now and will retry automatically.",
+        title: "Background sync delayed",
+        tone: "warning",
+      };
+    case "scan-processing-start":
+      return {
+        at: entry.at,
+        badge: "Verify",
+        detail: "A new code was detected and is being verified.",
+        title: "Verification started",
+        tone: "info",
+      };
+    default:
+      return null;
+  }
 };
 
 const serializeLogDetail = (value: unknown, depth = 0): unknown => {
@@ -177,6 +410,7 @@ const ScanKioskPage = () => {
   const heartbeatInFlightRef = useRef(false);
   const mountedRef = useRef(false);
   const processingRef = useRef(false);
+  const seenLogKeysRef = useRef<Set<string>>(new Set());
   const lastAcceptedScanRef = useRef({
     at: 0,
     value: "",
@@ -188,11 +422,47 @@ const ScanKioskPage = () => {
 
   const [controllerState, setControllerState] = useState<ScanControllerState>(() => createInitialControllerState());
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
-  const [, setLogEntries] = useState<ScannerLogEntry[]>([]);
+  const [logEntries, setLogEntries] = useState<ScannerLogEntry[]>([]);
   const [phase, setPhase] = useState<KioskPhase>("idle");
   const [scanPayload, setScanPayload] = useState<AttendanceScanPayload | null>(null);
+  const [scanFeedbackStage, setScanFeedbackStage] = useState<"idle" | "detected" | "verifying">("idle");
   const [statusMessage, setStatusMessage] = useState("Starting scanner...");
   const [resultFading, setResultFading] = useState(false);
+  const [activityFeed, setActivityFeed] = useState<RawActivityItem[]>(() => [
+    {
+      at: new Date().toISOString(),
+      badge: "Boot",
+      detail: "Secure scanner session initialized. Waiting for camera and device heartbeat.",
+      id: createUiId("activity"),
+      title: "System boot sequence started",
+      tone: "info",
+    },
+  ]);
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [lastSyncAt, setLastSyncAt] = useState(() => readLastAttendanceSyncAt());
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const appendActivity = useCallback((entry: Omit<RawActivityItem, "id">) => {
+    startTransition(() => {
+      setActivityFeed((current) => [
+        {
+          ...entry,
+          id: createUiId("activity"),
+        },
+        ...current,
+      ].slice(0, MAX_ACTIVITY_ITEMS));
+    });
+  }, []);
+
+  const refreshQueueTelemetry = useCallback(async () => {
+    const queueSize = await countAttendanceQueueEntries().catch(() => 0);
+    if (mountedRef.current) {
+      setPendingCount(queueSize);
+      setLastSyncAt(readLastAttendanceSyncAt());
+    }
+    return queueSize;
+  }, []);
 
   useEffect(() => {
     if (!scanPayload) {
@@ -209,6 +479,22 @@ const ScanKioskPage = () => {
       window.clearTimeout(timer);
     };
   }, [scanPayload]);
+
+  useEffect(() => {
+    if (phase !== "scanning") {
+      setScanFeedbackStage("idle");
+      return;
+    }
+
+    setScanFeedbackStage("detected");
+    const timer = window.setTimeout(() => {
+      setScanFeedbackStage("verifying");
+    }, 260);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [phase]);
 
   const appendLog = useCallback(
     (level: ScanControllerLogLevel, event: string, detail?: Record<string, unknown>) => {
@@ -317,7 +603,7 @@ const ScanKioskPage = () => {
       heartbeatInFlightRef.current = true;
 
       try {
-        const queueSize = await countAttendanceQueueEntries();
+        const queueSize = await refreshQueueTelemetry();
         const heartbeat = await sendDeviceHeartbeat({
           apiUrl: DEVICE_HEARTBEAT_API_URL,
           deviceId: DEVICE_ID,
@@ -356,7 +642,7 @@ const ScanKioskPage = () => {
         heartbeatInFlightRef.current = false;
       }
     },
-    [appendLog, controllerState.error, controllerState.status, isOnline, phase, redirectToDeviceSetup],
+    [appendLog, controllerState.error, controllerState.status, isOnline, phase, redirectToDeviceSetup, refreshQueueTelemetry],
   );
 
   const syncQueuedScans = useCallback(
@@ -366,6 +652,9 @@ const ScanKioskPage = () => {
       }
 
       const queueSize = await countAttendanceQueueEntries().catch(() => 0);
+      if (mountedRef.current) {
+        setPendingCount(queueSize);
+      }
       if (queueSize === 0) {
         return;
       }
@@ -392,9 +681,10 @@ const ScanKioskPage = () => {
         });
       } finally {
         syncInFlightRef.current = false;
+        void refreshQueueTelemetry();
       }
     },
-    [appendLog, isOnline],
+    [appendLog, isOnline, refreshQueueTelemetry],
   );
 
   const submitScan = useCallback(
@@ -543,6 +833,7 @@ const ScanKioskPage = () => {
         let payload: AttendanceScanPayload;
         if (!isOnline) {
           await enqueueAttendanceQueueEntry(scanEntry);
+          await refreshQueueTelemetry();
           payload = buildOfflineQueuedPayload({
             entry: scanEntry,
             libraryId,
@@ -595,6 +886,7 @@ const ScanKioskPage = () => {
           code: "code" in payload ? payload.code ?? null : null,
           status: payload.status,
         });
+        void refreshQueueTelemetry();
         scannerHeld = true;
         scheduleResume(`result:${payload.status}`);
         void sendScannerHeartbeat("post-scan");
@@ -630,6 +922,7 @@ const ScanKioskPage = () => {
       appendLog,
       clearResumeTimer,
       isOnline,
+      refreshQueueTelemetry,
       redirectToDeviceSetup,
       scheduleResume,
       sendScannerHeartbeat,
@@ -679,6 +972,7 @@ const ScanKioskPage = () => {
         return;
       }
       await controller.start("page-load");
+      await refreshQueueTelemetry();
     };
 
     void boot().catch((error) => {
@@ -698,12 +992,20 @@ const ScanKioskPage = () => {
         ? activeController.stop("page-unmount").catch(() => undefined)
         : Promise.resolve();
     };
-  }, [appendLog, clearResumeTimer]);
+  }, [appendLog, clearResumeTimer, refreshQueueTelemetry]);
 
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
       setStatusMessage("Show QR to scan");
+      appendActivity({
+        at: new Date().toISOString(),
+        badge: "Network",
+        detail: "Connection restored. Any queued scans will sync in the background.",
+        title: "Network connection restored",
+        tone: "success",
+      });
+      void refreshQueueTelemetry();
       void syncQueuedScans("network-online");
       void sendScannerHeartbeat("network-online");
     };
@@ -711,6 +1013,13 @@ const ScanKioskPage = () => {
     const handleOffline = () => {
       setIsOnline(false);
       setStatusMessage("Offline mode active.");
+      appendActivity({
+        at: new Date().toISOString(),
+        badge: "Offline",
+        detail: "The kiosk will keep collecting scans locally until the network returns.",
+        title: "Scanner switched to offline mode",
+        tone: "warning",
+      });
     };
 
     window.addEventListener("online", handleOnline);
@@ -720,7 +1029,7 @@ const ScanKioskPage = () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [sendScannerHeartbeat, syncQueuedScans]);
+  }, [appendActivity, refreshQueueTelemetry, sendScannerHeartbeat, syncQueuedScans]);
 
   useEffect(() => {
     const visibilityHandler = () => {
@@ -763,12 +1072,99 @@ const ScanKioskPage = () => {
 
     void sendScannerHeartbeat("initial");
     void syncQueuedScans("initial");
+    void refreshQueueTelemetry();
 
     return () => {
       window.clearInterval(heartbeatTimer);
       window.clearInterval(syncTimer);
     };
-  }, [sendScannerHeartbeat, syncQueuedScans]);
+  }, [refreshQueueTelemetry, sendScannerHeartbeat, syncQueuedScans]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!scanPayload) {
+      return;
+    }
+
+    const at = new Date().toISOString();
+    const name = getPayloadDisplayName(scanPayload) || (scanPayload.status === "error" ? "Unknown identity" : "Queued scan");
+    const statusLabel =
+      scanPayload.status === "success"
+        ? scanPayload.duplicate
+          ? "Already Marked"
+          : "Access Granted"
+        : scanPayload.status === "queued"
+          ? scanPayload.verifiedOffline
+            ? "Verified Offline"
+            : "Queued for Sync"
+          : "Access Denied";
+    const studentKey = getPayloadDisplayName(scanPayload) || "";
+    const tone = getToneFromPayload(scanPayload);
+
+    setScanHistory((current) => [
+      {
+        at,
+        confidence: getConfidenceFromPayload(scanPayload),
+        detail: describeScanPayload(scanPayload),
+        id: createUiId("scan"),
+        name,
+        seat: getPayloadSeat(scanPayload),
+        statusLabel,
+        studentKey: studentKey || null,
+        tone,
+      },
+      ...current,
+    ].slice(0, MAX_SCAN_HISTORY));
+
+    appendActivity({
+      at,
+      badge:
+        scanPayload.status === "success"
+          ? scanPayload.duplicate
+            ? "Duplicate"
+            : "Matched"
+          : scanPayload.status === "queued"
+            ? "Queued"
+            : "Failed",
+      detail: describeScanPayload(scanPayload),
+      title:
+        scanPayload.status === "success"
+          ? `${name} checked in`
+          : scanPayload.status === "queued"
+            ? `${name} stored for sync`
+            : "Verification failed",
+      tone,
+    });
+  }, [appendActivity, scanPayload]);
+
+  useEffect(() => {
+    const unseen = [...logEntries].reverse().filter((entry) => {
+      const key = `${entry.at}:${entry.event}`;
+      if (seenLogKeysRef.current.has(key)) {
+        return false;
+      }
+      seenLogKeysRef.current.add(key);
+      return true;
+    });
+
+    for (const entry of unseen) {
+      const activity = getActivityFromLogEntry(entry);
+      if (!activity) {
+        continue;
+      }
+
+      appendActivity(activity);
+    }
+  }, [appendActivity, logEntries]);
 
   const resultPrimary = useMemo(() => {
     if (scanPayload) {
@@ -777,7 +1173,7 @@ const ScanKioskPage = () => {
           return "ALREADY MARKED";
         }
 
-        return (scanPayload.studentName || scanPayload.name || "STUDENT").toUpperCase();
+        return (getPayloadDisplayName(scanPayload) || "STUDENT").toUpperCase();
       }
 
       if (scanPayload.status === "error") {
@@ -842,122 +1238,179 @@ const ScanKioskPage = () => {
     return statusMessage;
   }, [phase, scanPayload, statusMessage]);
 
-  const resultTone = useMemo(() => {
-    if (scanPayload) {
-      if (scanPayload.status === "success") {
-        return scanPayload.duplicate ? "warning" : "success";
-      }
-
-      if (scanPayload.status === "error") {
-        const message = scanPayload.message ?? "";
-        const code = scanPayload.code?.toUpperCase() ?? "";
-        if (code.includes("DUPLICATE") || code.includes("ALREADY") || /already|duplicate/i.test(message)) {
-          return "warning";
-        }
-        if (code === "INVALID_QR" || code === "QR_TOO_LARGE" || /invalid/i.test(message)) {
-          return "error";
-        }
-        return "error";
-      }
-
-      return "warning";
+  const cameraLive = controllerState.status === "ready" || controllerState.status === "paused";
+  const liveState = useMemo<ScannerLiveState>(() => {
+    if (!isOnline && phase !== "scanning" && !scanPayload) {
+      return "offline";
     }
 
-    if (phase === "scanning") {
+    if (phase === "scanning" && scanFeedbackStage === "detected") {
+      return "detected";
+    }
+
+    if (phase === "scanning" || controllerState.status === "starting") {
       return "scanning";
     }
 
-    return "idle";
-  }, [phase, scanPayload]);
+    if (scanPayload?.status === "success") {
+      return "matched";
+    }
 
-  const cameraLive = controllerState.status === "ready" || controllerState.status === "paused";
+    if (scanPayload?.status === "error") {
+      return "failed";
+    }
+
+    if (scanPayload?.status === "queued") {
+      return "offline";
+    }
+
+    if (controllerState.error) {
+      return "failed";
+    }
+
+    return "ready";
+  }, [controllerState.error, controllerState.status, isOnline, phase, scanFeedbackStage, scanPayload]);
+
+  const streamAgeMs =
+    controllerState.lastFrameAt && Number.isFinite(controllerState.lastFrameAt)
+      ? Math.max(0, nowMs - controllerState.lastFrameAt)
+      : null;
+  const lastSyncLabel = lastSyncAt ? formatClockLabel(lastSyncAt) : "waiting";
+  const activeResultCard = useMemo<LastScanCardData | null>(() => {
+    if (!scanPayload) {
+      return null;
+    }
+
+    const capturedAt = new Date().toISOString();
+    const name = getPayloadDisplayName(scanPayload) || (scanPayload.status === "error" ? "Unknown student" : "Queued scan");
+    const statusLabel =
+      scanPayload.status === "success"
+        ? scanPayload.duplicate
+          ? "Already Marked"
+          : "Verified"
+        : scanPayload.status === "queued"
+          ? scanPayload.verifiedOffline
+            ? "Verified Offline"
+            : "Queued"
+          : "Rejected";
+
+    return {
+      confidence: getConfidenceFromPayload(scanPayload),
+      id: createUiId("active-result"),
+      name,
+      seat: getPayloadSeat(scanPayload),
+      statusLabel,
+      subtitle: describeScanPayload(scanPayload),
+      timeLabel: "time" in scanPayload ? trimText(scanPayload.time) || formatClockLabel(capturedAt) : formatClockLabel(capturedAt),
+      tone: getToneFromPayload(scanPayload),
+    };
+  }, [scanPayload]);
+  const scannerBadges = useMemo<ScannerDetailBadge[]>(
+    () => [
+      {
+        label: "Mode",
+        tone: isOnline ? "success" : "warning",
+        value: isOnline ? "Live" : "Offline",
+      },
+      {
+        label: "Queue",
+        tone: pendingCount > 0 ? "warning" : "neutral",
+        value: pendingCount > 0 ? `${pendingCount} pending` : "Clear",
+      },
+      {
+        label: "Camera",
+        tone: controllerState.error ? "danger" : cameraLive ? "success" : "info",
+        value: controllerState.error
+          ? "Needs attention"
+          : controllerState.status === "starting"
+            ? "Starting"
+            : streamAgeMs !== null && streamAgeMs < 4000
+              ? "Live"
+              : "Standby",
+      },
+      {
+        label: "Last sync",
+        tone: lastSyncLabel === "waiting" ? "neutral" : "info",
+        value: lastSyncLabel === "waiting" ? "Pending" : lastSyncLabel,
+      },
+    ],
+    [cameraLive, controllerState.error, controllerState.status, isOnline, lastSyncLabel, pendingCount, streamAgeMs],
+  );
+  const scannerFeedbackLabel = useMemo(() => {
+    if (scanPayload?.status === "success") {
+      return scanPayload.duplicate ? "Already marked" : "Access granted";
+    }
+
+    if (scanPayload?.status === "queued") {
+      return "Saved offline";
+    }
+
+    if (scanPayload?.status === "error") {
+      const code = scanPayload.code?.toUpperCase() ?? "";
+      if (code === "INVALID_QR" || code === "QR_TOO_LARGE") {
+        return "Invalid QR";
+      }
+      return "Scan failed";
+    }
+
+    if (phase === "scanning") {
+      return scanFeedbackStage === "detected" ? "QR detected" : "Verifying...";
+    }
+
+    if (controllerState.error) {
+      return "Camera error";
+    }
+
+    if (controllerState.status === "starting") {
+      return "Starting camera";
+    }
+
+    return !isOnline ? "Offline capture" : "Ready to scan";
+  }, [controllerState.error, controllerState.status, isOnline, phase, scanFeedbackStage, scanPayload]);
+  const scannerMessage = useMemo(() => {
+    if (controllerState.error) {
+      return controllerState.error.detail;
+    }
+
+    if (scanPayload?.status === "success" || scanPayload?.status === "queued") {
+      return describeScanPayload(scanPayload);
+    }
+
+    if (scanPayload?.status === "error") {
+      return scanPayload.message;
+    }
+
+    if (phase === "scanning") {
+      return scanFeedbackStage === "detected"
+        ? "QR is inside the scan zone. Keep the card steady for a moment."
+        : "Checking the student record and attendance status.";
+    }
+
+    if (!cameraLive) {
+      return "Preparing the camera for continuous QR scanning.";
+    }
+
+    if (!isOnline) {
+      return "Offline mode is active. Valid scans will be stored and synced automatically.";
+    }
+
+    return "Bring the student ID close to the camera until the QR code fills the center square.";
+  }, [cameraLive, controllerState.error, isOnline, phase, scanFeedbackStage, scanPayload]);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#15314d_0%,#071120_55%,#020617_100%)] text-white">
-      <style>{`
-        @keyframes scanline {
-          0% { transform: translateY(-10%); opacity: 0.2; }
-          50% { opacity: 0.9; }
-          100% { transform: translateY(220%); opacity: 0.2; }
-        }
-      `}</style>
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_360px]">
-          <section className="rounded-[32px] border border-white/10 bg-slate-950/45 p-4 shadow-[0_24px_80px_rgba(2,6,23,0.45)] backdrop-blur sm:p-6">
-            <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/80">
-              <div className="relative aspect-[4/3] overflow-hidden md:aspect-[16/11]">
-                <video
-                  ref={handleVideoRef}
-                  autoPlay
-                  className={cn(
-                    "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
-                    cameraLive ? "opacity-100" : "opacity-25",
-                  )}
-                  muted
-                  playsInline
-                />
-
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(15,23,42,0.08),rgba(2,6,23,0.72))]" />
-
-                <div className="pointer-events-none absolute inset-0">
-                  <div className="absolute left-8 right-8 top-8 h-0.5 bg-gradient-to-r from-transparent via-cyan-200/80 to-transparent animate-[scanline_2.2s_ease-in-out_infinite]" />
-                </div>
-
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-                  <div
-                    className={cn(
-                      "relative h-[min(70vw,22rem)] w-[min(70vw,22rem)] max-h-[68%] max-w-[68%] rounded-[30px] border border-white/20 shadow-[0_0_0_2000px_rgba(2,6,23,0.34)] transition-all duration-200 ease-out",
-                      resultTone === "success" && "scale-[1.03] shadow-[0_0_55px_rgba(16,185,129,0.65)]",
-                      resultTone === "error" && "scale-[1.02] shadow-[0_0_55px_rgba(248,113,113,0.65)]",
-                      resultTone === "warning" && "scale-[1.02] shadow-[0_0_55px_rgba(251,191,36,0.6)]",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "absolute inset-0 rounded-[30px] opacity-0 transition-opacity duration-200",
-                        resultTone === "success" && "opacity-100 shadow-[0_0_45px_rgba(16,185,129,0.75)]",
-                        resultTone === "error" && "opacity-100 shadow-[0_0_45px_rgba(248,113,113,0.7)]",
-                        resultTone === "warning" && "opacity-100 shadow-[0_0_45px_rgba(251,191,36,0.7)]",
-                      )}
-                    />
-                    <div className="absolute inset-0 rounded-[30px] border border-cyan-300/40 shadow-[0_0_30px_rgba(34,211,238,0.35)] opacity-80 animate-pulse" />
-                    <div className="absolute -left-px -top-px h-10 w-10 rounded-tl-[30px] border-l-2 border-t-2 border-cyan-300" />
-                    <div className="absolute -right-px -top-px h-10 w-10 rounded-tr-[30px] border-r-2 border-t-2 border-cyan-300" />
-                    <div className="absolute -bottom-px -left-px h-10 w-10 rounded-bl-[30px] border-b-2 border-l-2 border-cyan-300" />
-                    <div className="absolute -bottom-px -right-px h-10 w-10 rounded-br-[30px] border-b-2 border-r-2 border-cyan-300" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <aside className="flex min-h-[180px] flex-col justify-center rounded-[28px] border border-white/10 bg-slate-950/45 p-6 shadow-[0_24px_80px_rgba(2,6,23,0.45)] backdrop-blur">
-            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-emerald-300">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.7)]" />
-              Scanner Ready
-            </div>
-            <p
-              className={cn(
-                "mt-4 text-3xl font-semibold tracking-wide text-white transition-all duration-200 ease-out sm:text-4xl",
-                scanPayload ? "opacity-100 scale-100" : "opacity-80 scale-100",
-                resultFading ? "opacity-0 scale-95" : "",
-              )}
-            >
-              {resultPrimary}
-            </p>
-            <p
-              className={cn(
-                "mt-2 text-base font-semibold text-cyan-100 transition-all duration-200 ease-out sm:text-lg",
-                resultFading ? "opacity-0" : "opacity-90",
-              )}
-            >
-              {resultSecondary}
-            </p>
-            <p className="mt-4 text-xs uppercase tracking-[0.24em] text-slate-500">System Active - Scanning</p>
-          </aside>
-        </div>
-      </div>
-    </div>
+    <ScannerCamera
+      badges={scannerBadges}
+      cameraLive={cameraLive}
+      detectionState={liveState}
+      feedbackLabel={scannerFeedbackLabel}
+      instructionText="Align QR code inside the box"
+      message={scannerMessage}
+      result={activeResultCard}
+      title="Student ID QR Scanner"
+      torchEnabled={controllerState.torchEnabled}
+      torchSupported={controllerState.torchSupported}
+      videoRef={handleVideoRef}
+    />
   );
 };
 

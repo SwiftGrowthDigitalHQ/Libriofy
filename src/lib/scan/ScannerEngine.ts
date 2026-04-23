@@ -54,17 +54,27 @@ type ScannerEngineOptions = {
   log: EngineLog;
 };
 
-const DEFAULT_SCAN_INTERVAL_MS = 60;
+const DEFAULT_SCAN_INTERVAL_MS = 45;
 const PREVIEW_ANALYSIS_INTERVAL_MS = 250;
 const PREVIEW_SAMPLE_EDGE = 84;
-const SCAN_BOX_MAX_EDGE = 640;
-const SCAN_BOX_MIN_EDGE = 340;
-const SCAN_BOX_PADDING = 12;
+const MOBILE_PREVIEW_BREAKPOINT = 640;
+const MOBILE_SCAN_BOX_MAX_EDGE = 260;
+const MOBILE_SCAN_BOX_MIN_EDGE = 220;
+const MOBILE_SCAN_BOX_RATIO = 0.58;
+const DESKTOP_SCAN_BOX_MAX_EDGE = 300;
+const DESKTOP_SCAN_BOX_MIN_EDGE = 250;
+const DESKTOP_SCAN_BOX_RATIO = 0.42;
+const TARGET_DECODE_MAX_EDGE = 960;
+const TARGET_DECODE_MIN_EDGE = 720;
 const MAX_UPLOAD_IMAGE_BYTES = 8 * 1024 * 1024;
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-const clampEdge = (value: number) => Math.max(SCAN_BOX_MIN_EDGE, Math.min(SCAN_BOX_MAX_EDGE, Math.round(value)));
+const clampScanBoxEdge = (value: number, isMobilePreview: boolean) => {
+  const minEdge = isMobilePreview ? MOBILE_SCAN_BOX_MIN_EDGE : DESKTOP_SCAN_BOX_MIN_EDGE;
+  const maxEdge = isMobilePreview ? MOBILE_SCAN_BOX_MAX_EDGE : DESKTOP_SCAN_BOX_MAX_EDGE;
+  return Math.max(minEdge, Math.min(maxEdge, Math.round(value)));
+};
 
 const analyzeImageData = (imageData: ImageData): ScanFrameAnalysis => {
   const grayscale = new Float32Array(imageData.width * imageData.height);
@@ -304,7 +314,11 @@ export class ScannerEngine {
   private resolveScanCropRect(video: HTMLVideoElement) {
     const previewWidth = video.clientWidth || video.videoWidth;
     const previewHeight = video.clientHeight || video.videoHeight;
-    const scanBoxEdge = clampEdge(Math.min(previewWidth, previewHeight) - SCAN_BOX_PADDING);
+    const isMobilePreview = previewWidth < MOBILE_PREVIEW_BREAKPOINT;
+    const scanBoxEdge = clampScanBoxEdge(
+      Math.min(previewWidth, previewHeight) * (isMobilePreview ? MOBILE_SCAN_BOX_RATIO : DESKTOP_SCAN_BOX_RATIO),
+      isMobilePreview,
+    );
     const widthScale = previewWidth ? video.videoWidth / previewWidth : 1;
     const heightScale = previewHeight ? video.videoHeight / previewHeight : 1;
     const cropEdge = Math.min(
@@ -335,7 +349,7 @@ export class ScannerEngine {
 
     this.lastFrameAt = Date.now();
     const { cropEdge, sourceX, sourceY } = this.resolveScanCropRect(video);
-    const targetEdge = Math.max(420, Math.min(820, cropEdge));
+    const targetEdge = Math.max(TARGET_DECODE_MIN_EDGE, Math.min(TARGET_DECODE_MAX_EDGE, Math.round(cropEdge * 1.6)));
     const nextRequestId = this.requestId + 1;
     this.requestId = nextRequestId;
     this.workerBusy = true;

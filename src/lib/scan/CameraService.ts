@@ -39,17 +39,17 @@ const CAMERA_PROFILES: CameraProfile[] = [
   {
     label: "sharp",
     trackConstraints: {
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 30, max: 60 },
+      width: { ideal: 2560 },
+      height: { ideal: 1440 },
+      frameRate: { ideal: 36, max: 60 },
     },
   },
   {
     label: "balanced",
     trackConstraints: {
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 24, max: 30 },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30, max: 36 },
     },
   },
   {
