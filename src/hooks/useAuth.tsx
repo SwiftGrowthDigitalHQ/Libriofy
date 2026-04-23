@@ -4,7 +4,6 @@ import type { Session } from "@supabase/supabase-js";
 
 import {
   extractSessionFromResponse,
-  loginWithEmail,
   logoutAllSessions,
   logoutCurrentSession,
   refreshAuthSession,
@@ -355,9 +354,37 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [clearIdleTimer, expireForInactivity, session]);
 
   const signIn = async (email: string, password: string) => {
-    const response = await loginWithEmail(email, password);
     await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
-    applySession(extractSessionFromResponse(response));
+
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data.session?.user?.id) {
+      throw new Error("Login succeeded but no session was returned.");
+    }
+
+    const { data: roles, error: rolesError } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", data.session.user.id);
+
+    if (rolesError) {
+      await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
+      throw rolesError;
+    }
+
+    if ((roles ?? []).some((role) => role.role === "super_admin")) {
+      await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
+      throw new Error("Use the Super Admin login page to continue with OTP verification.");
+    }
+
+    applySupabaseSession(data.session);
     markSessionActivity();
   };
 
