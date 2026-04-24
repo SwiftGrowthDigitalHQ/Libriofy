@@ -89,6 +89,22 @@ const getDecodeContext = (width: number, height: number) => {
   return decodeContext;
 };
 
+const detectWithBarcodeDetector = async (source: ImageBitmapSource | OffscreenCanvas) => {
+  const detector = getBarcodeDetector();
+  if (!detector) {
+    return null;
+  }
+
+  try {
+    const nativeResults = await detector.detect(source);
+    return trimText(
+      nativeResults.find((entry) => typeof entry.rawValue === "string" && entry.rawValue.trim())?.rawValue,
+    );
+  } catch {
+    return null;
+  }
+};
+
 const clampByte = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
 
 const createEnhancedImageData = (
@@ -181,11 +197,11 @@ const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
     return directRead;
   }
 
-  const contrastRead = trimText(
+  return trimText(
     jsQR(
       createEnhancedImageData(imageData, {
-        contrast: 1.22,
-        brightnessOffset: brightness < 96 ? 10 : 6,
+        contrast: brightness < 96 ? 1.28 : 1.18,
+        brightnessOffset: brightness < 96 ? 8 : 4,
       }).data,
       imageData.width,
       imageData.height,
@@ -194,65 +210,18 @@ const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
       },
     )?.data,
   );
-  if (contrastRead) {
-    return contrastRead;
-  }
-
-  const lowLightBoostRead = trimText(
-    jsQR(
-      createEnhancedImageData(imageData, {
-        contrast: brightness < 88 ? 1.52 : 1.42,
-        brightnessOffset: brightness < 88 ? 22 : 14,
-      }).data,
-      imageData.width,
-      imageData.height,
-      {
-        inversionAttempts: "attemptBoth",
-      },
-    )?.data,
-  );
-  if (lowLightBoostRead) {
-    return lowLightBoostRead;
-  }
-
-  const thresholdRead = trimText(
-    jsQR(
-      createEnhancedImageData(imageData, {
-        contrast: brightness < 88 ? 1.56 : 1.4,
-        brightnessOffset: brightness < 88 ? 20 : brightness < 96 ? 16 : 8,
-        threshold: brightness < 82 ? 108 : brightness < 90 ? 118 : 132,
-      }).data,
-      imageData.width,
-      imageData.height,
-      {
-        inversionAttempts: "attemptBoth",
-      },
-    )?.data,
-  );
-
-  return thresholdRead || null;
 };
 
 const decodeBitmap = async (bitmap: ImageBitmap) => {
-  const detector = getBarcodeDetector();
-  if (detector) {
-    try {
-      const nativeResults = await detector.detect(bitmap);
-      const nativeValue = trimText(
-        nativeResults.find((entry) => typeof entry.rawValue === "string" && entry.rawValue.trim())?.rawValue,
-      );
-      if (nativeValue) {
-        return {
-          rawValue: nativeValue,
-          detector: "barcode_detector" as const,
-          brightness: 0,
-          edgeScore: 0,
-          lowLight: false,
-        };
-      }
-    } catch {
-      // Continue to jsQR fallback below.
-    }
+  const nativeValue = await detectWithBarcodeDetector(bitmap);
+  if (nativeValue) {
+    return {
+      rawValue: nativeValue,
+      detector: "barcode_detector" as const,
+      brightness: 0,
+      edgeScore: 0,
+      lowLight: false,
+    };
   }
 
   const context = getDecodeContext(bitmap.width, bitmap.height);
@@ -283,6 +252,22 @@ const decodeBitmap = async (bitmap: ImageBitmap) => {
 };
 
 const decodeImageData = async (imageData: ImageData) => {
+  const context = getDecodeContext(imageData.width, imageData.height);
+  if (context && decodeCanvas) {
+    context.imageSmoothingEnabled = false;
+    context.putImageData(imageData, 0, 0);
+    const nativeValue = await detectWithBarcodeDetector(decodeCanvas);
+    if (nativeValue) {
+      return {
+        rawValue: nativeValue,
+        detector: "barcode_detector" as const,
+        brightness: 0,
+        edgeScore: 0,
+        lowLight: false,
+      };
+    }
+  }
+
   const analysis = analyzeImageData(imageData);
   const rawValue = decodeWithJsQr(imageData, analysis.brightness);
 

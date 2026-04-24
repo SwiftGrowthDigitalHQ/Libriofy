@@ -11,11 +11,9 @@ import type {
   ScanControllerLogLevel,
   ScanControllerState,
   ScanDetectionPayload,
-  ScanFrameAnalysis,
 } from "./types";
 
 type ScanControllerOptions = {
-  onAnalysis?: (analysis: ScanFrameAnalysis) => void;
   onDetect: (payload: ScanDetectionPayload) => void;
   onLog?: (
     level: ScanControllerLogLevel,
@@ -60,9 +58,6 @@ export class ScanController {
   constructor(private readonly options: ScanControllerOptions) {
     this.cameraService = new CameraService(this.log);
     this.engine = new ScannerEngine({
-      onAnalysis: (analysis) => {
-        this.options.onAnalysis?.(analysis);
-      },
       onDetect: (payload) => {
         this.options.onDetect(payload);
       },

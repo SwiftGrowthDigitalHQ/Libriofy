@@ -52,7 +52,8 @@ const DEVICE_BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY
 const DUPLICATE_SCAN_WINDOW_MS = 3000;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_SCAN_VALUE_LENGTH = 4096;
-const RESULT_HOLD_MS = 2000;
+const RESULT_HOLD_MS = 300;
+const SCAN_DEBOUNCE_MS = 350;
 const SYNC_INTERVAL_MS = 25000;
 const MAX_LOG_ENTRIES = 12;
 const MAX_ACTIVITY_ITEMS = 12;
@@ -407,6 +408,7 @@ const ScanKioskPage = () => {
   const navigate = useNavigate();
   const bindingRedirectInFlightRef = useRef(false);
   const controllerRef = useRef<ScanController | null>(null);
+  const detectionCooldownUntilRef = useRef(0);
   const heartbeatInFlightRef = useRef(false);
   const mountedRef = useRef(false);
   const processingRef = useRef(false);
@@ -560,7 +562,7 @@ const ScanKioskPage = () => {
       }
 
       const currentState = controller.getState();
-      if (currentState.status === "paused") {
+      if (currentState.status === "paused" && !document.hidden) {
         controller.resume(reason);
         return;
       }
@@ -711,6 +713,10 @@ const ScanKioskPage = () => {
         return;
       }
 
+      if (Date.now() < detectionCooldownUntilRef.current) {
+        return;
+      }
+
       if (normalizedRawValue.length > MAX_SCAN_VALUE_LENGTH) {
         setPhase("error");
         setScanPayload({
@@ -721,12 +727,12 @@ const ScanKioskPage = () => {
         });
         setStatusMessage("Invalid QR");
         scheduleResume("oversized-qr");
+        detectionCooldownUntilRef.current = Date.now() + SCAN_DEBOUNCE_MS;
         return;
       }
 
       processingRef.current = true;
       clearResumeTimer();
-      controllerRef.current?.pause("scan-processing");
       setPhase("scanning");
       setScanPayload(null);
       setStatusMessage(isOnline ? "Scanning..." : "Saving offline...");
@@ -760,6 +766,8 @@ const ScanKioskPage = () => {
           setStatusMessage("Invalid QR");
           scannerHeld = true;
           scheduleResume("invalid-qr");
+          detectionCooldownUntilRef.current = Date.now() + SCAN_DEBOUNCE_MS;
+          scannerHeld = false;
           return;
         }
 
@@ -781,6 +789,8 @@ const ScanKioskPage = () => {
           setStatusMessage("Scan Failed");
           scannerHeld = true;
           scheduleResume(`scan-invalid:${parsed.code}`);
+          detectionCooldownUntilRef.current = Date.now() + SCAN_DEBOUNCE_MS;
+          scannerHeld = false;
           return;
         }
 
@@ -796,6 +806,8 @@ const ScanKioskPage = () => {
           setStatusMessage("Invalid QR");
           scannerHeld = true;
           scheduleResume("scan-invalid");
+          detectionCooldownUntilRef.current = Date.now() + SCAN_DEBOUNCE_MS;
+          scannerHeld = false;
           return;
         }
 
@@ -808,10 +820,12 @@ const ScanKioskPage = () => {
             scanIdentifier,
             source,
           });
-          processingRef.current = false;
           setPhase("idle");
           setStatusMessage("Already Marked \u26A0");
-          controllerRef.current?.resume("duplicate-scan");
+          scannerHeld = true;
+          scheduleResume("duplicate-scan");
+          detectionCooldownUntilRef.current = Date.now() + SCAN_DEBOUNCE_MS;
+          scannerHeld = false;
           return;
         }
 
@@ -889,6 +903,8 @@ const ScanKioskPage = () => {
         void refreshQueueTelemetry();
         scannerHeld = true;
         scheduleResume(`result:${payload.status}`);
+        detectionCooldownUntilRef.current = Date.now() + SCAN_DEBOUNCE_MS;
+        scannerHeld = false;
         void sendScannerHeartbeat("post-scan");
         if (isOnline) {
           void syncQueuedScans("post-scan");
@@ -912,6 +928,8 @@ const ScanKioskPage = () => {
         setStatusMessage("Scan Failed");
         scannerHeld = true;
         scheduleResume("scan-exception");
+        detectionCooldownUntilRef.current = Date.now() + SCAN_DEBOUNCE_MS;
+        scannerHeld = false;
       } finally {
         if (!scannerHeld) {
           processingRef.current = false;

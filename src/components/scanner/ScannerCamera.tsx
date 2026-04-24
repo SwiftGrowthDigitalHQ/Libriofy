@@ -1,7 +1,6 @@
 import type { RefCallback } from "react";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Flashlight, FlashlightOff } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import ScanFrameOverlay from "./ScanFrameOverlay";
@@ -20,14 +19,6 @@ type ScannerCameraProps = {
   torchSupported: boolean;
   videoRef: RefCallback<HTMLVideoElement>;
 };
-
-const badgeToneClasses = {
-  danger: "border-rose-300/20 bg-rose-400/10 text-rose-50",
-  info: "border-cyan-300/20 bg-cyan-400/10 text-cyan-50",
-  neutral: "border-white/12 bg-white/[0.04] text-white/80",
-  success: "border-emerald-300/20 bg-emerald-400/10 text-emerald-50",
-  warning: "border-amber-300/20 bg-amber-400/10 text-amber-50",
-} as const;
 
 const resultToneClasses = {
   danger: "border-rose-300/24 bg-[linear-gradient(180deg,rgba(127,29,29,0.76),rgba(69,10,10,0.9))]",
@@ -50,103 +41,72 @@ const ScannerCamera = ({
   torchSupported,
   videoRef,
 }: ScannerCameraProps) => (
-  <main className="relative min-h-screen overflow-hidden bg-[#020817] text-white">
-    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(21,94,117,0.28),transparent_35%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.42),transparent_42%)]" />
-    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(2,6,23,0.88),rgba(2,6,23,0.96))]" />
+  <main className="relative min-h-screen overflow-hidden bg-black text-white">
+    <video
+      ref={videoRef}
+      autoPlay
+      className={cn(
+        "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
+        cameraLive ? "opacity-100" : "opacity-35 saturate-50",
+      )}
+      muted
+      playsInline
+    />
 
-    <section className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1120px] flex-col px-0 sm:px-5 lg:px-8">
-      <div className="px-4 pb-4 pt-6 sm:px-1 sm:pb-6 sm:pt-8">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-cyan-100/62">{title}</p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-white sm:text-[2.35rem]">{instructionText}</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-white/66 sm:text-[15px]">{message}</p>
+    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,6,18,0.22),rgba(4,6,18,0.18)_28%,rgba(4,6,18,0.36)_68%,rgba(4,6,18,0.5))]" />
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {badges.map((badge) => (
-            <div
-              key={`${badge.label}-${badge.value}`}
-              className={cn(
-                "rounded-full border px-3 py-2 text-[11px] font-semibold tracking-[0.02em] backdrop-blur-xl",
-                badgeToneClasses[badge.tone ?? "neutral"],
-              )}
-            >
-              <span className="text-white/52">{badge.label}</span> <span className="text-white/94">{badge.value}</span>
-            </div>
-          ))}
-
-          {torchSupported ? (
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold text-white/82 backdrop-blur-xl">
-              {torchEnabled ? <Flashlight className="h-3.5 w-3.5 text-amber-200" /> : <FlashlightOff className="h-3.5 w-3.5 text-white/60" />}
-              {torchEnabled ? "Torch enabled" : "Torch ready"}
-            </div>
-          ) : null}
-        </div>
+    <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-5 sm:px-6">
+      <div className="rounded-full bg-black/34 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/72 backdrop-blur-md">
+        {feedbackLabel}
       </div>
-
-      <div className="relative flex-1 overflow-hidden border-y border-white/10 bg-slate-950 sm:mb-8 sm:rounded-[34px] sm:border sm:shadow-[0_28px_120px_rgba(2,8,23,0.45)]">
-        <div className="relative min-h-[calc(100svh-10rem)] overflow-hidden sm:min-h-[44rem]">
-          <video
-            ref={videoRef}
-            autoPlay
-            className={cn(
-              "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
-              cameraLive ? "opacity-100" : "opacity-25 saturate-50",
-            )}
-            muted
-            playsInline
-          />
-
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_38%),linear-gradient(180deg,rgba(2,6,23,0.14),rgba(2,6,23,0.42)_58%,rgba(2,6,23,0.78))]" />
-
-          <ScanFrameOverlay
-            cameraLive={cameraLive}
-            detectionState={detectionState}
-            feedbackLabel={feedbackLabel}
-            instructionText={instructionText}
-          />
-
-          <AnimatePresence>
-            {result ? (
-              <motion.div
-                key={result.id}
-                className={cn(
-                  "absolute bottom-5 left-1/2 z-20 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-[26px] border p-4 shadow-[0_24px_80px_rgba(2,8,23,0.44)] backdrop-blur-2xl sm:bottom-6 sm:p-5",
-                  resultToneClasses[result.tone],
-                )}
-                initial={{ opacity: 0, y: 18, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 16, scale: 0.98 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-white/54">Scan Result</p>
-                    <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-white sm:text-[1.65rem]">{result.name}</h2>
-                  </div>
-                  <div className="rounded-full border border-white/12 bg-white/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-white/88">
-                    {result.timeLabel}
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-3 gap-2.5">
-                  <div className="rounded-[18px] border border-white/10 bg-black/18 px-3 py-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/46">Name</p>
-                    <p className="mt-2 text-sm font-semibold text-white">{result.name}</p>
-                  </div>
-                  <div className="rounded-[18px] border border-white/10 bg-black/18 px-3 py-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/46">Seat</p>
-                    <p className="mt-2 text-sm font-semibold text-white">{result.seat || "--"}</p>
-                  </div>
-                  <div className="rounded-[18px] border border-white/10 bg-black/18 px-3 py-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/46">Status</p>
-                    <p className="mt-2 text-sm font-semibold text-white">{result.statusLabel}</p>
-                  </div>
-                </div>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
+      {torchSupported ? (
+        <div className="rounded-full bg-black/34 px-3 py-1.5 text-[11px] font-semibold text-white/72 backdrop-blur-md">
+          {torchEnabled ? "Torch On" : "Torch Ready"}
         </div>
+      ) : null}
+    </div>
+
+    <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-6 sm:px-6">
+      <div className="mx-auto max-w-sm rounded-full bg-black/34 px-4 py-2 text-center text-sm font-medium text-white/78 backdrop-blur-md">
+        {instructionText}
       </div>
-    </section>
+    </div>
+
+    <ScanFrameOverlay
+      cameraLive={cameraLive}
+      detectionState={detectionState}
+      feedbackLabel={feedbackLabel}
+      instructionText={instructionText}
+    />
+
+    <AnimatePresence>
+      {result ? (
+        <motion.div
+          key={result.id}
+          className={cn(
+            "absolute bottom-20 left-1/2 z-20 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-[24px] border p-4 shadow-[0_24px_60px_rgba(2,8,23,0.32)] backdrop-blur-2xl sm:bottom-24",
+            resultToneClasses[result.tone],
+          )}
+          initial={{ opacity: 0, y: 12, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 10, scale: 0.98 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/58">{title}</p>
+              <h2 className="mt-2 text-lg font-semibold tracking-[-0.03em] text-white">{result.name}</h2>
+              <p className="mt-1 text-sm text-white/78">{result.statusLabel}</p>
+            </div>
+            <div className="rounded-full border border-white/12 bg-white/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/84">
+              {result.timeLabel}
+            </div>
+          </div>
+
+          <p className="mt-3 text-sm text-white/74">{result.subtitle}</p>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   </main>
 );
 

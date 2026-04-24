@@ -4,7 +4,6 @@ import { getReadableCameraError } from "@/lib/cameraStartup";
 import type {
   ScanControllerLogLevel,
   ScanDetectionPayload,
-  ScanFrameAnalysis,
 } from "./types";
 
 type WorkerReadyMessage = {
@@ -47,16 +46,11 @@ type EngineLog = (
 ) => void;
 
 type ScannerEngineOptions = {
-  intervalMs?: number;
-  onAnalysis?: (analysis: ScanFrameAnalysis) => void;
   onDetect: (payload: ScanDetectionPayload) => void;
   onError?: (error: unknown) => void;
   log: EngineLog;
 };
 
-const DEFAULT_SCAN_INTERVAL_MS = 45;
-const PREVIEW_ANALYSIS_INTERVAL_MS = 250;
-const PREVIEW_SAMPLE_EDGE = 84;
 const MOBILE_PREVIEW_BREAKPOINT = 640;
 const MOBILE_SCAN_BOX_MAX_EDGE = 260;
 const MOBILE_SCAN_BOX_MIN_EDGE = 220;
@@ -64,8 +58,9 @@ const MOBILE_SCAN_BOX_RATIO = 0.58;
 const DESKTOP_SCAN_BOX_MAX_EDGE = 300;
 const DESKTOP_SCAN_BOX_MIN_EDGE = 250;
 const DESKTOP_SCAN_BOX_RATIO = 0.42;
-const TARGET_DECODE_MAX_EDGE = 960;
-const TARGET_DECODE_MIN_EDGE = 720;
+const TARGET_SCAN_INTERVAL_MS = 80;
+const TARGET_DECODE_MAX_EDGE = 400;
+const TARGET_DECODE_MIN_EDGE = 300;
 const MAX_UPLOAD_IMAGE_BYTES = 8 * 1024 * 1024;
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -76,61 +71,11 @@ const clampScanBoxEdge = (value: number, isMobilePreview: boolean) => {
   return Math.max(minEdge, Math.min(maxEdge, Math.round(value)));
 };
 
-const analyzeImageData = (imageData: ImageData): ScanFrameAnalysis => {
-  const grayscale = new Float32Array(imageData.width * imageData.height);
-  let brightnessTotal = 0;
-  let glarePixels = 0;
-  let shadowPixels = 0;
-
-  for (let index = 0; index < grayscale.length; index += 1) {
-    const sourceIndex = index * 4;
-    const luminance =
-      imageData.data[sourceIndex] * 0.299 +
-      imageData.data[sourceIndex + 1] * 0.587 +
-      imageData.data[sourceIndex + 2] * 0.114;
-
-    grayscale[index] = luminance;
-    brightnessTotal += luminance;
-
-    if (luminance > 218) {
-      glarePixels += 1;
-    }
-
-    if (luminance < 52) {
-      shadowPixels += 1;
-    }
-  }
-
-  let edgeTotal = 0;
-  for (let y = 1; y < imageData.height; y += 1) {
-    for (let x = 1; x < imageData.width; x += 1) {
-      const index = y * imageData.width + x;
-      edgeTotal += Math.abs(grayscale[index] - grayscale[index - 1]);
-      edgeTotal += Math.abs(grayscale[index] - grayscale[index - imageData.width]);
-    }
-  }
-
-  const pixelCount = grayscale.length || 1;
-  const edgeSamples = Math.max(1, (imageData.width - 1) * (imageData.height - 1) * 2);
-  const brightness = brightnessTotal / pixelCount;
-  const edgeScore = edgeTotal / edgeSamples;
-  const glareRatio = glarePixels / pixelCount;
-  const shadowRatio = shadowPixels / pixelCount;
-
-  return {
-    brightness,
-    edgeScore,
-    glare: brightness > 212 || glareRatio > 0.22,
-    lowLight: brightness < 80 || shadowRatio > 0.42 || (brightness < 98 && shadowRatio > 0.34),
-  };
-};
-
 export class ScannerEngine {
-  private analysisCanvas: HTMLCanvasElement | null = null;
   private captureCanvas: HTMLCanvasElement | null = null;
-  private detectionLoopTimer: number | null = null;
+  private detectionFrameHandle: number | null = null;
+  private lastDecodeAttemptAt = 0;
   private paused = false;
-  private previewAnalysisTimer: number | null = null;
   private requestId = 0;
   private running = false;
   private runToken = 0;
@@ -153,7 +98,6 @@ export class ScannerEngine {
     this.paused = false;
     this.ensureWorker(this.runToken);
     this.startDetectionLoop();
-    this.startPreviewAnalysisLoop();
   }
 
   pause() {
@@ -169,6 +113,7 @@ export class ScannerEngine {
     this.running = false;
     this.paused = false;
     this.workerBusy = false;
+    this.lastDecodeAttemptAt = 0;
     this.requestId = 0;
     this.lastFrameAt = null;
     this.clearTimers();
@@ -176,9 +121,7 @@ export class ScannerEngine {
     this.worker = null;
     this.videoElement = null;
     this.resetCanvas(this.captureCanvas);
-    this.resetCanvas(this.analysisCanvas);
     this.captureCanvas = null;
-    this.analysisCanvas = null;
     this.workerSupport = {
       barcodeDetector: false,
       offscreenCanvas: false,
@@ -186,14 +129,9 @@ export class ScannerEngine {
   }
 
   private clearTimers() {
-    if (this.detectionLoopTimer !== null) {
-      window.clearInterval(this.detectionLoopTimer);
-      this.detectionLoopTimer = null;
-    }
-
-    if (this.previewAnalysisTimer !== null) {
-      window.clearInterval(this.previewAnalysisTimer);
-      this.previewAnalysisTimer = null;
+    if (this.detectionFrameHandle !== null) {
+      window.cancelAnimationFrame(this.detectionFrameHandle);
+      this.detectionFrameHandle = null;
     }
   }
 
@@ -276,27 +214,31 @@ export class ScannerEngine {
   }
 
   private startDetectionLoop() {
-    this.detectionLoopTimer = window.setInterval(() => {
+    const loop = (now: number) => {
+      if (!this.running) {
+        this.detectionFrameHandle = null;
+        return;
+      }
+
+      this.detectionFrameHandle = window.requestAnimationFrame(loop);
+      if (this.paused || this.workerBusy) {
+        return;
+      }
+
+      if (now - this.lastDecodeAttemptAt < TARGET_SCAN_INTERVAL_MS) {
+        return;
+      }
+
+      this.lastDecodeAttemptAt = now;
       void this.captureAndDecode().catch((error) => {
         this.options.log("warn", "decode-fail", {
           message: getReadableCameraError(error, "Unable to capture frame."),
         });
         this.options.onError?.(error);
       });
-    }, this.options.intervalMs ?? DEFAULT_SCAN_INTERVAL_MS);
-  }
+    };
 
-  private startPreviewAnalysisLoop() {
-    this.previewAnalysisTimer = window.setInterval(() => {
-      if (!this.running || this.paused) {
-        return;
-      }
-
-      const analysis = this.readPreviewAnalysis();
-      if (analysis) {
-        this.options.onAnalysis?.(analysis);
-      }
-    }, PREVIEW_ANALYSIS_INTERVAL_MS);
+    this.detectionFrameHandle = window.requestAnimationFrame(loop);
   }
 
   private getVideoElement() {
@@ -427,28 +369,6 @@ export class ScannerEngine {
     context.clearRect(0, 0, targetEdge, targetEdge);
     context.drawImage(video, sourceX, sourceY, cropEdge, cropEdge, 0, 0, targetEdge, targetEdge);
     return context.getImageData(0, 0, targetEdge, targetEdge);
-  }
-
-  private readPreviewAnalysis() {
-    const video = this.getVideoElement();
-    if (!video) {
-      return null;
-    }
-
-    const { cropEdge, sourceX, sourceY } = this.resolveScanCropRect(video);
-    const canvas = this.analysisCanvas ?? document.createElement("canvas");
-    this.analysisCanvas = canvas;
-    canvas.width = PREVIEW_SAMPLE_EDGE;
-    canvas.height = PREVIEW_SAMPLE_EDGE;
-
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) {
-      return null;
-    }
-
-    context.drawImage(video, sourceX, sourceY, cropEdge, cropEdge, 0, 0, PREVIEW_SAMPLE_EDGE, PREVIEW_SAMPLE_EDGE);
-    const imageData = context.getImageData(0, 0, PREVIEW_SAMPLE_EDGE, PREVIEW_SAMPLE_EDGE);
-    return analyzeImageData(imageData);
   }
 }
 

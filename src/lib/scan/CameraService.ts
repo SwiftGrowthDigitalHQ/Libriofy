@@ -37,27 +37,27 @@ type CameraProfile = {
 
 const CAMERA_PROFILES: CameraProfile[] = [
   {
-    label: "sharp",
+    label: "performance",
     trackConstraints: {
-      width: { ideal: 2560 },
-      height: { ideal: 1440 },
-      frameRate: { ideal: 36, max: 60 },
+      width: { ideal: 960 },
+      height: { ideal: 540 },
+      frameRate: { ideal: 24, max: 30 },
     },
   },
   {
     label: "balanced",
     trackConstraints: {
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 30, max: 36 },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 24, max: 30 },
     },
   },
   {
-    label: "performance",
+    label: "sharp",
     trackConstraints: {
-      width: { ideal: 960 },
-      height: { ideal: 540 },
-      frameRate: { ideal: 15, max: 24 },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30, max: 30 },
     },
   },
 ];
@@ -124,16 +124,17 @@ const getDeviceMemory = () => {
 const selectProfileOrder = () => {
   const cores = navigator.hardwareConcurrency ?? 4;
   const memory = getDeviceMemory();
+  const [performanceProfile, balancedProfile, sharpProfile] = CAMERA_PROFILES;
 
   if (cores <= 2 || memory <= 3) {
-    return [CAMERA_PROFILES[0], CAMERA_PROFILES[1], CAMERA_PROFILES[2]];
+    return [performanceProfile, balancedProfile, sharpProfile];
   }
 
   if (cores <= 4 || memory <= 4) {
-    return [CAMERA_PROFILES[0], CAMERA_PROFILES[1], CAMERA_PROFILES[2]];
+    return [performanceProfile, balancedProfile, sharpProfile];
   }
 
-  return [CAMERA_PROFILES[0], CAMERA_PROFILES[1], CAMERA_PROFILES[2]];
+  return [performanceProfile, balancedProfile, sharpProfile];
 };
 
 const readCameraPermissionState = async (): Promise<PermissionState | null> => {
@@ -221,7 +222,11 @@ export class CameraService {
     if (permissionState !== "granted") {
       const warmupStream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: true,
+        video: {
+          facingMode: facingPreference === "environment" ? { ideal: "environment" } : "user",
+          width: { ideal: 960 },
+          height: { ideal: 540 },
+        },
       });
       if (!this.isSessionActive(startSessionToken)) {
         stopStream(warmupStream);
