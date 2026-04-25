@@ -24,6 +24,8 @@ type ScanControllerOptions = {
 };
 
 const CONTROLLER_LOG_PREFIX = "[scan]";
+const AUTO_TORCH_COOLDOWN_MS = 4000;
+const AUTO_TORCH_LOW_LIGHT_STREAK = 4;
 const CAMERA_IN_USE_RETRY_MS = 3000;
 const START_FAILED_RETRY_MS = 2000;
 const START_FAILED_MAX_RETRIES = 2;
@@ -45,9 +47,12 @@ const createInitialState = (): ScanControllerState => ({
 });
 
 export class ScanController {
+  private autoTorchBusy = false;
   private readonly cameraService: CameraService;
   private readonly engine: ScannerEngine;
   private lifecycleToken = 0;
+  private lowLightFrameCount = 0;
+  private lastAutoTorchAt = 0;
   private retryCount = 0;
   private retryTimer: number | null = null;
   private startPromise: Promise<void> | null = null;
@@ -65,6 +70,9 @@ export class ScanController {
         this.log("warn", "engine-error", {
           message: error instanceof Error ? error.message : "Unknown scanner engine error",
         });
+      },
+      onFrameAnalysis: (analysis) => {
+        void this.handleFrameAnalysis(analysis);
       },
       log: this.log,
     });
@@ -97,6 +105,7 @@ export class ScanController {
     }
 
     this.clearRetryTimer();
+    this.resetFrameAutomation();
     this.patchState({
       error: null,
       status: "starting",
@@ -156,6 +165,7 @@ export class ScanController {
     this.clearRetryTimer();
     this.stopWatchdog();
     this.startPromise = null;
+    this.resetFrameAutomation();
     this.engine.stop();
     await this.cameraService.stop();
 
@@ -284,6 +294,7 @@ export class ScanController {
   }
 
   private applyCameraStartResult(result: CameraStartResult) {
+    this.lowLightFrameCount = 0;
     this.patchState({
       activeCameraId: result.activeCameraId,
       activeCameraLabel: result.activeCameraLabel,
@@ -300,6 +311,7 @@ export class ScanController {
     reason: string,
     rawError: unknown,
   ) {
+    this.resetFrameAutomation();
     const error: ScanControllerError = {
       code: normalized.code,
       detail: normalized.detail,
@@ -332,6 +344,61 @@ export class ScanController {
     if (normalized.code === "START_FAILED" && this.retryCount < START_FAILED_MAX_RETRIES) {
       this.retryCount += 1;
       this.scheduleRetry(START_FAILED_RETRY_MS, `start-failed-${this.retryCount}`);
+    }
+  }
+
+  private async handleFrameAnalysis(analysis: ScanDetectionPayload["analysis"]) {
+    this.lowLightFrameCount = analysis.lowLight ? this.lowLightFrameCount + 1 : 0;
+
+    if (
+      !analysis.lowLight ||
+      this.lowLightFrameCount < AUTO_TORCH_LOW_LIGHT_STREAK ||
+      !this.state.torchSupported ||
+      this.state.torchEnabled ||
+      this.state.torchBusy ||
+      this.autoTorchBusy ||
+      this.state.status !== "ready"
+    ) {
+      return;
+    }
+
+    if (Date.now() - this.lastAutoTorchAt < AUTO_TORCH_COOLDOWN_MS) {
+      return;
+    }
+
+    const lifecycleToken = this.lifecycleToken;
+    this.autoTorchBusy = true;
+    this.lastAutoTorchAt = Date.now();
+    this.patchState({
+      torchBusy: true,
+    });
+
+    try {
+      const torchState = await this.cameraService.setTorch(true);
+      if (!this.isLifecycleCurrent(lifecycleToken)) {
+        return;
+      }
+
+      this.patchState({
+        torchBusy: false,
+        torchEnabled: torchState.torchEnabled,
+        torchSupported: torchState.torchSupported,
+      });
+      this.log("info", "camera-torch-auto-enabled", {
+        reason: "low-light",
+      });
+    } catch (error) {
+      if (this.isLifecycleCurrent(lifecycleToken)) {
+        this.patchState({
+          torchBusy: false,
+        });
+      }
+
+      this.log("warn", "camera-torch-auto-enable-failed", {
+        message: error instanceof Error ? error.message : "Unable to enable torch automatically.",
+      });
+    } finally {
+      this.autoTorchBusy = false;
     }
   }
 
@@ -430,5 +497,11 @@ export class ScanController {
 
   private isCancelledError(error: unknown) {
     return error instanceof Error && error.message === CAMERA_START_CANCELLED;
+  }
+
+  private resetFrameAutomation() {
+    this.autoTorchBusy = false;
+    this.lastAutoTorchAt = 0;
+    this.lowLightFrameCount = 0;
   }
 }

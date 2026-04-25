@@ -30,34 +30,82 @@ type CameraStartResult = {
   torchSupported: boolean;
 };
 
+type CameraTrackCapabilities = MediaTrackCapabilities & {
+  exposureMode?: string[];
+  focusMode?: string[];
+  torch?: boolean;
+  whiteBalanceMode?: string[];
+  zoom?: MediaSettingsRange;
+};
+
+type CameraTrackConstraintSet = MediaTrackConstraintSet & {
+  exposureMode?: ConstrainDOMString;
+  focusMode?: ConstrainDOMString;
+  torch?: boolean;
+  whiteBalanceMode?: ConstrainDOMString;
+  zoom?: ConstrainDouble;
+};
+
+type CameraTrackConstraints = MediaTrackConstraints & {
+  advanced?: CameraTrackConstraintSet[];
+};
+
+type CameraTrackSettings = MediaTrackSettings & {
+  exposureMode?: string;
+  focusMode?: string;
+  whiteBalanceMode?: string;
+  zoom?: number;
+};
+
 type CameraProfile = {
   label: string;
-  trackConstraints: MediaTrackConstraints;
+  trackConstraints: CameraTrackConstraints;
 };
+
+const CAMERA_ASPECT_RATIO = 16 / 9;
+const CAMERA_TARGET_HEIGHT = 720;
+const CAMERA_TARGET_WIDTH = 1280;
+const CAMERA_FALLBACK_HEIGHT = 540;
+const CAMERA_FALLBACK_WIDTH = 960;
+const CAMERA_MAX_AUTO_ZOOM = 2;
+const CAMERA_MIN_AUTO_ZOOM = 1.5;
+const CAMERA_TARGET_ZOOM = 1.75;
+
+const buildContinuousControlHints = (): CameraTrackConstraintSet => ({
+  exposureMode: "continuous",
+  focusMode: "continuous",
+  whiteBalanceMode: "continuous",
+});
 
 const CAMERA_PROFILES: CameraProfile[] = [
   {
-    label: "performance",
+    label: "preferred-720p",
     trackConstraints: {
-      width: { ideal: 960 },
-      height: { ideal: 540 },
+      advanced: [buildContinuousControlHints()],
+      aspectRatio: { ideal: CAMERA_ASPECT_RATIO },
+      height: { ideal: CAMERA_TARGET_HEIGHT, max: CAMERA_TARGET_HEIGHT, min: CAMERA_FALLBACK_HEIGHT },
       frameRate: { ideal: 24, max: 30 },
+      width: { ideal: CAMERA_TARGET_WIDTH, max: CAMERA_TARGET_WIDTH, min: CAMERA_FALLBACK_WIDTH },
     },
   },
   {
-    label: "balanced",
+    label: "steady-720p",
     trackConstraints: {
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 24, max: 30 },
-    },
-  },
-  {
-    label: "sharp",
-    trackConstraints: {
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
+      advanced: [buildContinuousControlHints()],
+      aspectRatio: { ideal: CAMERA_ASPECT_RATIO },
+      height: { ideal: CAMERA_TARGET_HEIGHT, max: CAMERA_TARGET_HEIGHT },
       frameRate: { ideal: 30, max: 30 },
+      width: { ideal: CAMERA_TARGET_WIDTH, max: CAMERA_TARGET_WIDTH },
+    },
+  },
+  {
+    label: "fallback-540p",
+    trackConstraints: {
+      advanced: [buildContinuousControlHints()],
+      aspectRatio: { ideal: CAMERA_ASPECT_RATIO },
+      height: { ideal: CAMERA_FALLBACK_HEIGHT, max: CAMERA_TARGET_HEIGHT, min: CAMERA_FALLBACK_HEIGHT },
+      frameRate: { ideal: 24, max: 30 },
+      width: { ideal: CAMERA_FALLBACK_WIDTH, max: CAMERA_TARGET_WIDTH, min: CAMERA_FALLBACK_WIDTH },
     },
   },
 ];
@@ -121,20 +169,44 @@ const getDeviceMemory = () => {
   return navigatorWithHints.deviceMemory ?? 4;
 };
 
+const roundZoomToStep = (value: number, range: MediaSettingsRange) => {
+  if (!Number.isFinite(range.step) || range.step <= 0) {
+    return Number(value.toFixed(2));
+  }
+
+  const snapped = range.min + Math.round((value - range.min) / range.step) * range.step;
+  return Number(snapped.toFixed(2));
+};
+
+const resolvePreferredZoom = (range: MediaSettingsRange | undefined) => {
+  if (!range || !Number.isFinite(range.max) || range.max < CAMERA_MIN_AUTO_ZOOM) {
+    return null;
+  }
+
+  const min = Number.isFinite(range.min) ? range.min : 1;
+  const max = Math.min(range.max, CAMERA_MAX_AUTO_ZOOM);
+  const zoomValue = Math.max(min, Math.min(max, CAMERA_TARGET_ZOOM));
+  return roundZoomToStep(zoomValue, {
+    ...range,
+    min,
+    max,
+  });
+};
+
 const selectProfileOrder = () => {
   const cores = navigator.hardwareConcurrency ?? 4;
   const memory = getDeviceMemory();
-  const [performanceProfile, balancedProfile, sharpProfile] = CAMERA_PROFILES;
+  const [preferredProfile, steadyProfile, fallbackProfile] = CAMERA_PROFILES;
 
   if (cores <= 2 || memory <= 3) {
-    return [performanceProfile, balancedProfile, sharpProfile];
+    return [preferredProfile, fallbackProfile, steadyProfile];
   }
 
   if (cores <= 4 || memory <= 4) {
-    return [performanceProfile, balancedProfile, sharpProfile];
+    return [preferredProfile, fallbackProfile, steadyProfile];
   }
 
-  return [performanceProfile, balancedProfile, sharpProfile];
+  return [preferredProfile, steadyProfile, fallbackProfile];
 };
 
 const readCameraPermissionState = async (): Promise<PermissionState | null> => {
@@ -160,7 +232,7 @@ const readCameraPermissionState = async (): Promise<PermissionState | null> => {
 
 type CameraCandidate = {
   cameraId: string | null;
-  constraints: MediaTrackConstraints;
+  constraints: CameraTrackConstraints;
   label: string;
 };
 
@@ -223,9 +295,10 @@ export class CameraService {
       const warmupStream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
+          advanced: [buildContinuousControlHints()],
           facingMode: facingPreference === "environment" ? { ideal: "environment" } : "user",
-          width: { ideal: 960 },
-          height: { ideal: 540 },
+          height: { ideal: CAMERA_TARGET_HEIGHT, max: CAMERA_TARGET_HEIGHT, min: CAMERA_FALLBACK_HEIGHT },
+          width: { ideal: CAMERA_TARGET_WIDTH, max: CAMERA_TARGET_WIDTH, min: CAMERA_FALLBACK_WIDTH },
         },
       });
       if (!this.isSessionActive(startSessionToken)) {
@@ -262,7 +335,7 @@ export class CameraService {
         this.ensureSessionActive(startSessionToken);
         await this.applyPreferredTrackControls(track);
         this.ensureSessionActive(startSessionToken);
-        const trackSettings = track.getSettings();
+        const trackSettings = track.getSettings() as CameraTrackSettings;
         const activeCameraId = typeof trackSettings.deviceId === "string" ? trackSettings.deviceId : candidate.cameraId;
         const activeCamera = devices.find((device) => device.id === activeCameraId) ?? null;
         this.activeCameraId = activeCameraId ?? null;
@@ -272,6 +345,12 @@ export class CameraService {
         this.log("info", "camera-started", {
           activeCameraId: this.activeCameraId,
           activeCameraLabel: activeCamera?.label ?? candidate.label,
+          activeExposureMode: trackSettings.exposureMode ?? null,
+          activeFocusMode: trackSettings.focusMode ?? null,
+          activeHeight: typeof trackSettings.height === "number" ? trackSettings.height : null,
+          activeWhiteBalanceMode: trackSettings.whiteBalanceMode ?? null,
+          activeWidth: typeof trackSettings.width === "number" ? trackSettings.width : null,
+          activeZoom: typeof trackSettings.zoom === "number" ? Number(trackSettings.zoom.toFixed(2)) : null,
           torchSupported,
         });
 
@@ -457,7 +536,7 @@ export class CameraService {
     }
   }
 
-  private async replaceStream(videoConstraints: MediaTrackConstraints, sessionToken: number) {
+  private async replaceStream(videoConstraints: CameraTrackConstraints, sessionToken: number) {
     const nextStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: videoConstraints,
@@ -495,22 +574,17 @@ export class CameraService {
   }
 
   private async applyPreferredTrackControls(track: MediaStreamTrack) {
-    const capabilities = track.getCapabilities() as MediaTrackCapabilities & {
-      exposureMode?: string[];
-      focusMode?: string[];
-      whiteBalanceMode?: string[];
-    };
+    let capabilities: CameraTrackCapabilities;
+    try {
+      capabilities = track.getCapabilities() as CameraTrackCapabilities;
+    } catch (error) {
+      this.log("warn", "camera-track-capabilities-unavailable", {
+        message: getReadableCameraError(error, "Unable to inspect camera controls."),
+      });
+      return;
+    }
 
-    const advanced: (MediaTrackConstraintSet & {
-      exposureMode?: ConstrainDOMString;
-      focusMode?: ConstrainDOMString;
-      whiteBalanceMode?: ConstrainDOMString;
-    })[] = [];
-    const nextControls: MediaTrackConstraintSet & {
-      exposureMode?: ConstrainDOMString;
-      focusMode?: ConstrainDOMString;
-      whiteBalanceMode?: ConstrainDOMString;
-    } = {};
+    const nextControls: CameraTrackConstraintSet = {};
 
     if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
       nextControls.focusMode = "continuous";
@@ -524,16 +598,19 @@ export class CameraService {
       nextControls.whiteBalanceMode = "continuous";
     }
 
-    if (Object.keys(nextControls).length) {
-      advanced.push(nextControls);
+    const preferredZoom = resolvePreferredZoom(capabilities.zoom);
+    if (preferredZoom !== null) {
+      nextControls.zoom = preferredZoom;
     }
 
-    if (!advanced.length) {
+    if (!Object.keys(nextControls).length) {
       return;
     }
 
     try {
-      await track.applyConstraints({ advanced });
+      await track.applyConstraints({
+        advanced: [nextControls],
+      });
     } catch (error) {
       this.log("warn", "camera-track-controls-unsupported", {
         message: getReadableCameraError(error, "Unable to apply focus controls."),
@@ -548,7 +625,7 @@ export class CameraService {
     }
 
     try {
-      const capabilities = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
+      const capabilities = track.getCapabilities() as CameraTrackCapabilities;
       return capabilities.torch === true;
     } catch (error) {
       this.log("warn", "camera-torch-capability-read-failed", {

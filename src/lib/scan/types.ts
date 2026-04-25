@@ -16,6 +16,7 @@ export type ScanDetectionSource = "barcode_detector" | "jsqr";
 
 export type ScanFrameAnalysis = {
   brightness: number;
+  blurry: boolean;
   edgeScore: number;
   glare: boolean;
   lowLight: boolean;

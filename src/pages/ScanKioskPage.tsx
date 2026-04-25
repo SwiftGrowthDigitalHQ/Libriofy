@@ -1,6 +1,18 @@
 ﻿import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Activity,
+  BadgeCheck,
+  CircleX,
+  Clock3,
+  QrCode,
+  ScanLine,
+  Shield,
+  ShieldCheck,
+  UserRound,
+  WifiOff,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import ScannerCamera from "@/components/scanner/ScannerCamera";
 import type {
   ActivityFeedItem,
   LastScanCardData,
@@ -39,6 +51,7 @@ import type {
   ScanControllerState,
   ScanDetectionPayload,
 } from "@/lib/scan/types";
+import { cn } from "@/lib/utils";
 
 const DEVICE_ID = import.meta.env.VITE_SCAN_DEVICE_ID ?? "LIB_GATE_01";
 const DEVICE_NAME = import.meta.env.VITE_SCAN_DEVICE_NAME ?? "Library ID Scanner";
@@ -105,7 +118,151 @@ type ScanHistoryItem = {
   tone: ScannerUiTone;
 };
 
+type VerificationCardData = {
+  avatarLabel: string;
+  liveLabel: string;
+  name: string;
+  plan: string;
+  seat: string;
+  statusLabel: string;
+  subtitle: string;
+  timeSlot: string;
+  tone: ScannerUiTone;
+  validTill: string;
+};
+
+type ActivityRailItem = ActivityFeedItem & {
+  seat?: string | null;
+};
+
+const DEMO_LAST_VERIFICATION: VerificationCardData = {
+  avatarLabel: "AR",
+  liveLabel: "LIVE",
+  name: "Aditya Raj",
+  plan: "4 Hour",
+  seat: "B6",
+  statusLabel: "ACCESS GRANTED",
+  subtitle: "System is active and waiting for student ID",
+  timeSlot: "Morning (6:00 AM - 10:00 AM)",
+  tone: "success",
+  validTill: "27 Apr 2026",
+};
+
+const DEMO_SUMMARY_STATS: ScannerStatItem[] = [
+  {
+    helper: "Checked In",
+    label: "Checked In",
+    tone: "success",
+    value: "128",
+  },
+  {
+    helper: "Denied",
+    label: "Denied",
+    tone: "danger",
+    value: "7",
+  },
+  {
+    helper: "Pending Sync",
+    label: "Pending Sync",
+    tone: "info",
+    value: "15",
+  },
+];
+
+const DEMO_ACTIVITY_RAIL: ActivityRailItem[] = [
+  {
+    detail: "Access Granted",
+    id: "demo-activity-1",
+    seat: "B6",
+    timestampLabel: "12:49 PM",
+    title: "Aditya Raj",
+    tone: "success",
+  },
+  {
+    detail: "Access Denied",
+    id: "demo-activity-2",
+    seat: null,
+    timestampLabel: "12:47 PM",
+    title: "Rohit Kumar",
+    tone: "danger",
+  },
+  {
+    detail: "Access Granted",
+    id: "demo-activity-3",
+    seat: "C2",
+    timestampLabel: "12:45 PM",
+    title: "Sneha Verma",
+    tone: "success",
+  },
+  {
+    detail: "Access Granted",
+    id: "demo-activity-4",
+    seat: "A4",
+    timestampLabel: "12:43 PM",
+    title: "Karan Singh",
+    tone: "success",
+  },
+  {
+    detail: "Access Denied",
+    id: "demo-activity-5",
+    seat: null,
+    timestampLabel: "12:41 PM",
+    title: "Pooja Shah",
+    tone: "danger",
+  },
+];
+
+const scanFrameToneClasses: Record<ScannerLiveState, string> = {
+  detected: "border-cyan-300/80 shadow-[0_0_0_1px_rgba(103,232,249,0.34),0_0_34px_rgba(34,211,238,0.26)]",
+  failed: "border-rose-300/78 shadow-[0_0_0_1px_rgba(253,164,175,0.28),0_0_28px_rgba(251,113,133,0.18)]",
+  matched: "border-emerald-300/80 shadow-[0_0_0_1px_rgba(110,231,183,0.32),0_0_34px_rgba(16,185,129,0.24)]",
+  offline: "border-amber-200/78 shadow-[0_0_0_1px_rgba(253,230,138,0.28),0_0_28px_rgba(251,191,36,0.18)]",
+  ready: "border-cyan-300/72 shadow-[0_0_0_1px_rgba(103,232,249,0.28),0_0_30px_rgba(34,211,238,0.18)]",
+  scanning: "border-cyan-200/82 shadow-[0_0_0_1px_rgba(165,243,252,0.34),0_0_36px_rgba(34,211,238,0.28)]",
+};
+
+const scanCornerToneClasses: Record<ScannerLiveState, string> = {
+  detected: "border-cyan-200 shadow-[0_0_22px_rgba(103,232,249,0.52)]",
+  failed: "border-rose-300 shadow-[0_0_20px_rgba(251,113,133,0.42)]",
+  matched: "border-emerald-300 shadow-[0_0_22px_rgba(110,231,183,0.48)]",
+  offline: "border-amber-200 shadow-[0_0_20px_rgba(253,230,138,0.38)]",
+  ready: "border-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.42)]",
+  scanning: "border-cyan-200 shadow-[0_0_24px_rgba(103,232,249,0.56)]",
+};
+
+const scanLineToneClasses: Record<ScannerLiveState, string> = {
+  detected: "via-cyan-200 shadow-[0_0_24px_rgba(103,232,249,0.72)]",
+  failed: "via-rose-200 shadow-[0_0_20px_rgba(251,113,133,0.58)]",
+  matched: "via-emerald-200 shadow-[0_0_24px_rgba(110,231,183,0.7)]",
+  offline: "via-amber-100 shadow-[0_0_20px_rgba(253,230,138,0.55)]",
+  ready: "via-cyan-300 shadow-[0_0_22px_rgba(34,211,238,0.62)]",
+  scanning: "via-cyan-100 shadow-[0_0_26px_rgba(103,232,249,0.8)]",
+};
+
+const triggerDetectionHaptic = () => {
+  if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") {
+    return;
+  }
+
+  try {
+    navigator.vibrate(22);
+  } catch {
+    // Ignore browsers that expose the API but block vibration.
+  }
+};
+
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const getInitials = (value: string) => {
+  const initials = value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+
+  return initials || "ID";
+};
 
 const createInitialControllerState = (): ScanControllerState => ({
   activeCameraId: null,
@@ -444,6 +601,7 @@ const ScanKioskPage = () => {
   const [pendingCount, setPendingCount] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState(() => readLastAttendanceSyncAt());
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [showMobileStatus, setShowMobileStatus] = useState(false);
 
   const appendActivity = useCallback((entry: Omit<RawActivityItem, "id">) => {
     startTransition(() => {
@@ -733,6 +891,7 @@ const ScanKioskPage = () => {
 
       processingRef.current = true;
       clearResumeTimer();
+      triggerDetectionHaptic();
       setPhase("scanning");
       setScanPayload(null);
       setStatusMessage(isOnline ? "Scanning..." : "Saving offline...");
@@ -1109,6 +1268,25 @@ const ScanKioskPage = () => {
   }, []);
 
   useEffect(() => {
+    const previousTitle = document.title;
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    const previousThemeColor = themeMeta?.getAttribute("content");
+
+    document.title = "Libriofy Access Gate";
+    document.body.classList.add("kiosk-mode");
+    themeMeta?.setAttribute("content", "#030816");
+
+    return () => {
+      document.title = previousTitle;
+      document.body.classList.remove("kiosk-mode");
+
+      if (previousThemeColor) {
+        themeMeta?.setAttribute("content", previousThemeColor);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!scanPayload) {
       return;
     }
@@ -1400,35 +1578,736 @@ const ScanKioskPage = () => {
 
     if (phase === "scanning") {
       return scanFeedbackStage === "detected"
-        ? "QR is inside the scan zone. Keep the card steady for a moment."
-        : "Checking the student record and attendance status.";
+        ? "QR frame me hai. QR ko 6–10 inch distance pe rakh kar ek second steady rakho."
+        : "Student record verify ho raha hai. QR ko 6–10 inch distance aur sharp framing me rakho.";
     }
 
     if (!cameraLive) {
-      return "Preparing the camera for continuous QR scanning.";
+      return "Rear camera ko sharp 720p QR scanning ke liye prepare kiya ja raha hai.";
     }
 
     if (!isOnline) {
-      return "Offline mode is active. Valid scans will be stored and synced automatically.";
+      return "Offline mode active hai. QR ko 6–10 inch distance pe rakho; valid scans safely sync ho jayenge.";
     }
 
-    return "Bring the student ID close to the camera until the QR code fills the center square.";
+    return "QR ko 6–10 inch distance pe rakho, frame ke beech me align karo, aur feed sharp dikhe tab tak steady rakho.";
   }, [cameraLive, controllerState.error, isOnline, phase, scanFeedbackStage, scanPayload]);
 
+  const dashboardTimeLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(nowMs),
+    [nowMs],
+  );
+  const dashboardDateLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat("en-GB", {
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }).format(nowMs),
+    [nowMs],
+  );
+  const gateTone = useMemo<ScannerUiTone>(() => {
+    if (controllerState.error || scanPayload?.status === "error") {
+      return "danger";
+    }
+
+    if (!isOnline || scanPayload?.status === "queued") {
+      return "info";
+    }
+
+    if (phase === "scanning" || controllerState.status === "starting") {
+      return "info";
+    }
+
+    return "success";
+  }, [controllerState.error, controllerState.status, isOnline, phase, scanPayload]);
+  const frameInstructionLabel = useMemo(() => {
+    if (phase === "scanning") {
+      return "QR ko 6–10 inch distance pe rakh kar steady rakho";
+    }
+
+    if (controllerState.error) {
+      return "Camera pipeline needs attention";
+    }
+
+    if (!cameraLive) {
+      return "Preparing sharp rear camera feed";
+    }
+
+    if (!isOnline) {
+      return "Offline mode active. QR ko 6–10 inch pe rakho";
+    }
+
+    return "QR ko 6–10 inch distance pe rakho";
+  }, [cameraLive, controllerState.error, isOnline, phase]);
+  const displaySummaryStats = useMemo<ScannerStatItem[]>(() => {
+    if (scanHistory.length === 0 && pendingCount === 0) {
+      return DEMO_SUMMARY_STATS;
+    }
+
+    const checkedIn = scanHistory.filter((item) => item.tone === "success").length;
+    const denied = scanHistory.filter((item) => item.tone === "danger").length;
+    const syncPending =
+      pendingCount + scanHistory.filter((item) => item.tone === "warning" || item.tone === "info").length;
+
+    return [
+      {
+        helper: "Checked In",
+        label: "Checked In",
+        tone: "success",
+        value: String(checkedIn),
+      },
+      {
+        helper: "Denied",
+        label: "Denied",
+        tone: "danger",
+        value: String(denied),
+      },
+      {
+        helper: "Pending Sync",
+        label: "Pending Sync",
+        tone: "info",
+        value: String(syncPending),
+      },
+    ];
+  }, [pendingCount, scanHistory]);
+  const displayVerification = useMemo<VerificationCardData>(() => {
+    if (!activeResultCard) {
+      return DEMO_LAST_VERIFICATION;
+    }
+
+    const isRejected = activeResultCard.tone === "danger";
+    const isQueued = activeResultCard.tone === "info";
+
+    return {
+      avatarLabel: getInitials(activeResultCard.name),
+      liveLabel: isRejected ? "REVIEW" : isQueued ? "SYNC" : "LIVE",
+      name: activeResultCard.name,
+      plan:
+        isRejected
+          ? "Retry Scan"
+          : isQueued
+            ? "Offline Hold"
+            : activeResultCard.statusLabel === "Already Marked"
+              ? "Already Logged"
+              : DEMO_LAST_VERIFICATION.plan,
+      seat: activeResultCard.seat || (isRejected ? "--" : DEMO_LAST_VERIFICATION.seat),
+      statusLabel:
+        isRejected
+          ? "ACCESS DENIED"
+          : isQueued
+            ? "SYNC PENDING"
+            : activeResultCard.statusLabel === "Already Marked"
+              ? "ALREADY MARKED"
+              : "ACCESS GRANTED",
+      subtitle: activeResultCard.subtitle,
+      timeSlot: isRejected
+        ? "Rescan required"
+        : isQueued
+          ? "Awaiting background sync"
+          : activeResultCard.statusLabel === "Already Marked"
+            ? "Attendance already recorded"
+            : DEMO_LAST_VERIFICATION.timeSlot,
+      tone: activeResultCard.tone,
+      validTill: isRejected
+        ? "Manual review"
+        : new Intl.DateTimeFormat("en-GB", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          }).format(new Date(nowMs + (isQueued ? 86400000 : 172800000))),
+    };
+  }, [activeResultCard, nowMs]);
+  const liveActivityItems = useMemo<ActivityRailItem[]>(() => {
+    const realItems = scanHistory.slice(0, 5).map((item) => ({
+      detail:
+        item.tone === "success"
+          ? item.statusLabel === "Already Marked"
+            ? "Already Marked"
+            : "Access Granted"
+          : item.tone === "danger"
+            ? "Access Denied"
+            : item.statusLabel,
+      id: item.id,
+      seat: item.seat,
+      timestampLabel: formatClockLabel(item.at),
+      title: item.name,
+      tone: item.tone,
+    }));
+
+    if (realItems.length === 0) {
+      return DEMO_ACTIVITY_RAIL;
+    }
+
+    const existingTitles = new Set(realItems.map((item) => item.title));
+    return [
+      ...realItems,
+      ...DEMO_ACTIVITY_RAIL.filter((item) => !existingTitles.has(item.title)).slice(
+        0,
+        Math.max(0, 5 - realItems.length),
+      ),
+    ];
+  }, [scanHistory]);
+
+  const shellBorder = "rgba(56, 189, 248, 0.2)";
+  const panelBorder = "rgba(34, 211, 238, 0.18)";
+  const panelSurface =
+    "linear-gradient(180deg, rgba(2, 10, 21, 0.98) 0%, rgba(3, 12, 24, 0.95) 100%)";
+  const panelSurfaceBright =
+    "radial-gradient(circle at top, rgba(8,40,66,0.34), transparent 38%), linear-gradient(180deg, rgba(2,8,16,0.98), rgba(2,8,16,0.98))";
+
   return (
-    <ScannerCamera
-      badges={scannerBadges}
-      cameraLive={cameraLive}
-      detectionState={liveState}
-      feedbackLabel={scannerFeedbackLabel}
-      instructionText="Align QR code inside the box"
-      message={scannerMessage}
-      result={activeResultCard}
-      title="Student ID QR Scanner"
-      torchEnabled={controllerState.torchEnabled}
-      torchSupported={controllerState.torchSupported}
-      videoRef={handleVideoRef}
-    />
+    <div
+      className="min-h-screen overflow-x-hidden text-white"
+      style={{ background: "radial-gradient(circle at top, #051321 0%, #020814 38%, #02050d 100%)" }}
+    >
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(6,65,104,0.34),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(6,120,102,0.12),transparent_30%),linear-gradient(180deg,#01060f_0%,#020814_58%,#01040a_100%)]" />
+        <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(45,88,125,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(45,88,125,0.12)_1px,transparent_1px)] [background-size:120px_120px]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.07),transparent_34%)]" />
+        <div className="absolute left-[8%] top-[8%] h-[26rem] w-[26rem] rounded-full bg-cyan-500/10 blur-[130px]" />
+        <div className="absolute bottom-[8%] right-[8%] h-[24rem] w-[24rem] rounded-full bg-emerald-500/8 blur-[130px]" />
+      </div>
+
+      <div className="relative z-10 mx-auto min-h-screen w-full max-w-[1200px] px-4 py-4">
+        <div
+          className="flex min-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-[24px] border shadow-[0_32px_140px_rgba(0,0,0,0.56),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl sm:rounded-[32px]"
+          style={{
+            background: "rgba(3, 9, 18, 0.92)",
+            borderColor: shellBorder,
+          }}
+        >
+          <header
+            className="grid gap-5 px-4 py-4 sm:px-6 sm:py-5 min-[1400px]:grid-cols-[minmax(0,1fr)_auto_minmax(0,0.92fr)] min-[1400px]:items-center"
+            style={{ borderBottom: "1px solid rgba(34, 211, 238, 0.14)" }}
+          >
+            <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px] border border-cyan-400/30 bg-cyan-400/8 shadow-[0_0_36px_rgba(34,211,238,0.14)] sm:h-14 sm:w-14">
+                <div className="grid h-9 w-9 place-items-center rounded-[14px] bg-[linear-gradient(180deg,rgba(34,211,238,0.24),rgba(34,211,238,0.08))] text-cyan-100 sm:h-10 sm:w-10">
+                  <QrCode className="h-5 w-5" />
+                </div>
+              </div>
+
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.4em] text-white/78">LIBRIOFY</p>
+                <h1 className="mt-1 font-display text-[clamp(1.25rem,4vw,2.25rem)] font-semibold tracking-[-0.04em] text-white">
+                  Access Gate
+                </h1>
+                <p className="mt-1 text-[clamp(0.75rem,2vw,1rem)] text-slate-300">
+                  Premium QR verification console for secure library entry.
+                </p>
+              </div>
+            </div>
+
+            <div className="justify-self-start min-[1400px]:justify-self-center">
+              <div className="inline-flex w-full max-w-full items-center justify-center gap-2 rounded-full border border-cyan-400/24 bg-cyan-500/8 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:w-auto sm:tracking-[0.26em]">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Secure Kiosk Mode
+              </div>
+            </div>
+
+            <div className="justify-self-start min-[1400px]:justify-self-end">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center min-[1400px]:justify-end">
+                <div
+                  className={cn(
+                    "inline-flex w-full max-w-full items-center justify-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] sm:w-auto sm:tracking-[0.22em]",
+                    gateTone === "danger"
+                      ? "border-rose-400/24 bg-rose-500/10 text-rose-100"
+                      : "border-emerald-400/24 bg-emerald-500/10 text-emerald-100",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-2.5 w-2.5 rounded-full",
+                      gateTone === "danger"
+                        ? "bg-rose-400 shadow-[0_0_16px_rgba(251,113,133,0.9)]"
+                        : "bg-emerald-300 shadow-[0_0_16px_rgba(110,231,183,0.9)]",
+                    )}
+                  />
+                  {gateTone === "danger" ? "System Attention" : "System Secure"}
+                </div>
+                <div className="inline-flex w-full max-w-full items-center justify-center gap-2 rounded-full border border-cyan-400/18 bg-cyan-500/8 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 sm:w-auto sm:tracking-[0.22em]">
+                  <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_16px_rgba(103,232,249,0.9)]" />
+                  {scannerFeedbackLabel}
+                </div>
+              </div>
+
+              <div className="mt-3 border-t border-white/10 pt-3 text-left min-[1400px]:border-l min-[1400px]:border-t-0 min-[1400px]:pl-6 min-[1400px]:pt-0 min-[1400px]:text-right">
+                <p className="font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold tracking-[-0.04em] text-white">
+                  {dashboardTimeLabel}
+                </p>
+                <p className="text-[clamp(0.75rem,2vw,1rem)] text-slate-300">{dashboardDateLabel}</p>
+              </div>
+            </div>
+          </header>
+
+          <div className="flex-1 p-4">
+            <div className="grid grid-cols-1 gap-4 min-[1400px]:grid-cols-[minmax(0,1.65fr)_minmax(320px,0.95fr)]">
+              <section
+                className="min-w-0 rounded-[28px] p-4 sm:p-6"
+                style={{
+                  background: panelSurfaceBright,
+                  border: `1px solid ${panelBorder}`,
+                  boxShadow: "inset 0 1px 0 rgba(148,233,255,0.04)",
+                }}
+              >
+                <div className="mx-auto max-w-3xl text-center">
+                  <h2 className="font-display text-[clamp(1.4rem,3.8vw,2.7rem)] font-semibold tracking-[-0.05em] text-white">
+                    SCAN YOUR LIBRIOFY ID
+                  </h2>
+                  <p className="mt-3 text-[clamp(0.75rem,2vw,1rem)] text-slate-300">
+                    Place the student ID QR code inside the frame
+                  </p>
+                </div>
+
+                <div className="mt-6 grid gap-4 sm:mt-8 lg:grid-cols-[minmax(0,1fr)_minmax(220px,0.75fr)] lg:items-start">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-white/56">Scanner State</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 sm:gap-3">
+                      <h3 className="font-display text-[clamp(1.375rem,4vw,2.35rem)] font-semibold tracking-[-0.05em] text-white">
+                        {resultPrimary}
+                      </h3>
+                      <div
+                        className={cn(
+                          "w-full rounded-full border px-4 py-2 text-center text-[11px] font-semibold uppercase tracking-[0.26em] sm:w-auto",
+                          gateTone === "danger"
+                            ? "border-rose-400/24 bg-rose-500/10 text-rose-100"
+                            : gateTone === "info"
+                              ? "border-cyan-400/24 bg-cyan-500/10 text-cyan-100"
+                              : "border-emerald-400/24 bg-emerald-500/10 text-emerald-100",
+                        )}
+                      >
+                        {resultSecondary}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 text-left lg:text-right">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-white/56">Active Camera</p>
+                    <p className="mt-2 break-words text-[clamp(0.75rem,2vw,1rem)] text-slate-300">
+                      {controllerState.activeCameraLabel ?? "Rear camera preference enabled"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  {scannerBadges.map((badge) => (
+                    <div
+                      key={badge.label}
+                      className={cn(
+                        "w-full rounded-full border px-4 py-2 text-center text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:w-auto",
+                        badge.tone === "danger"
+                          ? "border-rose-400/22 bg-rose-500/10 text-rose-100"
+                          : badge.tone === "warning"
+                            ? "border-amber-300/22 bg-amber-500/10 text-amber-100"
+                            : badge.tone === "success"
+                              ? "border-emerald-400/22 bg-emerald-500/10 text-emerald-100"
+                              : badge.tone === "info"
+                                ? "border-cyan-400/22 bg-cyan-500/10 text-cyan-100"
+                                : "border-white/10 bg-white/[0.03] text-slate-200",
+                      )}
+                    >
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/54">{badge.label}</span>
+                      <span className="ml-3 font-medium text-white">{badge.value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="relative mx-auto mt-6 w-full max-w-[420px] max-[640px]:max-w-[90vw] sm:mt-8">
+                  <div
+                    className="relative rounded-[38px] border p-3 sm:p-4"
+                    style={{
+                      background: "linear-gradient(180deg, rgba(4,14,27,0.95), rgba(2,9,18,0.98))",
+                      border: "1px solid rgba(56, 189, 248, 0.18)",
+                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 20px 70px rgba(0,0,0,0.34)",
+                    }}
+                  >
+                    <div className="scanner-container relative mx-auto aspect-square w-full overflow-hidden rounded-[30px] border border-cyan-400/12 bg-black">
+                      <video
+                        id="camera-feed"
+                        ref={handleVideoRef}
+                        autoPlay
+                        className={cn(
+                          "absolute inset-0 z-[1] h-full w-full object-cover transition-opacity duration-300 [transform:translateZ(0)]",
+                          cameraLive ? "opacity-100" : "opacity-0",
+                        )}
+                        muted
+                        playsInline
+                      />
+
+                      {!cameraLive ? (
+                        <div className="absolute inset-0 z-[2] grid place-items-center bg-[radial-gradient(circle_at_top,rgba(10,38,58,0.68),rgba(2,9,18,0.98))]">
+                          <div className="rounded-full border border-cyan-400/18 bg-[#04111d]/90 px-6 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100 shadow-[0_10px_40px_rgba(0,0,0,0.32)]">
+                            {scannerFeedbackLabel}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="scan-overlay pointer-events-none absolute inset-0 z-[3]">
+                        <div className="absolute inset-[11%] rounded-[32px] bg-transparent">
+                          <div
+                            className={cn(
+                              "absolute inset-0 rounded-[32px] border bg-transparent",
+                              scanFrameToneClasses[liveState],
+                            )}
+                          />
+
+                          {cameraLive ? (
+                            <motion.div
+                              className={cn(
+                                "absolute inset-x-6 h-[2px] rounded-full bg-gradient-to-r from-transparent to-transparent sm:inset-x-8",
+                                scanLineToneClasses[liveState],
+                              )}
+                              animate={{ opacity: [0.55, 1, 0.55], top: ["14%", "84%", "14%"] }}
+                              transition={{
+                                duration: liveState === "scanning" ? 1.7 : liveState === "matched" ? 2.1 : 2.5,
+                                ease: "linear",
+                                repeat: Number.POSITIVE_INFINITY,
+                              }}
+                            />
+                          ) : null}
+
+                          <div className={cn("absolute left-[5.5%] top-[5.5%] h-10 w-10 rounded-tl-[20px] border-l-[4px] border-t-[4px] sm:h-14 sm:w-14 sm:rounded-tl-[24px] sm:border-l-[5px] sm:border-t-[5px]", scanCornerToneClasses[liveState])} />
+                          <div className={cn("absolute right-[5.5%] top-[5.5%] h-10 w-10 rounded-tr-[20px] border-r-[4px] border-t-[4px] sm:h-14 sm:w-14 sm:rounded-tr-[24px] sm:border-r-[5px] sm:border-t-[5px]", scanCornerToneClasses[liveState])} />
+                          <div className={cn("absolute bottom-[5.5%] left-[5.5%] h-10 w-10 rounded-bl-[20px] border-b-[4px] border-l-[4px] sm:h-14 sm:w-14 sm:rounded-bl-[24px] sm:border-b-[5px] sm:border-l-[5px]", scanCornerToneClasses[liveState])} />
+                          <div className={cn("absolute bottom-[5.5%] right-[5.5%] h-10 w-10 rounded-br-[20px] border-b-[4px] border-r-[4px] sm:h-14 sm:w-14 sm:rounded-br-[24px] sm:border-b-[5px] sm:border-r-[5px]", scanCornerToneClasses[liveState])} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-wrap justify-center gap-2 sm:mt-8">
+                  <div className="inline-flex w-full max-w-[400px] items-center justify-center gap-3 rounded-full border border-cyan-400/16 bg-[#071220]/92 px-5 py-3 text-center text-[clamp(0.75rem,2vw,1rem)] text-slate-200 shadow-[0_12px_42px_rgba(0,0,0,0.28)] sm:w-auto">
+                    <div className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-400/24 bg-cyan-500/10 text-cyan-200">
+                      <ScanLine className="h-[1.125rem] w-[1.125rem]" />
+                    </div>
+                    <span>{frameInstructionLabel}</span>
+                  </div>
+                </div>
+
+                <p className="mx-auto mt-4 max-w-2xl text-center text-[clamp(0.75rem,2vw,1rem)] text-slate-400">{scannerMessage}</p>
+              </section>
+
+              <div className="md:hidden">
+                <button
+                  className="w-full rounded-[22px] border border-cyan-400/18 bg-cyan-500/8 px-4 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                  onClick={() => setShowMobileStatus((current) => !current)}
+                  type="button"
+                >
+                  {showMobileStatus ? "Hide Gate Status" : "Show Gate Status"}
+                </button>
+              </div>
+
+              <div className="grid min-w-0 gap-4 md:grid-cols-2 min-[1400px]:grid-cols-1">
+                <section
+                  className={cn(
+                    "rounded-[28px] p-4 sm:p-6 md:block",
+                    showMobileStatus ? "block" : "hidden",
+                  )}
+                  style={{
+                    background:
+                      "radial-gradient(circle at top right, rgba(18,53,87,0.22), transparent 34%), linear-gradient(180deg, rgba(3,9,18,0.98), rgba(3,9,18,0.96))",
+                    border: `1px solid ${panelBorder}`,
+                    boxShadow: "inset 0 1px 0 rgba(148,233,255,0.03)",
+                  }}
+                >
+                  <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="max-w-xs">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-white/56">GATE STATUS</p>
+                      <h3
+                        className={cn(
+                          "mt-5 font-display text-[clamp(1.5rem,4vw,2.1rem)] font-semibold tracking-[-0.05em]",
+                          gateTone === "danger"
+                            ? "text-rose-200"
+                            : gateTone === "info"
+                              ? "text-cyan-200"
+                              : "text-emerald-200",
+                        )}
+                      >
+                        {scannerFeedbackLabel}
+                      </h3>
+                      <p className="mt-4 text-[clamp(0.75rem,2vw,1rem)] leading-6 text-slate-300 sm:leading-7">{scannerMessage}</p>
+                    </div>
+
+                    <div className="relative mx-auto grid h-28 w-28 shrink-0 place-items-center sm:h-32 sm:w-32">
+                      {[0, 1, 2].map((ring) => (
+                        <motion.div
+                          key={ring}
+                          className={cn(
+                            "absolute rounded-full border",
+                            gateTone === "danger"
+                              ? "border-rose-400/28"
+                              : gateTone === "info"
+                                ? "border-cyan-400/28"
+                                : "border-emerald-400/28",
+                          )}
+                          style={{
+                            height: `${112 - ring * 20}px`,
+                            width: `${112 - ring * 20}px`,
+                          }}
+                          animate={{ opacity: [0.22, 0.8, 0.22], scale: [0.94, 1.03, 0.94] }}
+                          transition={{
+                            delay: ring * 0.22,
+                            duration: 3.1,
+                            ease: "easeInOut",
+                            repeat: Number.POSITIVE_INFINITY,
+                          }}
+                        />
+                      ))}
+                      <div
+                        className={cn(
+                          "relative grid h-14 w-14 place-items-center rounded-full border bg-[#08111f]",
+                          gateTone === "danger"
+                            ? "border-rose-400/35 text-rose-200"
+                            : gateTone === "info"
+                              ? "border-cyan-400/35 text-cyan-200"
+                            : "border-emerald-400/35 text-emerald-200",
+                        )}
+                      >
+                        <Shield className="h-5 w-5 sm:h-6 sm:w-6" />
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section
+                  className="rounded-[28px] p-4 sm:p-6"
+                  style={{
+                    background:
+                      "radial-gradient(circle at top left, rgba(20,67,109,0.16), transparent 34%), linear-gradient(180deg, rgba(3,9,18,0.98), rgba(3,9,18,0.96))",
+                    border: `1px solid ${panelBorder}`,
+                    boxShadow: "inset 0 1px 0 rgba(148,233,255,0.03)",
+                  }}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-white/56">
+                      LAST VERIFICATION
+                    </p>
+                    <div
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.22em]",
+                        displayVerification.tone === "danger"
+                          ? "border-rose-400/22 bg-rose-500/10 text-rose-100"
+                          : displayVerification.tone === "info"
+                            ? "border-cyan-400/22 bg-cyan-500/10 text-cyan-100"
+                            : "border-emerald-400/22 bg-emerald-500/10 text-emerald-100",
+                      )}
+                    >
+                      {displayVerification.liveLabel}
+                    </div>
+                  </div>
+
+                  <div className="mt-6 flex flex-col gap-5 sm:flex-row sm:items-center">
+                    <div className="relative mx-auto shrink-0 sm:mx-0">
+                      <div
+                        className={cn(
+                          "grid h-24 w-24 place-items-center rounded-full border-2 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.22),transparent_30%),linear-gradient(180deg,#0b1e2f,#07111d)] text-[clamp(1.5rem,5vw,1.875rem)] font-semibold shadow-[0_0_38px_rgba(34,211,238,0.18)] sm:h-28 sm:w-28",
+                          displayVerification.tone === "danger"
+                            ? "border-rose-400/80 text-rose-50"
+                            : displayVerification.tone === "info"
+                              ? "border-cyan-400/80 text-cyan-50"
+                              : "border-emerald-300/90 text-white",
+                        )}
+                      >
+                        {displayVerification.avatarLabel}
+                      </div>
+                      <div
+                        className={cn(
+                          "absolute bottom-1 right-1 grid h-9 w-9 place-items-center rounded-full border-2 bg-[#06111d] sm:h-10 sm:w-10",
+                          displayVerification.tone === "danger"
+                            ? "border-rose-400 text-rose-200"
+                            : displayVerification.tone === "info"
+                              ? "border-cyan-400 text-cyan-200"
+                              : "border-emerald-300 text-emerald-200",
+                        )}
+                      >
+                        {displayVerification.tone === "danger" ? (
+                          <CircleX className="h-5 w-5" />
+                        ) : displayVerification.tone === "info" ? (
+                          <WifiOff className="h-5 w-5" />
+                        ) : (
+                          <BadgeCheck className="h-5 w-5" />
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={cn(
+                          "text-[clamp(0.75rem,2vw,0.875rem)] font-semibold uppercase tracking-[0.16em]",
+                          displayVerification.tone === "danger"
+                            ? "text-rose-200"
+                            : displayVerification.tone === "info"
+                              ? "text-cyan-200"
+                              : "text-emerald-200",
+                        )}
+                      >
+                        {displayVerification.statusLabel}
+                      </p>
+                      <h3 className="mt-2 font-display text-[clamp(1.4rem,4vw,2.15rem)] font-semibold tracking-[-0.05em] text-white">
+                        {displayVerification.name}
+                      </h3>
+                      <p className="mt-3 max-w-xl text-[clamp(0.75rem,2vw,1rem)] leading-6 text-slate-300 sm:leading-7">{displayVerification.subtitle}</p>
+
+                      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <p className="text-[clamp(0.75rem,2vw,0.875rem)] text-slate-400">Seat</p>
+                          <p className="mt-1 text-[clamp(1.125rem,4vw,1.5rem)] font-semibold text-white">{displayVerification.seat}</p>
+                        </div>
+                        <div>
+                          <p className="text-[clamp(0.75rem,2vw,0.875rem)] text-slate-400">Plan</p>
+                          <p className="mt-1 text-[clamp(1.125rem,4vw,1.5rem)] font-semibold text-white">{displayVerification.plan}</p>
+                        </div>
+                        <div>
+                          <p className="text-[clamp(0.75rem,2vw,0.875rem)] text-slate-400">Time Slot</p>
+                          <p className="mt-1 text-[clamp(0.95rem,2.5vw,1.125rem)] font-medium text-white">{displayVerification.timeSlot}</p>
+                        </div>
+                        <div>
+                          <p className="text-[clamp(0.75rem,2vw,0.875rem)] text-slate-400">Valid Till</p>
+                          <p className="mt-1 text-[clamp(0.95rem,2.5vw,1.125rem)] font-medium text-white">{displayVerification.validTill}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section
+                  className="rounded-[28px] p-4 sm:p-6 md:col-span-2 min-[1400px]:col-span-1"
+                  style={{
+                    background: panelSurface,
+                    border: `1px solid ${panelBorder}`,
+                    boxShadow: "inset 0 1px 0 rgba(148,233,255,0.03)",
+                  }}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-white/56">
+                      TODAY'S SUMMARY
+                    </p>
+                    <button
+                      className="w-full rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200 sm:w-auto"
+                      type="button"
+                    >
+                      View All
+                    </button>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 min-[1400px]:grid-cols-1">
+                    {displaySummaryStats.map((item) => (
+                      <div
+                        key={item.label}
+                        className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,18,30,0.98),rgba(5,13,22,0.98))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+                      >
+                        <div
+                          className={cn(
+                            "grid h-10 w-10 place-items-center rounded-full border",
+                            item.tone === "danger"
+                              ? "border-rose-400/24 bg-rose-500/10 text-rose-200"
+                              : item.tone === "info"
+                                ? "border-cyan-400/24 bg-cyan-500/10 text-cyan-200"
+                                : "border-emerald-400/24 bg-emerald-500/10 text-emerald-200",
+                          )}
+                        >
+                          {item.tone === "danger" ? (
+                            <CircleX className="h-[1.125rem] w-[1.125rem]" />
+                          ) : item.tone === "info" ? (
+                            <Clock3 className="h-[1.125rem] w-[1.125rem]" />
+                          ) : (
+                            <UserRound className="h-[1.125rem] w-[1.125rem]" />
+                          )}
+                        </div>
+                        <p className="mt-4 font-display text-[clamp(1.75rem,5vw,2.25rem)] font-semibold tracking-[-0.05em] text-white">
+                          {item.value}
+                        </p>
+                        <p className="mt-2 text-[clamp(0.75rem,2vw,0.875rem)] text-slate-300">{item.helper}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <section
+              className="mt-4 rounded-[28px] p-4 sm:p-6"
+              style={{
+                background: panelSurface,
+                border: `1px solid ${panelBorder}`,
+                boxShadow: "inset 0 1px 0 rgba(148,233,255,0.03)",
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-white/56">LIVE ACTIVITY</p>
+                <motion.div
+                  className="text-emerald-300"
+                  animate={{ opacity: [0.45, 1, 0.45], scale: [1, 1.08, 1] }}
+                  transition={{ duration: 2.4, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
+                >
+                  <Activity className="h-5 w-5" />
+                </motion.div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 min-[1400px]:grid-cols-4 min-[1700px]:grid-cols-5">
+                {liveActivityItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "rounded-[22px] border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                      item.tone === "danger"
+                        ? "border-rose-400/14 bg-[linear-gradient(180deg,rgba(47,12,24,0.65),rgba(17,7,14,0.92))]"
+                        : item.tone === "info"
+                          ? "border-cyan-400/14 bg-[linear-gradient(180deg,rgba(8,38,58,0.68),rgba(5,13,22,0.94))]"
+                          : "border-emerald-400/14 bg-[linear-gradient(180deg,rgba(7,42,35,0.68),rgba(5,13,22,0.94))]",
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={cn(
+                          "grid h-11 w-11 shrink-0 place-items-center rounded-full border",
+                          item.tone === "danger"
+                            ? "border-rose-400/30 bg-rose-500/10 text-rose-200"
+                            : item.tone === "info"
+                              ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-200"
+                              : "border-emerald-400/30 bg-emerald-500/10 text-emerald-200",
+                        )}
+                      >
+                        {item.tone === "danger" ? (
+                          <CircleX className="h-5 w-5" />
+                        ) : item.tone === "info" ? (
+                          <WifiOff className="h-5 w-5" />
+                        ) : (
+                          <UserRound className="h-5 w-5" />
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="truncate text-[clamp(1rem,3vw,1.25rem)] font-semibold tracking-[-0.03em] text-white">{item.title}</p>
+                          <p className="whitespace-nowrap text-[clamp(0.75rem,2vw,0.875rem)] text-slate-300">{item.timestampLabel}</p>
+                        </div>
+                        <p className="mt-1 text-[clamp(0.75rem,2vw,0.875rem)] text-slate-200">{item.detail}</p>
+                        {item.seat ? <p className="mt-1 text-xs uppercase tracking-[0.2em] text-white/46">Seat {item.seat}</p> : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <footer className="border-t border-cyan-400/12 px-4 py-4 text-center sm:px-6">
+            <div className="inline-flex items-center gap-3 text-slate-400">
+              <ShieldCheck className="h-4 w-4" />
+              <span className="text-[clamp(0.75rem,2vw,1rem)]">Secure. Smart. Seamless.</span>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </div>
   );
 };
 

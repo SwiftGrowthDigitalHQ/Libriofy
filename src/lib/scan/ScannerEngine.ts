@@ -21,7 +21,9 @@ type WorkerResultMessage = {
   detector: "barcode_detector" | "jsqr" | null;
   timingMs: number;
   brightness: number;
+  blurry: boolean;
   edgeScore: number;
+  glare: boolean;
   lowLight: boolean;
 };
 
@@ -48,6 +50,7 @@ type EngineLog = (
 type ScannerEngineOptions = {
   onDetect: (payload: ScanDetectionPayload) => void;
   onError?: (error: unknown) => void;
+  onFrameAnalysis?: (analysis: ScanDetectionPayload["analysis"]) => void;
   log: EngineLog;
 };
 
@@ -62,6 +65,8 @@ const TARGET_SCAN_INTERVAL_MS = 80;
 const TARGET_DECODE_MAX_EDGE = 400;
 const TARGET_DECODE_MIN_EDGE = 300;
 const MAX_UPLOAD_IMAGE_BYTES = 8 * 1024 * 1024;
+const REQUIRED_VIDEO_READY_STATE =
+  typeof HTMLMediaElement !== "undefined" ? HTMLMediaElement.HAVE_ENOUGH_DATA : 4;
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -170,6 +175,15 @@ export class ScannerEngine {
         return;
       }
 
+      const analysis = {
+        brightness: message.brightness,
+        blurry: message.blurry,
+        edgeScore: message.edgeScore,
+        glare: message.glare,
+        lowLight: message.lowLight,
+      };
+      this.options.onFrameAnalysis?.(analysis);
+
       if (!message.rawValue || !message.detector) {
         return;
       }
@@ -177,7 +191,9 @@ export class ScannerEngine {
       this.options.log("info", "decode-success", {
         analysis: {
           brightness: Math.round(message.brightness),
+          blurry: message.blurry,
           edgeScore: Number(message.edgeScore.toFixed(1)),
+          glare: message.glare,
           lowLight: message.lowLight,
         },
         source: message.detector,
@@ -185,12 +201,7 @@ export class ScannerEngine {
       });
 
       this.options.onDetect({
-        analysis: {
-          brightness: message.brightness,
-          edgeScore: message.edgeScore,
-          glare: false,
-          lowLight: message.lowLight,
-        },
+        analysis,
         detectedAt: new Date().toISOString(),
         rawValue: message.rawValue,
         source: message.detector,
@@ -246,7 +257,11 @@ export class ScannerEngine {
       return null;
     }
 
-    if (this.videoElement.readyState < 2 || !this.videoElement.videoWidth || !this.videoElement.videoHeight) {
+    if (
+      this.videoElement.readyState < REQUIRED_VIDEO_READY_STATE ||
+      !this.videoElement.videoWidth ||
+      !this.videoElement.videoHeight
+    ) {
       return null;
     }
 
@@ -296,7 +311,7 @@ export class ScannerEngine {
     this.requestId = nextRequestId;
     this.workerBusy = true;
 
-    if (typeof createImageBitmap === "function") {
+    if (this.workerSupport.offscreenCanvas && typeof createImageBitmap === "function") {
       try {
         const bitmap = await createImageBitmap(video, sourceX, sourceY, cropEdge, cropEdge, {
           resizeHeight: targetEdge,

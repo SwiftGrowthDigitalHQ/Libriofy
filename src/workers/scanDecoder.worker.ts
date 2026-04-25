@@ -45,13 +45,18 @@ type DecodeResultMessage = {
   detector: "barcode_detector" | "jsqr" | null;
   timingMs: number;
   brightness: number;
+  blurry: boolean;
   edgeScore: number;
+  glare: boolean;
   lowLight: boolean;
 };
 
 let barcodeDetector: BarcodeDetectorInstance | null = null;
 let decodeCanvas: OffscreenCanvas | null = null;
 let decodeContext: OffscreenCanvasRenderingContext2D | null = null;
+
+const MIN_SHARP_EDGE_SCORE = 11.5;
+const MIN_SHARP_EDGE_SCORE_LOW_LIGHT = 9.5;
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -187,6 +192,9 @@ const analyzeImageData = (imageData: ImageData) => {
   };
 };
 
+const isFrameBlurry = (analysis: ReturnType<typeof analyzeImageData>) =>
+  analysis.edgeScore < (analysis.lowLight ? MIN_SHARP_EDGE_SCORE_LOW_LIGHT : MIN_SHARP_EDGE_SCORE);
+
 const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
   const directRead = trimText(
     jsQR(imageData.data, imageData.width, imageData.height, {
@@ -212,25 +220,61 @@ const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
   );
 };
 
-const decodeBitmap = async (bitmap: ImageBitmap) => {
-  const nativeValue = await detectWithBarcodeDetector(bitmap);
+const decodePreparedFrame = async (
+  imageData: ImageData,
+  nativeSource?: OffscreenCanvas,
+) => {
+  const analysis = analyzeImageData(imageData);
+  const blurry = isFrameBlurry(analysis);
+
+  if (blurry) {
+    return {
+      rawValue: null,
+      detector: null,
+      brightness: analysis.brightness,
+      blurry,
+      edgeScore: analysis.edgeScore,
+      glare: analysis.glare,
+      lowLight: analysis.lowLight,
+    };
+  }
+
+  const nativeValue = nativeSource ? await detectWithBarcodeDetector(nativeSource) : null;
   if (nativeValue) {
     return {
       rawValue: nativeValue,
       detector: "barcode_detector" as const,
-      brightness: 0,
-      edgeScore: 0,
-      lowLight: false,
+      brightness: analysis.brightness,
+      blurry,
+      edgeScore: analysis.edgeScore,
+      glare: analysis.glare,
+      lowLight: analysis.lowLight,
     };
   }
 
+  const rawValue = decodeWithJsQr(imageData, analysis.brightness);
+
+  return {
+    rawValue,
+    detector: rawValue ? ("jsqr" as const) : null,
+    brightness: analysis.brightness,
+    blurry,
+    edgeScore: analysis.edgeScore,
+    glare: analysis.glare,
+    lowLight: analysis.lowLight,
+  };
+};
+
+const decodeBitmap = async (bitmap: ImageBitmap) => {
   const context = getDecodeContext(bitmap.width, bitmap.height);
   if (!context || !decodeCanvas) {
     return {
       rawValue: null,
       detector: null,
       brightness: 0,
+      blurry: false,
       edgeScore: 0,
+      glare: false,
       lowLight: false,
     };
   }
@@ -239,16 +283,7 @@ const decodeBitmap = async (bitmap: ImageBitmap) => {
   context.clearRect(0, 0, bitmap.width, bitmap.height);
   context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
   const imageData = context.getImageData(0, 0, bitmap.width, bitmap.height);
-  const analysis = analyzeImageData(imageData);
-  const rawValue = decodeWithJsQr(imageData, analysis.brightness);
-
-  return {
-    rawValue,
-    detector: rawValue ? ("jsqr" as const) : null,
-    brightness: analysis.brightness,
-    edgeScore: analysis.edgeScore,
-    lowLight: analysis.lowLight,
-  };
+  return decodePreparedFrame(imageData, decodeCanvas);
 };
 
 const decodeImageData = async (imageData: ImageData) => {
@@ -256,28 +291,10 @@ const decodeImageData = async (imageData: ImageData) => {
   if (context && decodeCanvas) {
     context.imageSmoothingEnabled = false;
     context.putImageData(imageData, 0, 0);
-    const nativeValue = await detectWithBarcodeDetector(decodeCanvas);
-    if (nativeValue) {
-      return {
-        rawValue: nativeValue,
-        detector: "barcode_detector" as const,
-        brightness: 0,
-        edgeScore: 0,
-        lowLight: false,
-      };
-    }
+    return decodePreparedFrame(imageData, decodeCanvas);
   }
 
-  const analysis = analyzeImageData(imageData);
-  const rawValue = decodeWithJsQr(imageData, analysis.brightness);
-
-  return {
-    rawValue,
-    detector: rawValue ? ("jsqr" as const) : null,
-    brightness: analysis.brightness,
-    edgeScore: analysis.edgeScore,
-    lowLight: analysis.lowLight,
-  };
+  return decodePreparedFrame(imageData);
 };
 
 const postWorkerMessage = (message: ReadyMessage | DecodeResultMessage) => {
@@ -296,7 +313,9 @@ const postEmptyDecodeResult = (requestId: number, startedAt: number) => {
     detector: null,
     timingMs,
     brightness: 0,
+    blurry: false,
     edgeScore: 0,
+    glare: false,
     lowLight: false,
   });
 };
@@ -316,7 +335,9 @@ const handleDecodeMessage = async (message: DecodeMessage) => {
       detector: result.detector,
       timingMs,
       brightness: result.brightness,
+      blurry: result.blurry,
       edgeScore: result.edgeScore,
+      glare: result.glare,
       lowLight: result.lowLight,
     });
   } catch {
@@ -341,7 +362,9 @@ const handleImageDataDecodeMessage = async (message: DecodeImageDataMessage) => 
       detector: result.detector,
       timingMs,
       brightness: result.brightness,
+      blurry: result.blurry,
       edgeScore: result.edgeScore,
+      glare: result.glare,
       lowLight: result.lowLight,
     });
   } catch {
