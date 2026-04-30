@@ -1,4 +1,4 @@
-import { resolveMaintenanceStatus } from "../src/lib/maintenance.server";
+import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
 
 type ApiRequest = {
   method?: string;
@@ -35,41 +35,52 @@ const readRequestPath = (req: ApiRequest) => {
 };
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
-  const pathname = readRequestPath(req);
-  const method = (req.method || "GET").toUpperCase();
+  try {
+    const pathname = readRequestPath(req);
+    const method = (req.method || "GET").toUpperCase();
 
-  if (pathname !== "/api/settings") {
-    sendJson(res, 404, {
-      success: false,
-      message: "API route not found",
-      path: pathname,
+    if (pathname !== "/api/settings") {
+      sendJson(res, 404, {
+        success: false,
+        message: "API route not found",
+        path: pathname,
+      });
+      return;
+    }
+
+    if (method === "OPTIONS") {
+      res.statusCode = 204;
+      res.setHeader("Cache-Control", "no-store");
+      res.end();
+      return;
+    }
+
+    if (method !== "GET") {
+      sendMethodNotAllowed(res, "GET");
+      return;
+    }
+
+    const status = await readSafeMaintenanceStatus();
+
+    sendJson(res, 200, {
+      maintenance: status.maintenance,
+      maintenanceMode: status.maintenanceMode,
+      maintenance_mode: status.maintenanceMode,
+      source: status.source,
+      updatedAt: status.updatedAt,
+      updated_at: status.updatedAt,
     });
-    return;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log("Maintenance settings handler fallback used:", message);
+    sendJson(res, 200, {
+      maintenance: false,
+      maintenanceMode: false,
+      maintenance_mode: false,
+      source: "fallback",
+      updatedAt: null,
+      updated_at: null,
+      error: "safe fallback",
+    });
   }
-
-  if (method === "OPTIONS") {
-    res.statusCode = 204;
-    res.setHeader("Cache-Control", "no-store");
-    res.end();
-    return;
-  }
-
-  if (method !== "GET") {
-    sendMethodNotAllowed(res, "GET");
-    return;
-  }
-
-  const status = await resolveMaintenanceStatus(process.env).catch(() => ({
-    maintenanceMode: false,
-    source: "fallback" as const,
-    updatedAt: null,
-  }));
-
-  sendJson(res, 200, {
-    maintenanceMode: status.maintenanceMode,
-    maintenance_mode: status.maintenanceMode,
-    source: status.source,
-    updatedAt: status.updatedAt,
-    updated_at: status.updatedAt,
-  });
 }

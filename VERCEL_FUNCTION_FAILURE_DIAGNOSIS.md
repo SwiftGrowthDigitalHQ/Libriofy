@@ -1,5 +1,106 @@
 # Vercel Function Failure Diagnosis
 
+## Live Production Incident Update - 2026-04-30
+
+I re-checked the live production site directly on 2026-04-30 and the current failure is now much clearer.
+
+### What is failing on the live site
+
+Direct checks against production returned:
+
+- `GET https://www.libriofy.com/api/settings` -> `500 Internal Server Error`
+- `GET https://www.libriofy.com/api/health` -> `500 Internal Server Error`
+- `GET https://www.libriofy.com/health` -> `500 Internal Server Error`
+
+Important response header from production:
+
+- `X-Vercel-Error: FUNCTION_INVOCATION_FAILED`
+
+Important body from production:
+
+```text
+A server error has occurred
+
+FUNCTION_INVOCATION_FAILED
+```
+
+That matters because this is not a normal handled API error from our route code. This is Vercel reporting that the serverless function itself is failing during invocation or bootstrap.
+
+### Why this is probably not an auth-form bug
+
+The login page is noisy because it keeps polling `/api/settings`, but the root issue is broader than login.
+
+Code facts:
+
+- `api/[...route].ts` handles `/api/settings` with a very small handler and already falls back to a safe response if maintenance lookup fails.
+- `api/health/[...route].ts` handles `/api/health` and `/api/health/live` with extremely simple JSON responses.
+- Even those health routes are failing in production.
+
+Conclusion:
+
+- the issue is not "wrong email/password"
+- the issue is not "maintenance lookup returned bad data"
+- the issue is not isolated to auth logic
+- the issue is at the Vercel function runtime/deployment layer
+
+### Strongest current root-cause signal
+
+The production release manifest is also wrong right now:
+
+- `GET https://www.libriofy.com/release.json` returned:
+  - `"appEnv": "development"`
+  - `"release": null`
+
+That is a major clue. The checked-in GitHub workflow passes many `VITE_*` values only into the local `npm run build` step, but `vercel deploy --prod` performs a separate remote Vercel build. If those same values are not configured inside the Vercel project itself, the live deployment can:
+
+- build with fallback/default values
+- ship a frontend that looks deployed
+- still crash or misbehave at the serverless runtime
+
+This production result strongly suggests Vercel project environment/config drift.
+
+### Most likely problem
+
+Most likely the current Vercel project is missing or mismatching required production environment/configuration, and the deployed serverless functions are crashing before the handlers can return their normal JSON responses.
+
+At minimum, production behavior shows that Vercel is not receiving the intended release/environment metadata for the live build.
+
+### How to solve it
+
+1. Open the Vercel project settings for the production environment.
+2. Verify that the production env vars exist in Vercel itself, not only in GitHub Actions.
+3. Re-check at least these server-side values:
+   - `APP_ENV`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `STUDENT_QR_PRIVATE_KEY`
+   - one of `APP_URL`, `PUBLIC_APP_URL`, or `SITE_URL`
+4. Re-check the public build values used by the frontend:
+   - `VITE_APP_ENV`
+   - `VITE_RELEASE_SHA`
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+   - any other `VITE_*` values expected by the app
+5. Redeploy from Vercel after envs are corrected.
+6. Immediately smoke-test:
+   - `/api/settings`
+   - `/api/health`
+   - `/health`
+   - `/release.json`
+   - `/auth`
+7. Confirm that:
+   - `/api/settings` returns JSON, not Vercel plain-text 500
+   - `/api/health` returns 200 JSON
+   - `/release.json` no longer says `"appEnv": "development"` on production
+   - `"release"` is populated
+
+### Recommended hardening after the fix
+
+- Add a post-deploy smoke test in CI that fails the deployment if `/api/settings` or `/api/health` returns non-200.
+- Run `vercel pull --yes` plus `vercel build` in CI or a release-check workflow so function packaging is verified before production deploy.
+- Log and alert on `X-Vercel-Error: FUNCTION_INVOCATION_FAILED`.
+- Keep `/release.json` in the smoke-test checklist because it quickly exposes Vercel env drift.
+
 Scope of this audit:
 
 - `.github/workflows/ci-cd.yml`

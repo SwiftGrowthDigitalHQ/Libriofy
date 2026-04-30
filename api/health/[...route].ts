@@ -1,4 +1,4 @@
-import { resolveMaintenanceStatus } from "../../src/lib/maintenance.server";
+import { readSafeMaintenanceStatus } from "../../src/lib/maintenanceRuntime.server.js";
 
 type ApiRequest = {
   method?: string;
@@ -47,11 +47,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-    const maintenance = await resolveMaintenanceStatus(process.env).catch(() => ({
-      maintenanceMode: false,
-      source: "fallback" as const,
-      updatedAt: null,
-    }));
+    const maintenance = await readSafeMaintenanceStatus();
 
     sendJson(res, 200, {
       appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",

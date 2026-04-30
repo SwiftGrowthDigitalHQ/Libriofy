@@ -1,4 +1,9 @@
-import { MAINTENANCE_SETTINGS_KEY, parseBooleanSetting, normalizeMaintenanceStatusPayload, type MaintenanceStatus } from "./maintenance";
+import {
+  MAINTENANCE_SETTINGS_KEY,
+  parseBooleanSetting,
+  normalizeMaintenanceStatusPayload,
+  type MaintenanceStatus,
+} from "./maintenance.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -78,4 +83,23 @@ export const resolveMaintenanceStatus = async (env: EnvLike = process.env): Prom
     source: "fallback",
     updatedAt: null,
   };
+};
+
+export const getMaintenance = async (env: EnvLike = process.env) => {
+  try {
+    const status = await resolveMaintenanceStatus(env);
+    return {
+      maintenance: status.maintenanceMode,
+      maintenanceMode: status.maintenanceMode,
+      source: status.source,
+      updatedAt: status.updatedAt,
+    };
+  } catch {
+    return {
+      maintenance: false,
+      maintenanceMode: false,
+      source: "fallback" as const,
+      updatedAt: null,
+    };
+  }
 };

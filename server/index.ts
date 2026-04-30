@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server";
 import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server";
-import { resolveMaintenanceStatus } from "../src/lib/maintenance.server";
+import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
 import { buildServerReadiness } from "../src/lib/observability/serverHealth";
 import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring";
 import { assertServerStartupEnv } from "../src/lib/observability/startupValidation";
@@ -255,22 +255,10 @@ app.get("/health/ops", async (_req, res) => {
 
 app.get("/api/settings", async (_req, res) => {
   try {
-    const status = await resolveMaintenanceStatus(process.env).catch((error) => {
-      captureServerError(error, {
-        method: _req.method,
-        path: _req.originalUrl || _req.path,
-        requestId: res.locals.requestId,
-        source: "api_settings_fallback",
-      });
-
-      return {
-        maintenanceMode: false,
-        source: "fallback" as const,
-        updatedAt: null,
-      };
-    });
+    const status = await readSafeMaintenanceStatus();
     res.setHeader("Cache-Control", "no-store");
     res.status(200).json({
+      maintenance: status.maintenance,
       maintenanceMode: status.maintenanceMode,
       maintenance_mode: status.maintenanceMode,
       source: status.source,

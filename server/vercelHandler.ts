@@ -4,7 +4,7 @@ import { logAttendanceFailure } from "../src/lib/attendanceFailureLogger";
 import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server";
 import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server";
 import { extractClientIp, extractUserAgent, normalizeParsedRequestBody } from "../src/lib/httpRequest.server";
-import { resolveMaintenanceStatus } from "../src/lib/maintenance.server";
+import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
 import {
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
@@ -319,11 +319,7 @@ const handleHealthRoute = async (req: ApiRequest, res: ApiResponse, pathname: st
   }
 
   if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-    const maintenance = await resolveMaintenanceStatus(process.env).catch(() => ({
-      maintenanceMode: false,
-      source: "fallback" as const,
-      updatedAt: null,
-    }));
+    const maintenance = await readSafeMaintenanceStatus();
     sendJson(res, 200, {
       appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
       maintenanceMode: maintenance.maintenanceMode,
@@ -362,12 +358,9 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
         return;
       }
 
-      const status = await resolveMaintenanceStatus(process.env).catch(() => ({
-        maintenanceMode: false,
-        source: "fallback" as const,
-        updatedAt: null,
-      }));
+      const status = await readSafeMaintenanceStatus();
       sendJson(res, 200, {
+        maintenance: status.maintenance,
         maintenanceMode: status.maintenanceMode,
         maintenance_mode: status.maintenanceMode,
         source: status.source,
