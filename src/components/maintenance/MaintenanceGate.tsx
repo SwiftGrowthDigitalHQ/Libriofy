@@ -39,16 +39,11 @@ const MaintenanceGate = ({ children, useHashRouter }: MaintenanceGateProps) => {
     window.history.replaceState({ maintenanceMode: true }, "", maintenanceHref);
   }, [basePath, currentRoute, maintenanceMode, useHashRouter]);
 
-  if (loading) {
-    return <MaintenanceScreen state="loading" />;
-  }
-
   if (maintenanceMode) {
-    return <MaintenanceScreen state="maintenance" />;
+    return <MaintenanceScreen state={loading ? "loading" : "maintenance"} />;
   }
 
   return <>{children}</>;
 };
 
 export default MaintenanceGate;
-

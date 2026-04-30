@@ -96,14 +96,24 @@
     @apply border-border;
   }
   html, body, #root {
+    width: 100%;
+    height: 100%;
     min-height: 100%;
+  }
+  html,
+  body {
+    overflow-x: hidden;
   }
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-body);
     min-height: 100dvh;
+    overflow-x: hidden;
     overscroll-behavior-y: none;
     -webkit-tap-highlight-color: transparent;
+  }
+  #root {
+    min-width: 0;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
@@ -117,6 +127,8 @@
     -webkit-touch-callout: none;
   }
   body.kiosk-mode #root {
+    width: 100%;
+    height: 100%;
     min-height: 100dvh;
     overflow: hidden;
   }
@@ -160,10 +172,10 @@
     min-height: 100dvh;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    align-items: stretch;
+    justify-content: flex-start;
     box-sizing: border-box;
-    overflow: hidden;
+    overflow-x: hidden;
     padding:
       max(env(safe-area-inset-top), clamp(12px, 3vw, 40px))
       max(env(safe-area-inset-right), clamp(12px, 3vw, 40px))
@@ -173,20 +185,76 @@
 
   .scan-kiosk-container {
     width: 100%;
-    max-width: 1100px;
-    margin-inline: auto;
+    min-height: 100%;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    align-items: stretch;
+    justify-content: flex-start;
   }
 
   .scan-kiosk-card {
     width: 100%;
-    max-width: 1100px;
-    margin-inline: auto;
+    max-width: none;
+    margin-inline: 0;
     border-radius: 24px;
-    padding: clamp(12px, 2.5vw, 28px);
+    padding: clamp(20px, 2.4vw, 32px);
+  }
+
+  .scan-dashboard-shell {
+    min-height: calc(100dvh - 1.5rem);
+    height: calc(100dvh - 1.5rem);
+    isolation: isolate;
+  }
+
+  .scan-dashboard-main,
+  .scan-dashboard-top,
+  .scan-dashboard-primary,
+  .scan-dashboard-side {
+    min-height: 0;
+  }
+
+  .scan-dashboard-side-card {
+    min-width: 0;
+  }
+
+  .scan-dashboard-main {
+    gap: clamp(0.75rem, 1.1vw, 1.25rem);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .scan-dashboard-frame-wrap {
+    width: 100%;
+    max-width: min(100%, 32.5rem);
+  }
+
+  .scan-dashboard-scanner-shell {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 1.25rem;
+    overflow: hidden;
+  }
+
+  .scan-dashboard-frame {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: 1 / 1;
+  }
+
+  .scan-dashboard-scanner-wrap {
+    width: 100%;
+  }
+
+  .scan-dashboard-focus-frame {
+    width: 68%;
+    height: 68%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 1rem;
   }
 
   .scan-kiosk-title {
@@ -249,6 +317,174 @@
 
     .scan-kiosk-rabbit {
       --rabbit-scale: 0.74;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .scan-dashboard-shell {
+      height: calc(100dvh - 1.25rem);
+    }
+
+    .scan-dashboard-main {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      overflow: hidden;
+    }
+
+    .scan-dashboard-top {
+      min-height: 0;
+      grid-template-columns: minmax(0, 2.2fr) minmax(18rem, 1fr);
+      gap: 24px;
+      align-items: stretch;
+    }
+
+    .scan-dashboard-primary {
+      align-items: center;
+      justify-content: center;
+    }
+
+    .scan-dashboard-side {
+      min-height: 0;
+      height: 100%;
+      width: 100%;
+      max-width: 22.5rem;
+      min-width: 0;
+      justify-self: end;
+      align-self: stretch;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto auto auto;
+      align-content: start;
+      gap: 1rem;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .scan-dashboard-side > section,
+    .scan-dashboard-side-card {
+      min-width: 0;
+    }
+
+    .scan-dashboard-side-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .scan-dashboard-side-status {
+      height: 12.25rem;
+      max-height: 12.25rem;
+    }
+
+    .scan-dashboard-side-verification {
+      height: 14rem;
+      max-height: 14rem;
+    }
+
+    .scan-dashboard-side-summary {
+      height: 12.5rem;
+      max-height: 12.5rem;
+    }
+
+    .scan-dashboard-status-body {
+      min-height: 0;
+      height: 100%;
+      align-items: center;
+    }
+
+    .scan-dashboard-verification-body {
+      min-height: 0;
+      max-height: 100%;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      padding-right: 0.2rem;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(56, 189, 248, 0.28) transparent;
+    }
+
+    .scan-dashboard-summary-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+
+    .scan-dashboard-summary-grid > div {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .scan-dashboard-scanner-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 0;
+    }
+
+    .scan-dashboard-frame-wrap {
+      max-width: min(100%, 32.5rem, 46vh);
+    }
+
+    .scan-dashboard-scanner-shell {
+      max-width: 32.5rem;
+    }
+
+    .scan-dashboard-activity-section {
+      overflow: hidden;
+    }
+
+    .scan-dashboard-activity-rail {
+      overflow-x: auto;
+      overflow-y: hidden;
+      white-space: nowrap;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+    }
+
+    .scan-dashboard-activity-card {
+      white-space: normal;
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .scan-dashboard-frame-wrap {
+      max-width: min(100%, 32.5rem, 48vh);
+    }
+  }
+
+  @media (min-width: 1024px) and (max-height: 960px) {
+    .scan-dashboard-shell {
+      height: calc(100dvh - 0.75rem);
+    }
+
+    .scan-dashboard-main {
+      gap: 0.875rem;
+    }
+
+    .scan-dashboard-frame-wrap {
+      max-width: min(100%, 31rem, 44vh);
+    }
+
+    .scan-dashboard-side-status {
+      height: 11.5rem;
+      max-height: 11.5rem;
+    }
+
+    .scan-dashboard-side-verification {
+      height: 13rem;
+      max-height: 13rem;
+    }
+
+    .scan-dashboard-side-summary {
+      height: 11.75rem;
+      max-height: 11.75rem;
+    }
+  }
+
+  @media (min-width: 1024px) and (max-height: 860px) {
+    .scan-dashboard-frame-wrap {
+      max-width: min(100%, 28rem, 40vh);
     }
   }
 }

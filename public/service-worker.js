@@ -1,4 +1,4 @@
-const VERSION = "2026-03-31-01";
+const VERSION = "2026-04-30-01";
 const CORE_CACHE = `libriofy-core-${VERSION}`;
 const PAGE_CACHE = `libriofy-pages-${VERSION}`;
 const ASSET_CACHE = `libriofy-assets-${VERSION}`;
