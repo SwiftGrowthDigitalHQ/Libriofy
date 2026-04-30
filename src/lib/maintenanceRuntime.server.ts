@@ -1,4 +1,5 @@
-import { getMaintenance, resolveMaintenanceStatus } from "./maintenance.server.js";
+import { parseBooleanSetting } from "./maintenance.js";
+import { getMaintenanceSettings } from "./maintenance.server.js";
 
 export type SafeMaintenanceStatus = {
   maintenance: boolean;
@@ -22,7 +23,7 @@ const normalizeSource = (value: unknown): SafeMaintenanceStatus["source"] => {
   return "fallback";
 };
 
-const normalizeBoolean = (value: unknown) => Boolean(value);
+const normalizeBoolean = (value: unknown) => parseBooleanSetting(value) ?? false;
 
 const normalizeStringOrNull = (value: unknown) => (typeof value === "string" && value.trim() ? value : null);
 
@@ -46,17 +47,10 @@ export const getFallbackMaintenance = (): SafeMaintenanceStatus => ({ ...FALLBAC
 
 export const getMaintenanceSafe = async (): Promise<SafeMaintenanceStatus> => {
   try {
-    return normalizeMaintenanceStatus(await getMaintenance(process.env));
+    return normalizeMaintenanceStatus(await getMaintenanceSettings(process.env));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("Maintenance load failed:", message);
-  }
-
-  try {
-    return normalizeMaintenanceStatus(await resolveMaintenanceStatus(process.env));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("Maintenance status fallback failed:", message);
+    console.error("Maintenance settings load failed:", message);
   }
 
   return getFallbackMaintenance();

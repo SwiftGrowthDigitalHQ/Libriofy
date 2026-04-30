@@ -4,6 +4,8 @@ import { logAttendanceFailure } from "../src/lib/attendanceFailureLogger.js";
 import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server.js";
 import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
 import { extractClientIp, extractUserAgent, normalizeParsedRequestBody } from "../src/lib/httpRequest.server.js";
+import { parseBooleanSetting } from "../src/lib/maintenance.js";
+import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
 import {
   resolveEmailLoginRequest,
@@ -12,6 +14,7 @@ import {
   resolveRefreshSessionRequest,
   resolveSendOtpRequest,
   resolveSuperAdminLoginRequest,
+  resolveSuperAdminSessionRequest,
   resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
@@ -83,6 +86,26 @@ const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHead
 
 const sendMethodNotAllowed = (res: ApiResponse, allowedMethod: string) => {
   sendJson(res, 405, { success: false, message: "Method not allowed" }, { Allow: allowedMethod });
+};
+
+const buildMaintenancePayload = (status: {
+  maintenance?: boolean;
+  maintenanceMode?: boolean;
+  source?: string;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+}) => {
+  const maintenanceMode = parseBooleanSetting(status.maintenanceMode ?? status.maintenance) ?? false;
+  const updatedAt = status.updatedAt ?? status.updated_at ?? null;
+
+  return {
+    maintenance: maintenanceMode,
+    maintenanceMode,
+    maintenance_mode: maintenanceMode,
+    source: status.source ?? "fallback",
+    updatedAt,
+    updated_at: updatedAt,
+  };
 };
 
 const readHeaderValue = (headers: ApiHeaders, headerName: string) => {
@@ -343,6 +366,55 @@ const handleHealthRoute = async (req: ApiRequest, res: ApiResponse, pathname: st
   });
 };
 
+const handleAdminSettingsRoute = async (req: ApiRequest, res: ApiResponse) => {
+  const method = (req.method || "").toUpperCase();
+
+  if (method === "OPTIONS") {
+    res.statusCode = 204;
+    res.setHeader("Cache-Control", "no-store");
+    res.end();
+    return;
+  }
+
+  if (method !== "GET" && method !== "POST") {
+    sendMethodNotAllowed(res, "GET, POST");
+    return;
+  }
+
+  const activeSession = await resolveSuperAdminSessionRequest(process.env, readRequestContext(req));
+  if (!activeSession) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Super admin verification is required.",
+    });
+    return;
+  }
+
+  if (method === "GET") {
+    sendJson(res, 200, buildMaintenancePayload(await readSafeMaintenanceStatus()));
+    return;
+  }
+
+  const body = readParsedBody(req);
+  const nextMaintenanceMode = parseBooleanSetting(
+    body.maintenanceMode ?? body.maintenance ?? body.enabled ?? body.value,
+  );
+
+  if (nextMaintenanceMode === null) {
+    sendJson(res, 400, {
+      success: false,
+      message: "maintenanceMode must be provided as a boolean-compatible value.",
+    });
+    return;
+  }
+
+  const updatedStatus = await updateMaintenanceSettings(nextMaintenanceMode, process.env, activeSession.user.id);
+  sendJson(res, 200, {
+    success: true,
+    ...buildMaintenancePayload(updatedStatus),
+  });
+};
+
 const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string) => {
   switch (pathname) {
     case "/api/settings": {
@@ -359,14 +431,12 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
       }
 
       const status = await readSafeMaintenanceStatus();
-      sendJson(res, 200, {
-        maintenance: status.maintenance,
-        maintenanceMode: status.maintenanceMode,
-        maintenance_mode: status.maintenanceMode,
-        source: status.source,
-        updatedAt: status.updatedAt,
-        updated_at: status.updatedAt,
-      });
+      sendJson(res, 200, buildMaintenancePayload(status));
+      return;
+    }
+
+    case "/api/admin/settings": {
+      await handleAdminSettingsRoute(req, res);
       return;
     }
 

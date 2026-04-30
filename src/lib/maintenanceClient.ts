@@ -1,6 +1,14 @@
-import { supabase } from "@/integrations/supabase/client";
-import { MAINTENANCE_SETTINGS_KEY, parseBooleanSetting, normalizeMaintenanceStatusPayload, type MaintenanceStatus } from "@/lib/maintenance";
+import { normalizeMaintenanceStatusPayload, parseBooleanSetting, type MaintenanceStatus } from "@/lib/maintenance";
 const DEFAULT_TIMEOUT_MS = 3500;
+
+const readApiErrorMessage = (payload: unknown, fallbackMessage: string) => {
+  if (!payload || typeof payload !== "object") {
+    return fallbackMessage;
+  }
+
+  const message = (payload as { message?: unknown }).message;
+  return typeof message === "string" && message.trim() ? message : fallbackMessage;
+};
 
 const readEnvMaintenanceMode = (): MaintenanceStatus | null => {
   const raw = import.meta.env.VITE_MAINTENANCE_MODE;
@@ -17,42 +25,47 @@ const readEnvMaintenanceMode = (): MaintenanceStatus | null => {
   };
 };
 
-const fetchDatabaseMaintenanceStatus = async (): Promise<MaintenanceStatus | null> => {
-  const { data, error } = await supabase
-    .from("platform_settings")
-    .select("key, value, updated_at")
-    .eq("key", MAINTENANCE_SETTINGS_KEY)
-    .maybeSingle();
+const fetchApiMaintenanceStatus = async (timeoutMs: number): Promise<MaintenanceStatus | null> => {
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  const timeoutId =
+    controller && timeoutMs > 0
+      ? window.setTimeout(() => {
+          controller.abort();
+        }, timeoutMs)
+      : null;
 
-  if (error) {
+  try {
+    const response = await fetch("/api/settings", {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+      signal: controller?.signal,
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = await response.json().catch(() => null);
+    return normalizeMaintenanceStatusPayload(payload, "api");
+  } catch {
     return null;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
   }
-
-  if (!data) {
-    return {
-      maintenanceMode: false,
-      source: "database",
-      updatedAt: null,
-    };
-  }
-
-  const maintenanceMode = parseBooleanSetting((data as { value?: unknown }).value) ?? false;
-
-  return {
-    maintenanceMode,
-    source: "database",
-    updatedAt: (data as { updated_at?: string | null }).updated_at ?? null,
-  };
 };
 
 export const loadMaintenanceStatus = async ({
-  timeoutMs: _timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 }: {
   timeoutMs?: number;
 } = {}): Promise<MaintenanceStatus> => {
-  const databaseStatus = await fetchDatabaseMaintenanceStatus();
-  if (databaseStatus) {
-    return normalizeMaintenanceStatusPayload(databaseStatus, "database") ?? databaseStatus;
+  const apiStatus = await fetchApiMaintenanceStatus(timeoutMs);
+  if (apiStatus) {
+    return apiStatus;
   }
 
   const envStatus = readEnvMaintenanceMode();
@@ -68,25 +81,31 @@ export const loadMaintenanceStatus = async ({
 };
 
 export const setMaintenanceMode = async (enabled: boolean): Promise<MaintenanceStatus> => {
-  const { data, error } = await supabase
-    .from("platform_settings")
-    .upsert(
-      {
-        key: MAINTENANCE_SETTINGS_KEY,
-        value: enabled,
-      },
-      { onConflict: "key" },
-    )
-    .select("key, value, updated_at")
-    .maybeSingle();
+  const response = await fetch("/api/admin/settings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      maintenanceMode: enabled,
+    }),
+  });
 
-  if (error) {
-    throw error;
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(readApiErrorMessage(payload, "Unable to update maintenance mode."));
+  }
+
+  const normalized = normalizeMaintenanceStatusPayload(payload, "database");
+  if (normalized) {
+    return normalized;
   }
 
   return {
-    maintenanceMode: parseBooleanSetting(data?.value) ?? enabled,
+    maintenanceMode: parseBooleanSetting((payload as { maintenanceMode?: unknown } | null)?.maintenanceMode) ?? enabled,
     source: "database",
-    updatedAt: data?.updated_at ?? null,
+    updatedAt: null,
   };
 };

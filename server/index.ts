@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server.js";
 import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
+import { parseBooleanSetting } from "../src/lib/maintenance.js";
+import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
 import { buildServerReadiness } from "../src/lib/observability/serverHealth.js";
 import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring.js";
@@ -182,6 +184,26 @@ const sendServerError = (
   });
 };
 
+const buildMaintenancePayload = (status: {
+  maintenance?: boolean;
+  maintenanceMode?: boolean;
+  source?: string;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+}) => {
+  const maintenanceMode = parseBooleanSetting(status.maintenanceMode ?? status.maintenance) ?? false;
+  const updatedAt = status.updatedAt ?? status.updated_at ?? null;
+
+  return {
+    maintenance: maintenanceMode,
+    maintenanceMode,
+    maintenance_mode: maintenanceMode,
+    source: status.source ?? "fallback",
+    updatedAt,
+    updated_at: updatedAt,
+  };
+};
+
 const handleAttendanceScan: Parameters<typeof app.post>[1] = async (req, res) => {
   try {
     const result = await resolveScanAttendanceRequest(process.env, req.body, {
@@ -257,16 +279,62 @@ app.get("/api/settings", async (_req, res) => {
   try {
     const status = await readSafeMaintenanceStatus();
     res.setHeader("Cache-Control", "no-store");
-    res.status(200).json({
-      maintenance: status.maintenance,
-      maintenanceMode: status.maintenanceMode,
-      maintenance_mode: status.maintenanceMode,
-      source: status.source,
-      updatedAt: status.updatedAt,
-      updated_at: status.updatedAt,
-    });
+    res.status(200).json(buildMaintenancePayload(status));
   } catch (error) {
     sendServerError(_req, res, error, "Unexpected settings lookup failure", { source: "api_settings" });
+  }
+});
+
+app.get("/api/admin/settings", async (req, res) => {
+  try {
+    const activeSession = await resolveSuperAdminSessionRequest(process.env, readRequestContext(req));
+    if (!activeSession) {
+      res.status(401).json({
+        success: false,
+        message: "Super admin verification is required.",
+      });
+      return;
+    }
+
+    const status = await readSafeMaintenanceStatus();
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json(buildMaintenancePayload(status));
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected admin settings lookup failure", { source: "api_admin_settings" });
+  }
+});
+
+app.post("/api/admin/settings", async (req, res) => {
+  try {
+    const activeSession = await resolveSuperAdminSessionRequest(process.env, readRequestContext(req));
+    if (!activeSession) {
+      res.status(401).json({
+        success: false,
+        message: "Super admin verification is required.",
+      });
+      return;
+    }
+
+    const nextMaintenanceMode = parseBooleanSetting(
+      req.body?.maintenanceMode ?? req.body?.maintenance ?? req.body?.enabled ?? req.body?.value,
+    );
+
+    if (nextMaintenanceMode === null) {
+      res.status(400).json({
+        success: false,
+        message: "maintenanceMode must be provided as a boolean-compatible value.",
+      });
+      return;
+    }
+
+    const updatedStatus = await updateMaintenanceSettings(nextMaintenanceMode, process.env, activeSession.user.id);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({
+      success: true,
+      ...buildMaintenancePayload(updatedStatus),
+    });
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected admin settings update failure", { source: "api_admin_settings" });
   }
 });
 
