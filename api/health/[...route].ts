@@ -1,4 +1,4 @@
-import { readSafeMaintenanceStatus } from "../../src/lib/maintenanceRuntime.server.js";
+import { getMaintenanceSafe } from "../../src/lib/maintenanceRuntime.server.js";
 
 type ApiRequest = {
   method?: string;
@@ -38,45 +38,60 @@ const readRequestPath = (req: ApiRequest) => {
 };
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
-  const pathname = readRequestPath(req);
-  const method = (req.method || "GET").toUpperCase();
+  try {
+    const pathname = readRequestPath(req);
+    const method = (req.method || "GET").toUpperCase();
 
-  if (method !== "GET") {
-    sendMethodNotAllowed(res, "GET");
-    return;
-  }
+    if (method !== "GET") {
+      sendMethodNotAllowed(res, "GET");
+      return;
+    }
 
-  if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-    const maintenance = await readSafeMaintenanceStatus();
+    if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
+      const maintenance = await getMaintenanceSafe();
 
+      sendJson(res, 200, {
+        appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
+        maintenanceMode: maintenance.maintenanceMode,
+        nodeVersion: process.version,
+        release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
+        service: SERVERLESS_SERVICE_NAME,
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
+      });
+      return;
+    }
+
+    if (pathname === "/api/health" || pathname === "/api/health/live") {
+      sendJson(res, 200, {
+        appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
+        release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
+        service: SERVERLESS_SERVICE_NAME,
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
+      });
+      return;
+    }
+
+    sendJson(res, 404, {
+      success: false,
+      message: "API route not found",
+      path: pathname,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Health handler crash:", message);
     sendJson(res, 200, {
       appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
-      maintenanceMode: maintenance.maintenanceMode,
-      nodeVersion: process.version,
+      maintenanceMode: false,
       release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
       service: SERVERLESS_SERVICE_NAME,
+      source: "emergency-fallback",
       status: "ok",
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
     });
-    return;
   }
-
-  if (pathname === "/api/health" || pathname === "/api/health/live") {
-    sendJson(res, 200, {
-      appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
-      release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
-      service: SERVERLESS_SERVICE_NAME,
-      status: "ok",
-      timestamp: new Date().toISOString(),
-      uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
-    });
-    return;
-  }
-
-  sendJson(res, 404, {
-    success: false,
-    message: "API route not found",
-    path: pathname,
-  });
 }

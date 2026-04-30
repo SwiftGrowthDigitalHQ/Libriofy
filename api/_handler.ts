@@ -1,5 +1,5 @@
 import { normalizeParsedRequestBody } from "../src/lib/httpRequest.server";
-import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
+import { getMaintenanceSafe } from "../src/lib/maintenanceRuntime.server.js";
 import {
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
@@ -136,7 +136,7 @@ const handleSettingsRoute = async (req: ApiRequest, res: ApiResponse) => {
     return;
   }
 
-  const status = await readSafeMaintenanceStatus();
+  const status = await getMaintenanceSafe();
 
   sendJson(res, 200, {
     maintenance: status.maintenance,
@@ -157,7 +157,7 @@ const handleHealthRoute = async (req: ApiRequest, res: ApiResponse, pathname: st
   }
 
   if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-    const maintenance = await readSafeMaintenanceStatus();
+    const maintenance = await getMaintenanceSafe();
 
     sendJson(res, 200, {
       appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
@@ -242,9 +242,40 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     await handleApiRoute(req, res, readRequestPath(req));
   } catch (error) {
+    const pathname = readRequestPath(req);
+    const message = error instanceof Error ? error.message : "Unexpected serverless API failure";
+
+    if (pathname === "/api/settings") {
+      console.error("Settings handler crash:", message);
+      sendJson(res, 200, {
+        maintenance: false,
+        maintenanceMode: false,
+        maintenance_mode: false,
+        source: "emergency-fallback",
+        updatedAt: null,
+        updated_at: null,
+      });
+      return;
+    }
+
+    if (pathname === "/api/health" || pathname === "/api/health/live" || pathname === "/api/health/ready" || pathname === "/api/health/ops") {
+      console.error("Health handler crash:", message);
+      sendJson(res, 200, {
+        appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
+        maintenanceMode: false,
+        release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
+        service: SERVERLESS_SERVICE_NAME,
+        source: "emergency-fallback",
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
+      });
+      return;
+    }
+
     sendJson(res, 500, {
       success: false,
-      message: error instanceof Error ? error.message : "Unexpected serverless API failure",
+      message,
     });
   }
 }

@@ -1,4 +1,4 @@
-import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
+import { getMaintenanceSafe } from "../src/lib/maintenanceRuntime.server.js";
 
 type ApiRequest = {
   method?: string;
@@ -60,7 +60,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
 
-    const status = await readSafeMaintenanceStatus();
+    const status = await getMaintenanceSafe();
 
     sendJson(res, 200, {
       maintenance: status.maintenance,

@@ -42,9 +42,17 @@ const normalizeMaintenanceStatus = (value: unknown): SafeMaintenanceStatus => {
 
 export const getFallbackMaintenance = (): SafeMaintenanceStatus => ({ ...FALLBACK_MAINTENANCE });
 
-export const readSafeMaintenanceStatus = async (): Promise<SafeMaintenanceStatus> => {
+const tryLoadMaintenanceModule = async () => {
   try {
-    const maintenanceModule = await import("./maintenance.server.js");
+    return await import("./maintenance.server.js");
+  } catch {
+    return await import("./maintenance.server");
+  }
+};
+
+export const getMaintenanceSafe = async (): Promise<SafeMaintenanceStatus> => {
+  try {
+    const maintenanceModule = await tryLoadMaintenanceModule();
 
     if (typeof maintenanceModule.getMaintenance === "function") {
       return normalizeMaintenanceStatus(await maintenanceModule.getMaintenance());
@@ -55,8 +63,10 @@ export const readSafeMaintenanceStatus = async (): Promise<SafeMaintenanceStatus
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.log("Maintenance fallback used:", message);
+    console.error("Maintenance load failed:", message);
   }
 
   return getFallbackMaintenance();
 };
+
+export const readSafeMaintenanceStatus = getMaintenanceSafe;
