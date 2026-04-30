@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
-import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey";
-import { parseStudentQrPayload } from "./studentQr";
-import { logAttendanceFailure } from "./attendanceFailureLogger";
+import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
+import { parseStudentQrPayload } from "./studentQr.js";
+import { logAttendanceFailure } from "./attendanceFailureLogger.js";
 
 type EnvLike = Record<string, string | undefined>;
 

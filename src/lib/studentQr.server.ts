@@ -2,8 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import {
   createStudentQrClaims,
   signStudentQrToken,
-} from "./studentQr";
-import { resolveRequestAuthUser } from "./requestAuth.server";
+} from "./studentQr.js";
+import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 

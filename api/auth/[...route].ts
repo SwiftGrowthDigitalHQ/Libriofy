@@ -1,4 +1,4 @@
-import { normalizeParsedRequestBody } from "../../src/lib/httpRequest.server";
+import { normalizeParsedRequestBody } from "../../src/lib/httpRequest.server.js";
 import {
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
@@ -9,7 +9,7 @@ import {
   resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
-} from "../../src/lib/otpAuth.server";
+} from "../../src/lib/otpAuth.server.js";
 
 type ApiHeaders = Record<string, string | string[] | undefined>;
 

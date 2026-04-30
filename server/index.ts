@@ -7,12 +7,12 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server";
-import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server";
+import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server.js";
+import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
-import { buildServerReadiness } from "../src/lib/observability/serverHealth";
-import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring";
-import { assertServerStartupEnv } from "../src/lib/observability/startupValidation";
+import { buildServerReadiness } from "../src/lib/observability/serverHealth.js";
+import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring.js";
+import { assertServerStartupEnv } from "../src/lib/observability/startupValidation.js";
 import {
   ensureOtpAuthWorkerStarted,
   resolveEmailLoginRequest,
@@ -25,15 +25,15 @@ import {
   resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
-} from "../src/lib/otpAuth.server";
-import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server";
-import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server";
+} from "../src/lib/otpAuth.server.js";
+import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
+import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
 import {
   SUPER_ADMIN_DASHBOARD_ROUTE,
   SUPER_ADMIN_LOGIN_ROUTE,
   isSuperAdminDashboardPath,
   sanitizeSuperAdminRedirectPath,
-} from "../src/lib/superAdminPaths";
+} from "../src/lib/superAdminPaths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

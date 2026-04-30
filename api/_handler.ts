@@ -1,4 +1,5 @@
-import { normalizeParsedRequestBody } from "../src/lib/httpRequest.server";
+import { normalizeParsedRequestBody } from "../src/lib/httpRequest.server.js";
+import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
 import {
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
@@ -9,7 +10,7 @@ import {
   resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
-} from "../src/lib/otpAuth.server";
+} from "../src/lib/otpAuth.server.js";
 
 type ApiHeaders = Record<string, string | string[] | undefined>;
 
@@ -53,53 +54,7 @@ type MaintenanceStatus = {
 const SERVERLESS_SERVICE_NAME = "libriofy-vercel-api";
 const SERVER_STARTED_AT = Date.now();
 
-const getFallbackMaintenance = (): MaintenanceStatus => ({
-  maintenance: false,
-  maintenanceMode: false,
-  source: "fallback",
-  updatedAt: null,
-});
-
-const normalizeMaintenanceStatus = (value: unknown): MaintenanceStatus => {
-  if (!value || typeof value !== "object") {
-    return getFallbackMaintenance();
-  }
-
-  const record = value as Record<string, unknown>;
-  const maintenance = Boolean(record.maintenance ?? record.maintenanceMode ?? record.maintenance_mode);
-  const updatedAt =
-    typeof record.updatedAt === "string"
-      ? record.updatedAt
-      : typeof record.updated_at === "string"
-        ? record.updated_at
-        : null;
-
-  return {
-    maintenance,
-    maintenanceMode: maintenance,
-    source: typeof record.source === "string" && record.source.trim() ? record.source : "fallback",
-    updatedAt,
-  };
-};
-
-const getMaintenanceSafe = async (): Promise<MaintenanceStatus> => {
-  try {
-    const maintenanceModule = await import("../src/lib/maintenance.server.js");
-
-    if (typeof maintenanceModule.getMaintenance === "function") {
-      return normalizeMaintenanceStatus(await maintenanceModule.getMaintenance());
-    }
-
-    if (typeof maintenanceModule.resolveMaintenanceStatus === "function") {
-      return normalizeMaintenanceStatus(await maintenanceModule.resolveMaintenanceStatus(process.env));
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("Maintenance load failed:", message);
-  }
-
-  return getFallbackMaintenance();
-};
+const getMaintenanceSafe = (): Promise<MaintenanceStatus> => readSafeMaintenanceStatus();
 
 const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHeaders?: Record<string, string | string[]>) => {
   res.statusCode = statusCode;

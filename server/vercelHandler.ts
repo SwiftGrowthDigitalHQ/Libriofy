@@ -1,9 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 
-import { logAttendanceFailure } from "../src/lib/attendanceFailureLogger";
-import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server";
-import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server";
-import { extractClientIp, extractUserAgent, normalizeParsedRequestBody } from "../src/lib/httpRequest.server";
+import { logAttendanceFailure } from "../src/lib/attendanceFailureLogger.js";
+import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server.js";
+import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
+import { extractClientIp, extractUserAgent, normalizeParsedRequestBody } from "../src/lib/httpRequest.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
 import {
   resolveEmailLoginRequest,
@@ -15,9 +15,9 @@ import {
   resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
-} from "../src/lib/otpAuth.server";
-import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server";
-import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server";
+} from "../src/lib/otpAuth.server.js";
+import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
+import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
 
 type ApiHeaders = Record<string, string | string[] | undefined>;
 

@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
-import { logAttendanceFailure } from "./attendanceFailureLogger";
-import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey";
+import { logAttendanceFailure } from "./attendanceFailureLogger.js";
+import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
 
 type EnvLike = Record<string, string | undefined>;
 

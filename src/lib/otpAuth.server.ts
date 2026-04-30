@@ -32,8 +32,8 @@ import {
   type SuperAdminOtpChannel,
   type SuperAdminVerifyOtpResponse,
   type VerifyOtpResponse,
-} from "./auth.shared";
-import { resolveRequestAuthUser } from "./requestAuth.server";
+} from "./auth.shared.js";
+import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
