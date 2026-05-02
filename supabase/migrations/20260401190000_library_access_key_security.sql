@@ -53,7 +53,7 @@ AS $$
 DECLARE
   v_alphabet CONSTANT TEXT := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   v_key TEXT := 'LIB-';
-  v_bytes BYTEA := gen_random_bytes(6);
+  v_bytes BYTEA := extensions.gen_random_bytes(6);
   v_index INTEGER;
 BEGIN
   FOR v_index IN 0..5 LOOP

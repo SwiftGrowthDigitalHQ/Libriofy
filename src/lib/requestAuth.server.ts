@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
 
 import type { AuthUser } from "./auth.shared.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -47,6 +48,9 @@ const buildServiceClient = (env: EnvLike) => {
       autoRefreshToken: false,
       persistSession: false,
     },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("request_auth_service"),
+    },
   });
 };
 
@@ -62,6 +66,9 @@ const buildAnonClient = (env: EnvLike) => {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("request_auth_anon"),
     },
   });
 };

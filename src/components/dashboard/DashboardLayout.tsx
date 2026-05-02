@@ -9,7 +9,9 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { useDatabaseHealth } from "@/hooks/useDatabaseHealth";
 import { useIsSuperAdmin } from "@/hooks/useUserRole";
+import { DatabaseHealthAlert } from "@/components/observability/DatabaseHealthAlert";
 import { evaluateSubscriptionAccess, useLibrarySubscription } from "@/hooks/useLibrarySubscription";
 import { SUPER_ADMIN_DASHBOARD_ROUTE } from "@/lib/superAdminPaths";
 import NotificationBell from "@/components/notifications/NotificationBell";
@@ -51,6 +53,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
   const { data: subscription } = useLibrarySubscription();
   const navigate = useNavigate();
   const location = useLocation();
+  const databaseHealthQuery = useDatabaseHealth();
   const access = evaluateSubscriptionAccess(subscription);
   const { data: currentLibrary } = useQuery({
     queryKey: ["dashboard-public-library", libraryId],
@@ -222,6 +225,11 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
         </div>
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+          <DatabaseHealthAlert
+            errorMessage={databaseHealthQuery.isError ? "Database health validation failed." : null}
+            health={databaseHealthQuery.data}
+            viewer="library_admin"
+          />
           {children}
         </main>
       </div>

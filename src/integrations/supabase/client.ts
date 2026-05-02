@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { createSafeBrowserStorage } from '@/lib/browserStorage';
 import { getStoredAccessToken } from '@/lib/authSession';
+import { createInstrumentedBrowserSupabaseFetch } from '@/lib/observability/clientSupabaseFetch';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -23,10 +24,16 @@ const sharedAuthOptions = {
     autoRefreshToken: true,
     detectSessionInUrl: true,
   },
+  global: {
+    fetch: createInstrumentedBrowserSupabaseFetch(),
+  },
 };
 
 export const supabaseAuth = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, sharedAuthOptions);
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
   accessToken: getStoredAccessToken,
+  global: {
+    fetch: createInstrumentedBrowserSupabaseFetch(),
+  },
 });

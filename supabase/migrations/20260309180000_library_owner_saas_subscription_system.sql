@@ -87,7 +87,9 @@ CREATE INDEX IF NOT EXISTS idx_notifications_subscription_unsent
   ON public.notifications(delivery_status, sent_at)
   WHERE type IN ('subscription_reminder_3day', 'subscription_expired_today');
 
-CREATE OR REPLACE VIEW public.subscriptions AS
+DROP VIEW IF EXISTS public.subscriptions;
+
+CREATE VIEW public.subscriptions AS
 SELECT
   s.id,
   s.library_id,
@@ -106,6 +108,9 @@ SELECT
   s.plan_start_date,
   s.plan_expiry_date
 FROM public.library_subscriptions s;
+
+GRANT SELECT ON public.subscriptions TO authenticated;
+GRANT SELECT ON public.subscriptions TO service_role;
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger

@@ -3,6 +3,7 @@ import {
   createStudentQrClaims,
   signStudentQrToken,
 } from "./studentQr.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
 type EnvLike = Record<string, string | undefined>;
@@ -230,6 +231,9 @@ export const resolveStudentQrSigningRequest = async (
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("student_qr_server"),
     },
   });
 

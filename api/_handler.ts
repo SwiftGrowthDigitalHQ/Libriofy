@@ -2,6 +2,7 @@ import { normalizeParsedRequestBody } from "../src/lib/httpRequest.server.js";
 import { parseBooleanSetting } from "../src/lib/maintenance.js";
 import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
+import { getCriticalDatabaseHealth, warmCriticalDatabaseHealth } from "../src/lib/observability/databaseHealth.server.js";
 import {
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
@@ -58,6 +59,7 @@ const SERVERLESS_SERVICE_NAME = "libriofy-vercel-api";
 const SERVER_STARTED_AT = Date.now();
 
 const getMaintenanceSafe = (): Promise<MaintenanceStatus> => readSafeMaintenanceStatus();
+warmCriticalDatabaseHealth(process.env);
 
 const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHeaders?: Record<string, string | string[]>) => {
   res.statusCode = statusCode;
@@ -232,17 +234,31 @@ const handleHealthRoute = async (req: ApiRequest, res: ApiResponse, pathname: st
 
   if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
     const maintenance = await getMaintenanceSafe();
+    const databaseHealth = await getCriticalDatabaseHealth(process.env, {
+      phase: pathname === "/api/health/ops" ? "api_health_ops" : "api_health_ready",
+    });
 
-    sendJson(res, 200, {
+    sendJson(res, databaseHealth.status === "ok" ? 200 : 503, {
       appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
+      database: databaseHealth,
       maintenanceMode: maintenance.maintenanceMode,
       nodeVersion: process.version,
       release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
       service: SERVERLESS_SERVICE_NAME,
-      status: "ok",
+      status: databaseHealth.status,
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
     });
+    return;
+  }
+
+  if (pathname === "/api/health/db") {
+    const databaseHealth = await getCriticalDatabaseHealth(process.env, {
+      forceRefresh: true,
+      phase: "api_health_db",
+    });
+
+    sendJson(res, databaseHealth.status === "ok" ? 200 : 503, databaseHealth);
     return;
   }
 
@@ -268,6 +284,7 @@ const handleApiRoute = async (req: ApiRequest, res: ApiResponse, pathname: strin
     case "/api/health/live":
     case "/api/health/ready":
     case "/api/health/ops":
+    case "/api/health/db":
       await handleHealthRoute(req, res, pathname);
       return;
     case "/api/auth/send-otp": {
@@ -335,15 +352,23 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
 
-    if (pathname === "/api/health" || pathname === "/api/health/live" || pathname === "/api/health/ready" || pathname === "/api/health/ops") {
+    if (
+      pathname === "/api/health" ||
+      pathname === "/api/health/live" ||
+      pathname === "/api/health/ready" ||
+      pathname === "/api/health/ops" ||
+      pathname === "/api/health/db"
+    ) {
       console.error("Health handler crash:", message);
-      sendJson(res, 200, {
+      sendJson(res, pathname === "/api/health" || pathname === "/api/health/live" ? 200 : 503, {
         appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
         maintenanceMode: false,
+        missing: pathname === "/api/health/db" ? ["recovery_queue", "payments", "students"] : undefined,
+        missing_entities: pathname === "/api/health/db" ? ["recovery_queue", "payments", "students"] : undefined,
         release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
         service: SERVERLESS_SERVICE_NAME,
         source: "emergency-fallback",
-        status: "ok",
+        status: pathname === "/api/health" || pathname === "/api/health/live" ? "ok" : "failed",
         timestamp: new Date().toISOString(),
         uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
       });

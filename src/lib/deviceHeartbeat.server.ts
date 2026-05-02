@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
 import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -145,6 +146,9 @@ export const resolveDeviceHeartbeatRequest = async (
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("device_heartbeat_server"),
     },
   });
 

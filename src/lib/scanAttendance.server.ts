@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
 import { parseStudentQrPayload } from "./studentQr.js";
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -287,6 +288,9 @@ export const resolveScanAttendanceRequest = async (
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("scan_attendance_server"),
     },
   });
 

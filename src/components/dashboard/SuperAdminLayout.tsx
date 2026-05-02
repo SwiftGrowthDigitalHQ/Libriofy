@@ -6,6 +6,8 @@ import {
   ListChecks, Users2, Wallet
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useDatabaseHealth } from "@/hooks/useDatabaseHealth";
+import { DatabaseHealthAlert } from "@/components/observability/DatabaseHealthAlert";
 import { SUPER_ADMIN_DASHBOARD_ROUTE, SUPER_ADMIN_LOGIN_ROUTE } from "@/lib/superAdminPaths";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import InstallAppButton from "@/components/pwa/InstallAppButton";
@@ -26,6 +28,7 @@ const navItems = [
 const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
   const [collapsed, setCollapsed] = useState(false);
   const { user, signOut, logoutAllDevices } = useAuth();
+  const databaseHealthQuery = useDatabaseHealth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -139,6 +142,11 @@ const SuperAdminLayout = ({ children }: { children: ReactNode }) => {
         </div>
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+          <DatabaseHealthAlert
+            errorMessage={databaseHealthQuery.isError ? "Database health validation failed." : null}
+            health={databaseHealthQuery.data}
+            viewer="super_admin"
+          />
           {children}
         </main>
       </div>

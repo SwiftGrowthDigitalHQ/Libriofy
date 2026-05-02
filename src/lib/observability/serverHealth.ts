@@ -1,3 +1,5 @@
+import { getCriticalDatabaseHealth } from "./databaseHealth.server.js";
+
 export type ServerHealthCheck = {
   detail?: string;
   name: string;
@@ -72,11 +74,30 @@ export const buildServerReadiness = async (env: NodeJS.ProcessEnv, options: { ha
 
   checks.push(await buildSupabaseConnectivityCheck(env));
 
+  const databaseHealth = await getCriticalDatabaseHealth(env, {
+    phase: "readiness",
+  });
+
+  checks.push({
+    name: "critical_database_schema",
+    status: databaseHealth.status === "ok" ? "pass" : "fail",
+    detail:
+      databaseHealth.status === "ok"
+        ? "Critical database entities are present"
+        : databaseHealth.detail ?? "Critical database entities are missing",
+  });
+
   const failingChecks = checks.filter((check) => check.status === "fail");
 
   return {
     checks,
+    database: databaseHealth,
     ok: failingChecks.length === 0,
-    status: failingChecks.length === 0 ? "ok" : "degraded",
+    status:
+      databaseHealth.status === "failed"
+        ? "failed"
+        : failingChecks.length === 0
+          ? "ok"
+          : "degraded",
   };
 };

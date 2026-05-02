@@ -1,4 +1,5 @@
 import { readSafeMaintenanceStatus } from "../../src/lib/maintenanceRuntime.server.js";
+import { getCriticalDatabaseHealth, warmCriticalDatabaseHealth } from "../../src/lib/observability/databaseHealth.server.js";
 
 type ApiRequest = {
   method?: string;
@@ -22,6 +23,7 @@ const SERVERLESS_SERVICE_NAME = "libriofy-vercel-api";
 const SERVER_STARTED_AT = Date.now();
 
 const getMaintenanceSafe = (): Promise<MaintenanceStatus> => readSafeMaintenanceStatus();
+warmCriticalDatabaseHealth(process.env);
 
 const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHeaders?: Record<string, string | string[]>) => {
   res.statusCode = statusCode;
@@ -58,17 +60,31 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
     if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
       const maintenance = await getMaintenanceSafe();
+      const databaseHealth = await getCriticalDatabaseHealth(process.env, {
+        phase: pathname === "/api/health/ops" ? "api_health_ops" : "api_health_ready",
+      });
 
-      sendJson(res, 200, {
+      sendJson(res, databaseHealth.status === "ok" ? 200 : 503, {
         appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
+        database: databaseHealth,
         maintenanceMode: maintenance.maintenanceMode,
         nodeVersion: process.version,
         release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
         service: SERVERLESS_SERVICE_NAME,
-        status: "ok",
+        status: databaseHealth.status,
         timestamp: new Date().toISOString(),
         uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
       });
+      return;
+    }
+
+    if (pathname === "/api/health/db") {
+      const databaseHealth = await getCriticalDatabaseHealth(process.env, {
+        forceRefresh: true,
+        phase: "api_health_db",
+      });
+
+      sendJson(res, databaseHealth.status === "ok" ? 200 : 503, databaseHealth);
       return;
     }
 
@@ -92,13 +108,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("Health handler crash:", message);
-    sendJson(res, 200, {
+    sendJson(res, 503, {
       appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
       maintenanceMode: false,
+      missing: ["recovery_queue", "payments", "students"],
+      missing_entities: ["recovery_queue", "payments", "students"],
       release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
       service: SERVERLESS_SERVICE_NAME,
       source: "emergency-fallback",
-      status: "ok",
+      status: "failed",
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
     });

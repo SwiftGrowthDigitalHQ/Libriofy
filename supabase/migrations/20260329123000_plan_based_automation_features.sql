@@ -139,7 +139,9 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE VIEW public.subscriptions AS
+DROP VIEW IF EXISTS public.subscriptions;
+
+CREATE VIEW public.subscriptions AS
 SELECT
   s.id,
   s.library_id,
@@ -161,3 +163,6 @@ SELECT
   s.whatsapp_enabled,
   s.ai_call_enabled
 FROM public.library_subscriptions s;
+
+GRANT SELECT ON public.subscriptions TO authenticated;
+GRANT SELECT ON public.subscriptions TO service_role;

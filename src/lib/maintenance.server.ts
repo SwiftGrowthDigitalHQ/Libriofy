@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { MAINTENANCE_SETTINGS_KEY, parseBooleanSetting, type MaintenanceStatus } from "./maintenance.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 
 type EnvLike = Record<string, string | undefined>;
 type MaintenanceSettingRow = {
@@ -59,6 +60,9 @@ const createSettingsClient = (env: EnvLike) => {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("maintenance_server"),
     },
   });
 };

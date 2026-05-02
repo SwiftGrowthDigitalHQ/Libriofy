@@ -12,6 +12,7 @@ import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
 import { parseBooleanSetting } from "../src/lib/maintenance.js";
 import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
+import { getCriticalDatabaseHealth, warmCriticalDatabaseHealth } from "../src/lib/observability/databaseHealth.server.js";
 import { buildServerReadiness } from "../src/lib/observability/serverHealth.js";
 import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring.js";
 import { assertServerStartupEnv } from "../src/lib/observability/startupValidation.js";
@@ -49,6 +50,7 @@ assertServerStartupEnv(process.env);
 
 const app = express();
 initializeServerMonitoring(process.env);
+warmCriticalDatabaseHealth(process.env);
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -274,6 +276,35 @@ app.get("/health/ops", async (_req, res) => {
     uptimeSeconds: Math.round((Date.now() - serverStartedAt) / 1000),
   });
 });
+
+const handleDatabaseHealthRoute: Parameters<typeof app.get>[1] = async (_req, res) => {
+  try {
+    const databaseHealth = await getCriticalDatabaseHealth(process.env, {
+      forceRefresh: true,
+      phase: "api_health_db",
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.status(databaseHealth.status === "ok" ? 200 : 503).json(databaseHealth);
+  } catch (error) {
+    console.error("Database health handler crash:", error);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(503).json({
+      checked_at: new Date().toISOString(),
+      connectivity: "fail",
+      detail: error instanceof Error ? error.message : "Unexpected database health failure",
+      entities: [],
+      missing: ["recovery_queue", "payments", "students"],
+      missing_entities: ["recovery_queue", "payments", "students"],
+      service: "supabase-database-health",
+      source: "live",
+      status: "failed",
+    });
+  }
+};
+
+app.get("/health/db", handleDatabaseHealthRoute);
+app.get("/api/health/db", handleDatabaseHealthRoute);
 
 app.get("/api/settings", async (_req, res) => {
   try {

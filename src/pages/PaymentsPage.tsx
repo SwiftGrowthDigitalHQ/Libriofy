@@ -68,6 +68,7 @@ import {
   getDefaultPaymentDueDate,
   getPaymentStatusLabel,
   groupPaymentsByStudent,
+  type PaymentSummary,
 } from "@/lib/paymentRecovery";
 import {
   canUseAiCallingAutomation,
@@ -541,6 +542,43 @@ const mapRecoveryQueueRow = (row: RecoveryQueueViewRow): RecoveryQueueRow => ({
   totalFees: Number(row.total_fees || 0),
 });
 
+const resolveRecoveryQueueStatus = ({
+  amountDue,
+  overdueDays,
+}: Pick<RecoveryQueueRow, "amountDue" | "overdueDays">): RecoveryFilter => {
+  if (amountDue <= 0) return "paid";
+  if (overdueDays > 0) return "overdue";
+  return "pending";
+};
+
+const mapPaymentSummaryToRecoveryQueueRow = (summary: PaymentSummary): RecoveryQueueRow => ({
+  amountDue: summary.amountDue,
+  amountPaid: summary.amountPaid,
+  dueDate: summary.dueDate,
+  lastPaymentDate: summary.lastPaymentDate,
+  overdueDays: summary.overdueDays,
+  phone: summary.phone,
+  planName: summary.planName,
+  queueStatus: resolveRecoveryQueueStatus(summary),
+  recoveryUrgencyLabel: summary.recoveryUrgencyLabel,
+  seatNumber: summary.seatNumber,
+  studentId: summary.studentId,
+  studentName: summary.studentName,
+  successfulPaymentCount: summary.successfulPaymentCount,
+  totalFees: summary.totalFees,
+});
+
+const isRecoveryQueueViewMissingError = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; message?: string };
+  const message = (maybeError.message || "").toLowerCase();
+
+  return (
+    maybeError.code === "PGRST205" &&
+    (message.includes("recovery_queue") || message.includes("public.recovery_queue"))
+  );
+};
+
 const applyRecoveryQueueFilter = <T,>(query: T, filter: RecoveryFilter) => {
   const typedQuery = query as {
     eq: (column: string, value: string) => T;
@@ -603,6 +641,59 @@ const fetchRecoveryQueuePage = async ({
 
   return {
     data: ((data ?? []) as RecoveryQueueViewRow[]).map(mapRecoveryQueueRow),
+    page: safePage,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+  };
+};
+
+const buildRecoveryQueueFallbackPage = ({
+  filter,
+  limit,
+  page,
+  search,
+  summaries,
+}: {
+  filter: RecoveryFilter;
+  limit: number;
+  page: number;
+  search: string;
+  summaries: PaymentSummary[];
+}): RecoveryQueuePageResponse => {
+  const safeLimit = Math.max(1, limit);
+  const safePage = Math.max(1, page);
+  const trimmedSearch = search.trim();
+  const normalizedSearch = normalizeText(trimmedSearch);
+  const digitSearch = trimmedSearch.replace(/\D/g, "");
+  const from = (safePage - 1) * safeLimit;
+  const to = from + safeLimit;
+
+  const filteredRows = summaries
+    .map(mapPaymentSummaryToRecoveryQueueRow)
+    .filter((row) => row.queueStatus === filter)
+    .filter((row) => {
+      if (!trimmedSearch) return true;
+
+      const nameMatches = normalizeText(row.studentName).includes(normalizedSearch);
+      const phoneDigits = (row.phone || "").replace(/\D/g, "");
+      const phoneMatches = digitSearch ? phoneDigits.includes(digitSearch) : (row.phone || "").toLowerCase().includes(trimmedSearch.toLowerCase());
+      return nameMatches || phoneMatches;
+    })
+    .sort((left, right) => {
+      if (right.overdueDays !== left.overdueDays) return right.overdueDays - left.overdueDays;
+      if (right.amountDue !== left.amountDue) return right.amountDue - left.amountDue;
+
+      const leftDueTime = left.dueDate ? Date.parse(left.dueDate) : Number.POSITIVE_INFINITY;
+      const rightDueTime = right.dueDate ? Date.parse(right.dueDate) : Number.POSITIVE_INFINITY;
+      if (leftDueTime !== rightDueTime) return leftDueTime - rightDueTime;
+
+      return left.studentName.localeCompare(right.studentName);
+    });
+
+  const total = filteredRows.length;
+
+  return {
+    data: filteredRows.slice(from, to),
     page: safePage,
     total,
     totalPages: Math.max(1, Math.ceil(total / safeLimit)),
@@ -1199,18 +1290,6 @@ const PaymentsPage = () => {
   }, [debouncedRecoverySearch, recoveryFilter, recoveryLimit]);
 
   useEffect(() => {
-    setRecoveryTotalCount(recoveryQueueQuery.data?.total ?? 0);
-  }, [recoveryQueueQuery.data?.total]);
-
-  useEffect(() => {
-    if (recoveryPage <= (recoveryQueueQuery.data?.totalPages ?? 1)) {
-      return;
-    }
-
-    setRecoveryPage(recoveryQueueQuery.data?.totalPages ?? 1);
-  }, [recoveryPage, recoveryQueueQuery.data?.totalPages]);
-
-  useEffect(() => {
     if (!hasMountedRecoveryPaginationRef.current) {
       hasMountedRecoveryPaginationRef.current = true;
       return;
@@ -1277,15 +1356,6 @@ const PaymentsPage = () => {
     totalRevenue: 0,
     totalTransactions: 0,
   };
-  const recoveryQueueRows = recoveryQueueQuery.data?.data ?? [];
-  const recoveryQueueTotalPages = recoveryQueueQuery.data?.totalPages ?? 1;
-  const recoveryQueueRangeStart = recoveryTotalCount === 0 ? 0 : (recoveryPage - 1) * recoveryLimit + 1;
-  const recoveryQueueRangeEnd = recoveryTotalCount === 0 ? 0 : Math.min(recoveryPage * recoveryLimit, recoveryTotalCount);
-  const recoveryQueueItemsLabel = recoveryTotalCount === 1 ? "recovery item" : "recovery items";
-  const recoveryQueuePageItems = useMemo(
-    () => buildPageItems(recoveryPage, recoveryQueueTotalPages),
-    [recoveryPage, recoveryQueueTotalPages],
-  );
   const paginatedPayments = paymentTableQuery.data?.data ?? [];
   const paymentTableTotalPages = paymentTableQuery.data?.totalPages ?? 1;
   const paymentTableRangeStart = paymentTableTotalCount === 0 ? 0 : (paymentTablePage - 1) * paymentTableLimit + 1;
@@ -1369,6 +1439,55 @@ const PaymentsPage = () => {
         .sort(comparePaymentSummaryRisk),
     [data.library?.name, data.library?.upi_id, data.students, paymentsByStudentId, planLookup],
   );
+  const recoveryQueueFallbackData = useMemo(() => {
+    if (isLoading || isError || !isRecoveryQueueViewMissingError(recoveryQueueQuery.error)) {
+      return null;
+    }
+
+    return buildRecoveryQueueFallbackPage({
+      filter: recoveryFilter,
+      limit: recoveryLimit,
+      page: recoveryPage,
+      search: debouncedRecoverySearch,
+      summaries: studentPaymentSummaries,
+    });
+  }, [
+    debouncedRecoverySearch,
+    isError,
+    isLoading,
+    recoveryFilter,
+    recoveryLimit,
+    recoveryPage,
+    recoveryQueueQuery.error,
+    studentPaymentSummaries,
+  ]);
+  const isUsingRecoveryQueueFallback = recoveryQueueFallbackData !== null;
+  const effectiveRecoveryQueueData = recoveryQueueFallbackData ?? recoveryQueueQuery.data ?? null;
+
+  useEffect(() => {
+    if (!isRecoveryQueueViewMissingError(recoveryQueueQuery.error)) {
+      return;
+    }
+
+    console.warn("[payments] recovery queue degraded mode is active because public.recovery_queue is unavailable.", {
+      error: recoveryQueueQuery.error,
+      queryName: "recovery_queue",
+      status: "degraded",
+    });
+  }, [recoveryQueueQuery.error]);
+
+  useEffect(() => {
+    setRecoveryTotalCount(effectiveRecoveryQueueData?.total ?? 0);
+  }, [effectiveRecoveryQueueData?.total]);
+
+  useEffect(() => {
+    if (recoveryPage <= (effectiveRecoveryQueueData?.totalPages ?? 1)) {
+      return;
+    }
+
+    setRecoveryPage(effectiveRecoveryQueueData?.totalPages ?? 1);
+  }, [effectiveRecoveryQueueData?.totalPages, recoveryPage]);
+
   const studentPaymentSummaryById = useMemo(
     () => new Map(studentPaymentSummaries.map((summary) => [summary.studentId, summary])),
     [studentPaymentSummaries],
@@ -1405,6 +1524,15 @@ const PaymentsPage = () => {
   const overdueAiCallBatch = useMemo(
     () => recoveryPriorityQueue.filter((summary) => summary.overdueDays > 0 && hasCallablePhone(summary.phone)).slice(0, 5),
     [recoveryPriorityQueue],
+  );
+  const recoveryQueueRows = effectiveRecoveryQueueData?.data ?? [];
+  const recoveryQueueTotalPages = effectiveRecoveryQueueData?.totalPages ?? 1;
+  const recoveryQueueRangeStart = recoveryTotalCount === 0 ? 0 : (recoveryPage - 1) * recoveryLimit + 1;
+  const recoveryQueueRangeEnd = recoveryTotalCount === 0 ? 0 : Math.min(recoveryPage * recoveryLimit, recoveryTotalCount);
+  const recoveryQueueItemsLabel = recoveryTotalCount === 1 ? "recovery item" : "recovery items";
+  const recoveryQueuePageItems = useMemo(
+    () => buildPageItems(recoveryPage, recoveryQueueTotalPages),
+    [recoveryPage, recoveryQueueTotalPages],
   );
   const aiCallPreviewStudent = aiCallBatch[0] ?? null;
   const aiCallPreviewScript = aiCallPreviewStudent
@@ -2370,9 +2498,14 @@ const PaymentsPage = () => {
   };
 
   const loading = roleLibraryLoading || fallbackLoading || isLoading;
-  const recoveryQueueLoading = recoveryQueueQuery.isLoading;
-  const recoveryQueueError = recoveryQueueQuery.isError;
-  const recoveryQueueUpdating = recoveryQueueQuery.isFetching && !recoveryQueueQuery.isLoading;
+  const recoveryQueueLoading =
+    recoveryQueueQuery.isLoading ||
+    (isRecoveryQueueViewMissingError(recoveryQueueQuery.error) && isLoading && !isUsingRecoveryQueueFallback);
+  const recoveryQueueError = recoveryQueueQuery.isError && !isUsingRecoveryQueueFallback;
+  const recoveryQueueUpdating = recoveryQueueQuery.isFetching && !recoveryQueueQuery.isLoading && !isUsingRecoveryQueueFallback;
+  const recoveryQueueErrorMessage = isRecoveryQueueViewMissingError(recoveryQueueQuery.error)
+    ? "Recovery system not initialized. Contact admin."
+    : getErrorMessage(recoveryQueueQuery.error);
   const paymentTableLoading = paymentTableQuery.isLoading;
   const paymentTableError = paymentTableQuery.isError;
   const paymentTableUpdating = paymentTableQuery.isFetching && !paymentTableQuery.isLoading;
@@ -2903,7 +3036,9 @@ const PaymentsPage = () => {
                     <div>
                       <CardTitle className="text-xl font-display">Recovery Queue</CardTitle>
                       <CardDescription>
-                        Server-side pagination keeps the queue focused on the highest-priority recovery items.
+                        {isUsingRecoveryQueueFallback
+                          ? "Degraded mode: showing a computed fallback from loaded payments because the recovery system is not fully initialized."
+                          : "Server-side pagination keeps the queue focused on the highest-priority recovery items."}
                         {recoveryQueueUpdating ? " Refreshing current page..." : ""}
                       </CardDescription>
                     </div>
@@ -2947,13 +3082,22 @@ const PaymentsPage = () => {
                         {recoveryTotalCount.toLocaleString("en-IN")} matching {recoveryQueueItemsLabel} • {formatInr(totalPendingCollection)} open • {formatInr(recoveryInsights.recoverableNow)} recoverable by calling the top batch now
                       </div>
                     </div>
+                    {isUsingRecoveryQueueFallback ? (
+                      <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+                        <TriangleAlert className="h-4 w-4" />
+                        <AlertTitle>Recovery degraded mode is active</AlertTitle>
+                        <AlertDescription>
+                          Recovery system not initialized. This table is being computed from payments already loaded on this page. Contact admin if this warning persists.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
                   </div>
               </CardHeader>
               <CardContent>
                 {recoveryQueueLoading ? (
                   <p className="py-10 text-center text-sm text-muted-foreground">Loading recovery queue...</p>
                 ) : recoveryQueueError ? (
-                  <p className="py-10 text-center text-sm text-destructive">Unable to load recovery queue: {getErrorMessage(recoveryQueueQuery.error)}</p>
+                  <p className="py-10 text-center text-sm text-destructive">Unable to load recovery queue: {recoveryQueueErrorMessage}</p>
                 ) : recoveryQueueRows.length === 0 ? (
                   <div className="py-12 text-center">
                     <Wallet className="mx-auto mb-3 h-12 w-12 text-muted-foreground/30" />

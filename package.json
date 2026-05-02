@@ -9,7 +9,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:server": "node ./scripts/build-server.mjs",
+    "build:production": "npm run build && npm run build:server",
+    "check:linked-db-health": "node ./scripts/check-linked-database-health.mjs",
+    "check:supabase-migration-safety": "node ./scripts/check-supabase-migration-safety.mjs",
+    "check:schema-sync": "node ./scripts/check-supabase-schema-sync.mjs",
+    "check:supabase-migrations": "node ./scripts/check-supabase-migration-history.mjs",
+    "db:push:linked": "node ./scripts/push-supabase-migrations.mjs",
+    "test": "vitest run --pool forks --poolOptions.forks.singleFork"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

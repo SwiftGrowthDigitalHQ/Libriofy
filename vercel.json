@@ -102,6 +102,10 @@
       "destination": "/api/health/ops"
     },
     {
+      "source": "/health/db",
+      "destination": "/api/health/db"
+    },
+    {
       "source": "/((?!api/|assets/|favicon.ico|robots.txt|sitemap.xml|service-worker.js|manifest.webmanifest|release.json).*)",
       "destination": "/index.html"
     }

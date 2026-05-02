@@ -1,220 +1,23 @@
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
-CREATE TABLE IF NOT EXISTS public.device_commands (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  library_id UUID NOT NULL REFERENCES public.libraries(id) ON DELETE CASCADE,
-  device_id TEXT NOT NULL REFERENCES public.entry_devices(device_id) ON DELETE CASCADE,
-  command_type TEXT NOT NULL,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-  status TEXT NOT NULL DEFAULT 'pending',
-  requested_by UUID REFERENCES auth.users(id),
-  requested_by_role TEXT,
-  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  acknowledged_at TIMESTAMPTZ,
-  completed_at TIMESTAMPTZ,
-  failed_at TIMESTAMPTZ,
-  error_message TEXT,
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT device_commands_type_check CHECK (
-    command_type IN (
-      'disable_device',
-      'force_logout',
-      'restart_scanner',
-      'push_config_update'
-    )
-  ),
-  CONSTRAINT device_commands_status_check CHECK (
-    status IN (
-      'pending',
-      'acknowledged',
-      'completed',
-      'failed',
-      'cancelled'
-    )
-  )
-);
-
-CREATE INDEX IF NOT EXISTS idx_device_commands_library_requested_at
-  ON public.device_commands(library_id, requested_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_device_commands_library_device_status
-  ON public.device_commands(library_id, device_id, status, requested_at DESC);
-
-ALTER TABLE public.device_commands ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Library teams can manage own device commands" ON public.device_commands;
-CREATE POLICY "Library teams can manage own device commands"
-  ON public.device_commands
-  FOR ALL
-  TO authenticated
-  USING (public.can_access_library(auth.uid(), library_id))
-  WITH CHECK (public.can_access_library(auth.uid(), library_id));
-
-DROP POLICY IF EXISTS "Super admins can manage device commands" ON public.device_commands;
-CREATE POLICY "Super admins can manage device commands"
-  ON public.device_commands
-  FOR ALL
-  TO authenticated
-  USING (public.has_role(auth.uid(), 'super_admin'))
-  WITH CHECK (public.has_role(auth.uid(), 'super_admin'));
-
-DROP TRIGGER IF EXISTS update_device_commands_updated_at ON public.device_commands;
-CREATE TRIGGER update_device_commands_updated_at
-  BEFORE UPDATE ON public.device_commands
-  FOR EACH ROW
-  EXECUTE FUNCTION public.update_updated_at_column();
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.device_commands TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.device_commands TO service_role;
-
-CREATE OR REPLACE FUNCTION public.issue_device_command(
-  p_library_id UUID,
-  p_device_id TEXT,
-  p_command_type TEXT,
-  p_payload JSONB DEFAULT '{}'::jsonb
-)
-RETURNS public.device_commands
+CREATE OR REPLACE FUNCTION public.generate_library_access_key_value()
+RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_device RECORD;
-  v_requested_by_role TEXT;
-  v_now TIMESTAMPTZ := now();
-  v_status TEXT;
-  v_command public.device_commands;
-  v_command_payload JSONB := COALESCE(p_payload, '{}'::jsonb);
-  v_device_control JSONB;
+  v_alphabet CONSTANT TEXT := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  v_key TEXT := 'LIB-';
+  v_bytes BYTEA := extensions.gen_random_bytes(6);
+  v_index INTEGER;
 BEGIN
-  IF p_library_id IS NULL OR btrim(COALESCE(p_device_id, '')) = '' OR btrim(COALESCE(p_command_type, '')) = '' THEN
-    RAISE EXCEPTION 'library_id, device_id, and command_type are required';
-  END IF;
+  FOR v_index IN 0..5 LOOP
+    v_key := v_key || substr(v_alphabet, (get_byte(v_bytes, v_index) % length(v_alphabet)) + 1, 1);
+  END LOOP;
 
-  IF COALESCE(auth.role(), '') <> 'service_role' AND NOT public.can_access_library(auth.uid(), p_library_id) THEN
-    RAISE EXCEPTION 'Not authorized to control this library';
-  END IF;
-
-  SELECT
-    id,
-    library_id,
-    device_name,
-    is_active,
-    metadata
-  INTO v_device
-  FROM public.entry_devices
-  WHERE library_id = p_library_id
-    AND device_id = btrim(p_device_id)
-  LIMIT 1;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Device not found';
-  END IF;
-
-  CASE btrim(p_command_type)
-    WHEN 'disable_device' THEN
-      v_status := 'disabled';
-    WHEN 'force_logout' THEN
-      v_status := 'logout_required';
-    WHEN 'restart_scanner' THEN
-      v_status := 'restart_requested';
-    WHEN 'push_config_update' THEN
-      v_status := 'config_update_requested';
-    ELSE
-      RAISE EXCEPTION 'Unsupported device command type';
-  END CASE;
-
-  IF EXISTS (
-    SELECT 1
-    FROM public.libraries l
-    WHERE l.id = p_library_id
-      AND l.owner_id = auth.uid()
-  ) THEN
-    v_requested_by_role := 'library_owner';
-  ELSIF EXISTS (
-    SELECT 1
-    FROM public.user_roles ur
-    WHERE ur.user_id = auth.uid()
-      AND ur.library_id = p_library_id
-      AND ur.role = 'staff'
-  ) THEN
-    v_requested_by_role := 'staff';
-  ELSIF public.has_role(auth.uid(), 'super_admin') THEN
-    v_requested_by_role := 'super_admin';
-  END IF;
-
-  INSERT INTO public.device_commands (
-    library_id,
-    device_id,
-    command_type,
-    payload,
-    status,
-    requested_by,
-    requested_by_role,
-    requested_at,
-    acknowledged_at,
-    completed_at,
-    failed_at,
-    error_message,
-    metadata
-  )
-  VALUES (
-    p_library_id,
-    btrim(p_device_id),
-    btrim(p_command_type),
-    v_command_payload,
-    'pending',
-    auth.uid(),
-    v_requested_by_role,
-    v_now,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    jsonb_build_object(
-      'command_state',
-      v_status
-    )
-  )
-  RETURNING * INTO v_command;
-
-  v_device_control := COALESCE(v_device.metadata->'device_control', '{}'::jsonb) || jsonb_build_object(
-    'status', v_status,
-    'current_command_id', v_command.id::text,
-    'current_command_type', v_command.command_type,
-    'current_command_status', 'pending',
-    'current_command_requested_at', v_now,
-    'current_command_error', NULL,
-    'last_command_id', v_command.id::text,
-    'last_command_type', v_command.command_type,
-    'last_command_status', 'pending',
-    'last_command_at', v_now
-  );
-
-  IF v_command.command_type = 'disable_device' THEN
-    UPDATE public.entry_devices
-    SET
-      is_active = false,
-      metadata = jsonb_set(
-        COALESCE(metadata, '{}'::jsonb),
-        '{device_control}',
-        v_device_control,
-        true
-      )
-    WHERE id = v_device.id;
-  ELSE
-    UPDATE public.entry_devices
-    SET metadata = jsonb_set(
-      COALESCE(metadata, '{}'::jsonb),
-      '{device_control}',
-      v_device_control,
-      true
-    )
-    WHERE id = v_device.id;
-  END IF;
-
-  RETURN v_command;
+  RETURN v_key;
 END;
 $$;
 
@@ -444,12 +247,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.issue_device_command(UUID, TEXT, TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.pull_device_commands(UUID, TEXT, TEXT, TEXT, INTEGER) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.record_device_command_status(UUID, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, JSONB) FROM PUBLIC;
-
-GRANT EXECUTE ON FUNCTION public.issue_device_command(UUID, TEXT, TEXT, JSONB) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.issue_device_command(UUID, TEXT, TEXT, JSONB) TO service_role;
 
 GRANT EXECUTE ON FUNCTION public.pull_device_commands(UUID, TEXT, TEXT, TEXT, INTEGER) TO anon;
 GRANT EXECUTE ON FUNCTION public.pull_device_commands(UUID, TEXT, TEXT, TEXT, INTEGER) TO authenticated;
@@ -458,3 +257,166 @@ GRANT EXECUTE ON FUNCTION public.pull_device_commands(UUID, TEXT, TEXT, TEXT, IN
 GRANT EXECUTE ON FUNCTION public.record_device_command_status(UUID, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, JSONB) TO anon;
 GRANT EXECUTE ON FUNCTION public.record_device_command_status(UUID, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.record_device_command_status(UUID, TEXT, TEXT, TEXT, UUID, TEXT, TEXT, JSONB) TO service_role;
+
+DROP VIEW IF EXISTS public.subscriptions;
+
+CREATE VIEW public.subscriptions AS
+SELECT
+  s.id,
+  s.library_id,
+  s.plan_name AS plan,
+  s.plan_type,
+  COALESCE(s.plan_price, s.price) AS price,
+  COALESCE(s.plan_price, s.price) AS plan_price,
+  s.seats_limit AS seat_limit,
+  s.status,
+  s.started_at,
+  s.expires_at,
+  s.created_at,
+  s.updated_at,
+  s.payment_status,
+  s.trial_start_date,
+  s.trial_end_date,
+  s.plan_start_date,
+  s.plan_expiry_date,
+  s.whatsapp_enabled,
+  s.ai_call_enabled
+FROM public.library_subscriptions s;
+
+GRANT SELECT ON public.subscriptions TO authenticated;
+GRANT SELECT ON public.subscriptions TO service_role;
+
+DROP VIEW IF EXISTS public.recovery_queue;
+
+CREATE VIEW public.recovery_queue
+WITH (security_invoker = true) AS
+WITH plan_price_stats AS (
+  SELECT
+    library_id,
+    avg(price)::numeric AS average_price
+  FROM public.plans
+  WHERE is_active = true
+  GROUP BY library_id
+),
+latest_period_end AS (
+  SELECT DISTINCT ON (student_id)
+    student_id,
+    period_end
+  FROM public.payments
+  WHERE period_end IS NOT NULL
+  ORDER BY student_id, created_at DESC, id DESC
+),
+payment_agg AS (
+  SELECT
+    student_id,
+    coalesce(
+      sum(
+        CASE
+          WHEN lower(coalesce(status, '')) IN ('approved', 'captured', 'completed', 'paid', 'success')
+            THEN amount
+          ELSE 0
+        END
+      ),
+      0
+    )::numeric AS amount_paid,
+    count(*) FILTER (
+      WHERE lower(coalesce(status, '')) IN ('approved', 'captured', 'completed', 'paid', 'success')
+    )::integer AS successful_payment_count,
+    max(created_at) FILTER (
+      WHERE lower(coalesce(status, '')) IN ('approved', 'captured', 'completed', 'paid', 'success')
+    ) AS last_payment_date
+  FROM public.payments
+  GROUP BY student_id
+),
+student_financials AS (
+  SELECT
+    s.library_id,
+    s.id AS student_id,
+    s.full_name AS student_name,
+    s.phone,
+    s.seat_number,
+    coalesce(p.name, s.plan, 'Plan') AS plan_name,
+    s.slot AS slot_label,
+    coalesce(p.price, plan_price_stats.average_price, 0)::numeric AS total_fees,
+    coalesce(payment_agg.amount_paid, 0)::numeric AS amount_paid,
+    greatest(
+      coalesce(p.price, plan_price_stats.average_price, 0)::numeric - coalesce(payment_agg.amount_paid, 0)::numeric,
+      0
+    )::numeric AS amount_due,
+    coalesce(latest_period_end.period_end, s.expiry_date, s.start_date) AS due_date,
+    coalesce(payment_agg.successful_payment_count, 0)::integer AS successful_payment_count,
+    payment_agg.last_payment_date
+  FROM public.students s
+  LEFT JOIN public.plans p
+    ON p.id = s.plan_id
+  LEFT JOIN plan_price_stats
+    ON plan_price_stats.library_id = s.library_id
+  LEFT JOIN payment_agg
+    ON payment_agg.student_id = s.id
+  LEFT JOIN latest_period_end
+    ON latest_period_end.student_id = s.id
+)
+SELECT
+  student_financials.library_id,
+  student_financials.student_id,
+  student_financials.student_name,
+  student_financials.phone,
+  student_financials.seat_number,
+  student_financials.plan_name,
+  student_financials.slot_label,
+  student_financials.total_fees,
+  student_financials.amount_paid,
+  student_financials.amount_due,
+  student_financials.due_date,
+  CASE
+    WHEN student_financials.amount_due > 0 AND student_financials.due_date IS NOT NULL
+      THEN greatest((current_date - student_financials.due_date::date), 0)
+    ELSE 0
+  END::integer AS overdue_days,
+  CASE
+    WHEN student_financials.amount_due <= 0 THEN 'paid'
+    WHEN student_financials.due_date IS NOT NULL AND student_financials.due_date::date < current_date THEN 'overdue'
+    ELSE 'pending'
+  END AS queue_status,
+  CASE
+    WHEN student_financials.amount_due <= 0 THEN 'Paid'
+    WHEN student_financials.due_date IS NOT NULL AND student_financials.due_date::date < current_date THEN
+      CASE
+        WHEN greatest((current_date - student_financials.due_date::date), 0) >= 7 THEN 'Seat cancellation warning'
+        WHEN greatest((current_date - student_financials.due_date::date), 0) >= 5 THEN 'Call alert'
+        WHEN greatest((current_date - student_financials.due_date::date), 0) >= 2 THEN 'Follow-up reminder'
+        ELSE 'WhatsApp reminder'
+      END
+    ELSE 'Upcoming follow-up'
+  END AS recovery_urgency_label,
+  student_financials.successful_payment_count,
+  student_financials.last_payment_date
+FROM student_financials;
+
+GRANT SELECT ON public.recovery_queue TO authenticated;
+GRANT SELECT ON public.recovery_queue TO service_role;
+
+CREATE OR REPLACE FUNCTION public.get_schema_entity_status(p_entities TEXT[])
+RETURNS TABLE (
+  entity_name TEXT,
+  exists_in_schema BOOLEAN,
+  relation_name TEXT
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+  WITH requested_entities AS (
+    SELECT trim(entity_name) AS entity_name
+    FROM unnest(COALESCE(p_entities, ARRAY[]::TEXT[])) AS entity_name
+    WHERE trim(entity_name) <> ''
+  )
+  SELECT
+    requested_entities.entity_name,
+    to_regclass(format('public.%I', requested_entities.entity_name)) IS NOT NULL AS exists_in_schema,
+    to_regclass(format('public.%I', requested_entities.entity_name))::TEXT AS relation_name
+  FROM requested_entities;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_schema_entity_status(TEXT[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_schema_entity_status(TEXT[]) TO service_role;

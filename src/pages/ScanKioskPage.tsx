@@ -1268,15 +1268,18 @@ const ScanKioskPage = () => {
 
   useEffect(() => {
     const previousTitle = document.title;
+    const rootElement = document.documentElement;
     const themeMeta = document.querySelector('meta[name="theme-color"]');
     const previousThemeColor = themeMeta?.getAttribute("content");
 
     document.title = "Libriofy Access Gate";
+    rootElement.classList.add("kiosk-mode");
     document.body.classList.add("kiosk-mode");
     themeMeta?.setAttribute("content", "#030816");
 
     return () => {
       document.title = previousTitle;
+      rootElement.classList.remove("kiosk-mode");
       document.body.classList.remove("kiosk-mode");
 
       if (previousThemeColor) {
@@ -1777,7 +1780,7 @@ const ScanKioskPage = () => {
 
       <div className="relative z-10 flex min-h-screen w-full flex-col px-2 py-2 sm:px-3 sm:py-3 lg:px-3.5 lg:py-3.5 xl:px-4">
         <div
-          className="scan-dashboard-shell flex min-h-[calc(100dvh-1.5rem)] w-full flex-col overflow-hidden rounded-[28px] border bg-[rgba(3,9,18,0.9)] shadow-[0_32px_140px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl"
+          className="scan-dashboard-shell flex min-h-[calc(100dvh-1.5rem)] w-full flex-col rounded-[28px] border bg-[rgba(3,9,18,0.9)] shadow-[0_32px_140px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl"
           style={{ borderColor: shellBorder }}
         >
           <header className="grid gap-3 border-b border-cyan-400/14 px-4 py-3 sm:px-5 sm:py-3.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center lg:grid-cols-[minmax(0,1.1fr)_auto_auto_minmax(0,0.78fr)] lg:gap-3.5 xl:gap-4 xl:px-6 xl:py-4">
@@ -1856,7 +1859,7 @@ const ScanKioskPage = () => {
           </header>
 
           <div className="scan-dashboard-main flex-1 px-3 py-2.5 sm:px-3.5 sm:py-3 xl:px-4 xl:py-3.5">
-            <div className="scan-dashboard-top grid grid-cols-1 items-start gap-4 xl:gap-5">
+            <div className="scan-dashboard-top main-layout items-start">
               <section
                 className="scan-dashboard-primary flex min-h-0 min-w-0 flex-col rounded-[28px] p-4 sm:p-4 xl:p-5"
                 style={{
@@ -1918,16 +1921,22 @@ const ScanKioskPage = () => {
                 <div className="scan-dashboard-scanner-wrap mt-4 flex w-full justify-center sm:mt-5">
                   <div className="scan-dashboard-frame-wrap relative w-full">
                     <div
-                      className="scan-dashboard-scanner-shell relative overflow-hidden rounded-[24px] border"
+                      className="scan-dashboard-scanner-shell scanner relative rounded-[24px] border"
                       style={{
                         background: "linear-gradient(180deg, rgba(4,14,27,0.95), rgba(2,9,18,0.98))",
                         border: "1px solid rgba(56, 189, 248, 0.18)",
                         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 24px 80px rgba(0,0,0,0.34)",
                       }}
                     >
-                      <div className="scan-dashboard-frame scanner-container relative h-full w-full overflow-hidden rounded-[22px] border border-cyan-400/12 bg-[#020913]">
-                        <div className="absolute inset-0 z-[1] bg-[radial-gradient(circle_at_center,rgba(37,99,235,0.2),transparent_44%),linear-gradient(180deg,rgba(3,10,20,0.96),rgba(2,7,15,0.98))]" />
-                        <div className="absolute inset-0 z-[2] opacity-20 [background-image:linear-gradient(rgba(34,211,238,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.14)_1px,transparent_1px)] [background-size:44px_44px]" />
+                      <div className="scan-dashboard-frame scanner-container relative aspect-square w-full rounded-[22px] border border-cyan-400/12 bg-[#020913]">
+                        <div
+                          className="absolute inset-0 z-[1] bg-[radial-gradient(circle_at_center,rgba(37,99,235,0.2),transparent_44%),linear-gradient(180deg,rgba(3,10,20,0.96),rgba(2,7,15,0.98))]"
+                          style={{ borderRadius: "inherit" }}
+                        />
+                        <div
+                          className="absolute inset-0 z-[2] opacity-20 [background-image:linear-gradient(rgba(34,211,238,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.14)_1px,transparent_1px)] [background-size:44px_44px]"
+                          style={{ borderRadius: "inherit" }}
+                        />
 
                         <video
                           id="camera-feed"
@@ -1939,19 +1948,29 @@ const ScanKioskPage = () => {
                           )}
                           muted
                           playsInline
+                          style={{ borderRadius: "inherit" }}
                         />
 
-                        <div className="absolute inset-0 z-[4] bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.16),transparent_46%)] mix-blend-screen" />
+                        <div
+                          className="absolute inset-0 z-[4] bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.16),transparent_46%)] mix-blend-screen"
+                          style={{ borderRadius: "inherit" }}
+                        />
 
                         {!cameraLive ? (
-                          <div className="absolute inset-0 z-[5] grid place-items-center bg-[radial-gradient(circle_at_top,rgba(10,38,58,0.68),rgba(2,9,18,0.98))]">
+                          <div
+                            className="absolute inset-0 z-[5] grid place-items-center bg-[radial-gradient(circle_at_top,rgba(10,38,58,0.68),rgba(2,9,18,0.98))]"
+                            style={{ borderRadius: "inherit" }}
+                          >
                             <div className="rounded-full border border-cyan-400/18 bg-[#04111d]/90 px-6 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100 shadow-[0_10px_40px_rgba(0,0,0,0.32)]">
                               {scannerFeedbackLabel}
                             </div>
                           </div>
                         ) : null}
 
-                        <div className="scan-overlay pointer-events-none absolute inset-0 z-[6]">
+                        <div
+                          className="scan-overlay pointer-events-none absolute inset-0 z-[6]"
+                          style={{ borderRadius: "inherit" }}
+                        >
                           <div className="scan-dashboard-focus-frame absolute bg-transparent">
                             <div
                               className={cn(
@@ -2000,7 +2019,7 @@ const ScanKioskPage = () => {
                 </p>
               </section>
 
-              <div className="scan-dashboard-side hidden min-w-0 gap-4 sm:grid md:grid-cols-2 lg:flex lg:flex-col xl:gap-4">
+              <div className="scan-dashboard-side right-panel min-w-0">
                 <section
                   className="scan-dashboard-side-card scan-dashboard-side-status rounded-[28px] p-3.5 sm:p-4 md:col-span-2 lg:col-span-1"
                   style={{
@@ -2244,12 +2263,12 @@ const ScanKioskPage = () => {
                 </motion.div>
               </div>
 
-              <div className="scan-dashboard-activity-rail mt-5 grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3.5 lg:flex lg:flex-nowrap lg:gap-3">
+              <div className="scan-dashboard-activity-rail mt-5 grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3.5">
                 {liveActivityItems.map((item) => (
                   <div
                     key={item.id}
                     className={cn(
-                      "scan-dashboard-activity-card h-full rounded-[22px] border px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] lg:min-w-[260px] lg:max-w-[260px] lg:flex-none",
+                      "scan-dashboard-activity-card h-full rounded-[22px] border px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
                       item.tone === "danger"
                         ? "border-rose-400/14 bg-[linear-gradient(180deg,rgba(47,12,24,0.65),rgba(17,7,14,0.92))]"
                         : item.tone === "info"

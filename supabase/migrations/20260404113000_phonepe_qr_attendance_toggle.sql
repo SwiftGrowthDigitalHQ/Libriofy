@@ -2,7 +2,7 @@ CREATE OR REPLACE FUNCTION public.process_attendance_scan(
   p_failure_route TEXT,
   p_student_id UUID DEFAULT NULL,
   p_qr_code TEXT DEFAULT NULL,
-  p_library_id UUID,
+  p_library_id UUID DEFAULT NULL,
   p_device_id TEXT DEFAULT NULL,
   p_entry_id TEXT DEFAULT NULL,
   p_entry_timestamp TIMESTAMPTZ DEFAULT now()
@@ -429,7 +429,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.qr_check_in(
   p_student_id UUID DEFAULT NULL,
   p_qr_code TEXT DEFAULT NULL,
-  p_library_id UUID,
+  p_library_id UUID DEFAULT NULL,
   p_device_id TEXT DEFAULT NULL,
   p_entry_id TEXT DEFAULT NULL,
   p_entry_timestamp TIMESTAMPTZ DEFAULT now()
@@ -455,7 +455,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.scan_attendance_entry(
   p_student_id UUID DEFAULT NULL,
   p_qr_code TEXT DEFAULT NULL,
-  p_library_id UUID,
+  p_library_id UUID DEFAULT NULL,
   p_device_id TEXT DEFAULT NULL,
   p_entry_id TEXT DEFAULT NULL,
   p_entry_timestamp TIMESTAMPTZ DEFAULT now()

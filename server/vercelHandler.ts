@@ -7,6 +7,7 @@ import { extractClientIp, extractUserAgent, normalizeParsedRequestBody } from ".
 import { parseBooleanSetting } from "../src/lib/maintenance.js";
 import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
+import { createInstrumentedServerSupabaseFetch } from "../src/lib/observability/serverSupabaseFetch.js";
 import {
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
@@ -164,6 +165,9 @@ const createServiceClient = () => {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("serverless_attendance"),
     },
   });
 };

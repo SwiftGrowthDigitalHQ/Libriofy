@@ -33,6 +33,7 @@ import {
   type SuperAdminVerifyOtpResponse,
   type VerifyOtpResponse,
 } from "./auth.shared.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
 type EnvLike = Record<string, string | undefined>;
@@ -203,6 +204,9 @@ const createServiceClient = (env: EnvLike) => {
       autoRefreshToken: false,
       persistSession: false,
     },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("otp_auth_service"),
+    },
   });
 };
 
@@ -218,6 +222,9 @@ const createAnonClient = (env: EnvLike) => {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: createInstrumentedServerSupabaseFetch("otp_auth_anon"),
     },
   });
 };
