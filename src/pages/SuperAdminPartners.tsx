@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { BarChart3, Link2, Search, Settings2, Users2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { getPublicAppBaseUrl } from "@/lib/publicAppUrl";
 
 type PartnerDashboardRow = {
   affiliate_id: string;
@@ -107,9 +108,9 @@ const SuperAdminPartners = () => {
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
     const port = window.location.port ? `:${window.location.port}` : "";
-    if (hostname === "partner.libriofy.com") return "https://libriofy.com";
+    if (hostname === "partner.libriofy.com") return getPublicAppBaseUrl();
     if (hostname === "partner.localhost") return `${protocol}//localhost${port}`;
-    return `${protocol}//${hostname}${port}`;
+    return getPublicAppBaseUrl() || `${protocol}//${hostname}${port}`;
   }, []);
 
   const toggleActiveMutation = useMutation({

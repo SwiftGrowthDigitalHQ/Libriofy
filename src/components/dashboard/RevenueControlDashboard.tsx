@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { buildPublicAppUrl } from "@/lib/publicAppUrl";
 import { cn } from "@/lib/utils";
 
 type MetricTone = "success" | "warning" | "danger" | "info" | "neutral";
@@ -390,7 +391,7 @@ const RevenueControlDashboard = ({
     }));
   };
 
-  const admissionLink = typeof window !== "undefined" ? `${window.location.origin}/signup` : "/signup";
+  const admissionLink = buildPublicAppUrl("/signup");
   const seatFillWhatsAppMessage = `We have ${emptySeats} focused study seat${emptySeats === 1 ? "" : "s"} open right now. Monthly plans are available and admissions are active today. Reply if you want the joining link.`;
   const posterBrief = `Create a marketing poster for a premium study library. Highlight ${emptySeats} vacant seats, quiet environment, high-focus setup, and urgent admission CTA.`;
 

@@ -34,6 +34,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
+import { buildPublicAppUrl } from "@/lib/publicAppUrl";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_PAGE_SIZE: RenewalPageSize = 20;
@@ -558,7 +559,7 @@ const RenewalsPage = () => {
   };
 
   const copyRenewalLink = async (student: StudentRenewalRow) => {
-    const renewalUrl = `${window.location.origin}/renew/${student.qr_code}`;
+    const renewalUrl = buildPublicAppUrl(`/renew/${student.qr_code}`);
 
     try {
       await navigator.clipboard.writeText(renewalUrl);

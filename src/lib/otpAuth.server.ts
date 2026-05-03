@@ -236,7 +236,8 @@ const createAnonClient = (env: EnvLike) => {
 };
 
 const resolvePublicAppUrl = (env: EnvLike) =>
-  readEnv(env, "PUBLIC_APP_URL", "APP_URL", "SITE_URL", "VITE_PUBLIC_APP_URL", "VITE_APP_URL") || "http://localhost:8080";
+  readEnv(env, "PUBLIC_APP_URL", "APP_URL", "SITE_URL", "NEXT_PUBLIC_SITE_URL", "VITE_PUBLIC_APP_URL", "VITE_APP_URL") ||
+  "https://www.libriofy.com";
 
 const resolveWebOtpHost = (env: EnvLike) => {
   try {

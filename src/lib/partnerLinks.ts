@@ -1,9 +1,6 @@
-export const getPublicAppBaseUrl = () => {
-  const envUrl = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
-  if (envUrl) return envUrl.replace(/\/+$/, "");
+import { getPublicAppBaseUrl } from "@/lib/publicAppUrl";
 
-  return "https://libriofy.com";
-};
+export { getPublicAppBaseUrl };
 
 export const getReferralLink = (code: string) => {
   if (!code) return "";

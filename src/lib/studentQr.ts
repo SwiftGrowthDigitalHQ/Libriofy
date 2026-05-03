@@ -1,3 +1,5 @@
+import { getPublicAppBaseUrl, isPreviewAppUrl } from "@/lib/publicAppUrl";
+
 const JWT_ALG = "RS256" as const;
 const WEB_CRYPTO_RSA_ALG = "RSASSA-PKCS1-v1_5" as const;
 const JWT_TYP = "JWT" as const;
@@ -379,7 +381,11 @@ export const buildStudentQrRouteValue = ({
   qrCode?: string | null;
   compactSignedToken?: boolean;
 }) => {
-  const normalizedOrigin = trimText(origin) || (typeof window !== "undefined" ? window.location.origin : "");
+  const requestedOrigin = trimText(origin);
+  const normalizedOrigin =
+    requestedOrigin && !isPreviewAppUrl(requestedOrigin)
+      ? requestedOrigin
+      : getPublicAppBaseUrl();
   const token = trimText(signedToken);
   const studentIdentifier = trimText(studentId);
   const legacyCode = trimText(qrCode);

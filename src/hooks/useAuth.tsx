@@ -28,6 +28,7 @@ import {
   type VerifyOtpResponse,
 } from "@/lib/auth.shared";
 import { normalizeBasePath } from "@/lib/maintenance";
+import { getPublicAppBaseUrl } from "@/lib/publicAppUrl";
 import { supabase, supabaseAuth } from "@/integrations/supabase/client";
 
 interface AuthContextType {
@@ -79,7 +80,7 @@ const toAuthUserFromSupabaseSession = (session: Session): AuthUser => ({
 });
 
 const buildAppRedirectUrl = (route: string) => {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const origin = getPublicAppBaseUrl();
   const basePath = normalizeBasePath(import.meta.env.BASE_URL);
   const normalizedRoute = route.startsWith("/") ? route : `/${route}`;
   const resolvedBasePath = basePath === "/" ? "" : basePath;
@@ -453,7 +454,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           referral_code: options?.referralCode ?? null,
           upi_id: options?.partnerProfile?.upiId ?? null,
         },
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: buildAppRedirectUrl("/"),
       },
     });
 

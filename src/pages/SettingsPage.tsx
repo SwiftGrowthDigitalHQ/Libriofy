@@ -34,6 +34,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { syncLockerCapacity } from "@/api/lockers";
 import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
+import { buildPublicAppUrl } from "@/lib/publicAppUrl";
 import {
   formatLockerLimit,
   formatSeatLimit,
@@ -324,7 +325,7 @@ const DomainRequestCard = ({ library }: { library: any }) => {
   const queryClient = useQueryClient();
   const [domain, setDomain] = useState("");
 
-  const publicUrl = library?.slug ? `${window.location.origin}/library/${library.slug}` : "";
+  const publicUrl = library?.slug ? buildPublicAppUrl(`/library/${library.slug}`) : "";
 
   const { data: requests = [] } = useQuery({
     queryKey: ["domain-requests", library?.id],

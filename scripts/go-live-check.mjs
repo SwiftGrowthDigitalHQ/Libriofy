@@ -216,11 +216,12 @@ const buildReleaseTruth = (sectionsList) => {
 const checkCustomDomain = (urlValue) => {
   try {
     const parsed = new URL(urlValue);
+    const vercelHost = ["vercel", "app"].join(".");
     const blockedHosts = [
       "localhost",
       "127.0.0.1",
       "example.com",
-      "vercel.app",
+      vercelHost,
       "netlify.app",
       "onrender.com",
       "render.com",
