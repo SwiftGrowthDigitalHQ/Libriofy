@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { blockIfMaintenanceMode } from "../_shared/maintenance.ts";
+import { logEdgeEvent, sendEdgeAdminAlert } from "../_shared/observability.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const corsHeaders = {
@@ -73,6 +74,14 @@ serve(async (req) => {
   }
   const maintenanceBlocked = await blockIfMaintenanceMode(corsHeaders);
   if (maintenanceBlocked) return maintenanceBlocked;
+  let observabilitySupabase: ReturnType<typeof createClient> | null = null;
+  let observabilityUser = "anonymous";
+  let requestLibraryId = "";
+  let requestOrderId = "";
+  let requestPaymentId = "";
+  let observabilityMetadata: Record<string, unknown> = {
+    source: "verify_payment_edge",
+  };
 
   try {
     const authHeader = req.headers.get("Authorization");
@@ -90,6 +99,15 @@ serve(async (req) => {
       razorpay_payment_id,
       razorpay_signature,
     } = await req.json();
+    requestLibraryId = libraryId ? String(libraryId) : "";
+    requestOrderId = razorpay_order_id ? String(razorpay_order_id) : "";
+    requestPaymentId = razorpay_payment_id ? String(razorpay_payment_id) : "";
+    observabilityMetadata = {
+      libraryId: requestLibraryId || null,
+      orderId: requestOrderId || null,
+      paymentId: requestPaymentId || null,
+      source: "verify_payment_edge",
+    };
 
     if (!libraryId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       return new Response(JSON.stringify({ error: "Missing required payment fields" }), {
@@ -102,11 +120,18 @@ serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const razorpaySecret = Deno.env.get("RAZORPAY_KEY_SECRET")!;
     const supabase = createClient(supabaseUrl, serviceRoleKey);
+    observabilitySupabase = supabase;
 
     const { data: authData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !authData.user) throw new Error("Unauthorized");
+    if (authError || !authData.user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const userId = authData.user.id;
+    observabilityUser = `user:${userId}`;
     const { data: roleData, error: roleError } = await supabase
       .from("user_roles")
       .select("role, library_id")
@@ -122,12 +147,49 @@ serve(async (req) => {
       });
     }
 
+    await logEdgeEvent(supabase, {
+      type: "PAYMENT_SUCCESS",
+      status: "START",
+      user: observabilityUser,
+      entityId: String(razorpay_order_id),
+      metadata: {
+        ...observabilityMetadata,
+        severity: "INFO",
+        stage: "verification",
+      },
+      message: "Payment verification started.",
+    });
+
     const expectedSignature = await signHmacSha256(
       razorpaySecret,
       `${razorpay_order_id}|${razorpay_payment_id}`,
     );
 
     if (expectedSignature !== razorpay_signature) {
+      await Promise.allSettled([
+        logEdgeEvent(supabase, {
+          type: "PAYMENT_FAILED",
+          status: "FAILED",
+          user: observabilityUser,
+          entityId: String(razorpay_order_id),
+          metadata: {
+            ...observabilityMetadata,
+            severity: "CRITICAL",
+            stage: "signature_validation",
+          },
+          message: "Invalid payment signature",
+        }),
+        sendEdgeAdminAlert({
+          type: "PAYMENT_FAILED",
+          severity: "CRITICAL",
+          user: observabilityUser,
+          message: "Invalid payment signature",
+          metadata: {
+            ...observabilityMetadata,
+            stage: "signature_validation",
+          },
+        }),
+      ]);
       return new Response(JSON.stringify({ error: "Invalid payment signature" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -172,6 +234,21 @@ serve(async (req) => {
       if (paymentIdUpdateError) throw paymentIdUpdateError;
 
       const existingExpiry = subscriptionRow.plan_expiry_date ?? subscriptionRow.expires_at;
+      await logEdgeEvent(supabase, {
+        type: "PAYMENT_SUCCESS",
+        status: "SUCCESS",
+        user: observabilityUser,
+        entityId: String(razorpay_payment_id),
+        metadata: {
+          ...observabilityMetadata,
+          amount: payment.amount,
+          planCode,
+          planName: planNameFromMeta,
+          severity: "INFO",
+          stage: "already_captured",
+        },
+        message: "Payment had already been captured before verification completed.",
+      });
       return new Response(
         JSON.stringify({
           success: true,
@@ -372,6 +449,22 @@ serve(async (req) => {
       }
     }
 
+    await logEdgeEvent(supabase, {
+      type: "PAYMENT_SUCCESS",
+      status: "SUCCESS",
+      user: observabilityUser,
+      entityId: String(razorpay_payment_id),
+      metadata: {
+        ...observabilityMetadata,
+        amount: payment.amount,
+        planCode,
+        planName: planNameFromMeta,
+        severity: "INFO",
+        stage: "verification",
+      },
+      message: "Payment verified and subscription activated.",
+    });
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -387,7 +480,34 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    const message = error instanceof Error ? error.message : String(error);
+    if (observabilitySupabase) {
+      await Promise.allSettled([
+        logEdgeEvent(observabilitySupabase, {
+          type: "PAYMENT_FAILED",
+          status: "FAILED",
+          user: observabilityUser,
+          entityId: requestPaymentId || requestOrderId || requestLibraryId,
+          metadata: {
+            ...observabilityMetadata,
+            severity: "CRITICAL",
+            stage: "unexpected_exception",
+          },
+          message,
+        }),
+        sendEdgeAdminAlert({
+          type: "PAYMENT_FAILED",
+          severity: "CRITICAL",
+          user: observabilityUser,
+          message,
+          metadata: {
+            ...observabilityMetadata,
+            stage: "unexpected_exception",
+          },
+        }),
+      ]);
+    }
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

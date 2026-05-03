@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { blockIfMaintenanceMode } from "../_shared/maintenance.ts";
+import { logEdgeEvent, sendEdgeAdminAlert } from "../_shared/observability.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const corsHeaders = {
@@ -136,6 +137,12 @@ serve(async (req) => {
   }
   const maintenanceBlocked = await blockIfMaintenanceMode(corsHeaders);
   if (maintenanceBlocked) return maintenanceBlocked;
+  let observabilitySupabase: ReturnType<typeof createClient> | null = null;
+  let observabilityUser = "anonymous";
+  let observabilityEntityId: string | null = null;
+  let observabilityMetadata: Record<string, unknown> = {
+    source: "create_payment_edge",
+  };
 
   try {
     if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -151,6 +158,13 @@ serve(async (req) => {
     const months = clampInt(body?.months, 1, 12, 1);
     const planCodeInput = normalizePlanCode(body?.planName ?? body?.plan);
     const couponCodeInput = normalizeCouponCode(body?.couponCode);
+    observabilityEntityId = libraryIdInput || null;
+    observabilityMetadata = {
+      couponCode: couponCodeInput || null,
+      months,
+      planCode: planCodeInput || null,
+      source: "create_payment_edge",
+    };
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -164,7 +178,34 @@ serve(async (req) => {
       );
     }
 
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    observabilitySupabase = supabase;
+
     if (!razorpayKeyId || !razorpaySecret) {
+      await Promise.allSettled([
+        logEdgeEvent(supabase, {
+          type: "PAYMENT_FAILED",
+          status: "FAILED",
+          user: observabilityUser,
+          entityId: observabilityEntityId,
+          metadata: {
+            ...observabilityMetadata,
+            severity: "CRITICAL",
+            stage: "configuration",
+          },
+          message: "Razorpay secrets missing",
+        }),
+        sendEdgeAdminAlert({
+          type: "PAYMENT_FAILED",
+          severity: "CRITICAL",
+          user: observabilityUser,
+          message: "Razorpay secrets missing",
+          metadata: {
+            ...observabilityMetadata,
+            stage: "configuration",
+          },
+        }),
+      ]);
       return json(
         {
           error: "Razorpay secrets missing",
@@ -174,12 +215,13 @@ serve(async (req) => {
       );
     }
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
-
     const { data: authData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !authData.user) throw new Error("Unauthorized");
+    if (authError || !authData.user) {
+      return json({ error: "Unauthorized" }, 401);
+    }
 
     const userId = authData.user.id;
+    observabilityUser = `user:${userId}`;
     const { data: roleData, error: roleError } = await supabase
       .from("user_roles")
       .select("role, library_id")
@@ -195,6 +237,7 @@ serve(async (req) => {
     if (!libraryId) {
       return json({ error: "libraryId is required" }, 400);
     }
+    observabilityEntityId = libraryId;
 
     const canAccessLibrary =
       ownedLibraryIdSet.has(libraryId) ||
@@ -215,6 +258,20 @@ serve(async (req) => {
     if (!requestedPlanCode) {
       return json({ error: "plan is required" }, 400);
     }
+
+    await logEdgeEvent(supabase, {
+      type: "PAYMENT_INITIATED",
+      status: "START",
+      user: observabilityUser,
+      entityId: libraryId,
+      metadata: {
+        ...observabilityMetadata,
+        currentPlanCode,
+        requestedPlanCode,
+        severity: "INFO",
+      },
+      message: "Razorpay order creation started.",
+    });
 
     const { data: planRow, error: planError } = await supabase
       .from("subscription_plans")
@@ -345,6 +402,34 @@ serve(async (req) => {
       } catch {
         // ignore
       }
+      const paymentFailureMessage = detail ?? (errBody.length > 400 ? `${errBody.slice(0, 400)}...` : errBody) || "Razorpay order creation failed";
+      await Promise.allSettled([
+        logEdgeEvent(supabase, {
+          type: "PAYMENT_FAILED",
+          status: "FAILED",
+          user: observabilityUser,
+          entityId: libraryId,
+          metadata: {
+            ...observabilityMetadata,
+            httpStatus: razorpayResponse.status,
+            severity: "CRITICAL",
+            stage: "order_creation",
+          },
+          message: paymentFailureMessage,
+        }),
+        sendEdgeAdminAlert({
+          type: "PAYMENT_FAILED",
+          severity: "CRITICAL",
+          user: observabilityUser,
+          message: paymentFailureMessage,
+          metadata: {
+            ...observabilityMetadata,
+            httpStatus: razorpayResponse.status,
+            libraryId,
+            stage: "order_creation",
+          },
+        }),
+      ]);
       return json(
         {
           error: "Razorpay order creation failed",
@@ -358,6 +443,31 @@ serve(async (req) => {
     const order = (await razorpayResponse.json()) as { id?: string; amount?: number; currency?: string };
     if (!order?.id || typeof order.amount !== "number" || !order.currency) {
       console.error("Unexpected Razorpay order response", order);
+      await Promise.allSettled([
+        logEdgeEvent(supabase, {
+          type: "PAYMENT_FAILED",
+          status: "FAILED",
+          user: observabilityUser,
+          entityId: libraryId,
+          metadata: {
+            ...observabilityMetadata,
+            severity: "CRITICAL",
+            stage: "order_response_validation",
+          },
+          message: "Invalid Razorpay order response",
+        }),
+        sendEdgeAdminAlert({
+          type: "PAYMENT_FAILED",
+          severity: "CRITICAL",
+          user: observabilityUser,
+          message: "Invalid Razorpay order response",
+          metadata: {
+            ...observabilityMetadata,
+            libraryId,
+            stage: "order_response_validation",
+          },
+        }),
+      ]);
       return json({ error: "Invalid Razorpay order response" }, 502);
     }
 
@@ -410,6 +520,24 @@ serve(async (req) => {
       if (redemptionError) throw redemptionError;
     }
 
+    await logEdgeEvent(supabase, {
+      type: "PAYMENT_INITIATED",
+      status: "SUCCESS",
+      user: observabilityUser,
+      entityId: order.id,
+      metadata: {
+        ...observabilityMetadata,
+        amount: finalAmount,
+        currency: order.currency,
+        libraryId,
+        orderId: order.id,
+        requestedPlanCode,
+        severity: "INFO",
+        subscriptionPaymentId: paymentRow?.id ?? null,
+      },
+      message: "Razorpay order created successfully.",
+    });
+
     return json({
       orderId: order.id,
       amount: order.amount,
@@ -418,6 +546,33 @@ serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (observabilitySupabase) {
+      await Promise.allSettled([
+        logEdgeEvent(observabilitySupabase, {
+          type: "PAYMENT_FAILED",
+          status: "FAILED",
+          user: observabilityUser,
+          entityId: observabilityEntityId,
+          metadata: {
+            ...observabilityMetadata,
+            severity: "CRITICAL",
+            stage: "unexpected_exception",
+          },
+          message,
+        }),
+        sendEdgeAdminAlert({
+          type: "PAYMENT_FAILED",
+          severity: "CRITICAL",
+          user: observabilityUser,
+          message,
+          metadata: {
+            ...observabilityMetadata,
+            entityId: observabilityEntityId,
+            stage: "unexpected_exception",
+          },
+        }),
+      ]);
+    }
     return json({ error: message }, 500);
   }
 });

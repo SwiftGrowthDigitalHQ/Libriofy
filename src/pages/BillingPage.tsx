@@ -23,6 +23,13 @@ import {
   waitForActiveLibrarySubscription,
 } from "@/lib/billingEdgeFunctions";
 import {
+  logPaymentInitiated,
+  logPaymentStart,
+  logPaymentSuccess,
+  type PaymentObservabilityContext,
+  reportPaymentFailure,
+} from "@/lib/observability/paymentObservability";
+import {
   evaluateSubscriptionAccess,
   formatInr,
   formatLockerLimit,
@@ -297,8 +304,17 @@ const BillingPage = () => {
     if (!libraryId || !selectedPlanConfig || !isOwner) return;
 
     setCheckoutLoading(true);
+    let paymentContext: PaymentObservabilityContext = {
+      libraryId,
+      months: 1,
+      planCode: selectedPlanConfig.code,
+      planName: selectedPlanConfig.name,
+      source: "billing_page" as const,
+    };
 
     try {
+      await logPaymentStart(paymentContext);
+
       const headers = await getEdgeFunctionAuthHeaders();
       const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-payment", {
         headers,
@@ -318,6 +334,15 @@ const BillingPage = () => {
         console.error("create-payment: unexpected response", orderRes);
         throw new Error("Order creation failed.");
       }
+
+      paymentContext = {
+        ...paymentContext,
+        amount: orderRes.amount,
+        currency: orderRes.currency,
+        orderId: orderRes.orderId,
+      };
+
+      await logPaymentInitiated(paymentContext);
 
       await ensureRazorpayScript();
       if (!razorpayWindow.Razorpay) throw new Error("Razorpay SDK unavailable.");
@@ -350,6 +375,14 @@ const BillingPage = () => {
             const activatedSubscription = await waitForActiveLibrarySubscription(libraryId);
 
             if (activatedSubscription) {
+              await logPaymentSuccess(
+                {
+                  ...paymentContext,
+                  orderId: response.razorpay_order_id,
+                  paymentId: response.razorpay_payment_id,
+                },
+                "Payment captured and plan activation completed via webhook fallback.",
+              );
               await Promise.all([
                 queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] }),
                 queryClient.invalidateQueries({ queryKey: ["billing-library-capacity", libraryId] }),
@@ -363,6 +396,16 @@ const BillingPage = () => {
               return;
             }
 
+            await reportPaymentFailure(
+              {
+                ...paymentContext,
+                orderId: response.razorpay_order_id,
+                paymentId: response.razorpay_payment_id,
+              },
+              new Error(verifyMessage),
+              "verification",
+            );
+
             toast({
               title: isFunctionUnavailableError(verifyError) ? "Payment received, activation pending" : "Payment verification failed",
               description: isFunctionUnavailableError(verifyError)
@@ -372,6 +415,15 @@ const BillingPage = () => {
             });
             return;
           }
+
+          await logPaymentSuccess(
+            {
+              ...paymentContext,
+              orderId: response.razorpay_order_id,
+              paymentId: response.razorpay_payment_id,
+            },
+            "Payment verified and plan activated.",
+          );
 
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["library-subscription", libraryId] }),
@@ -390,6 +442,7 @@ const BillingPage = () => {
 
       razorpay.open();
     } catch (error) {
+      await reportPaymentFailure(paymentContext, error, "create_order");
       const message = getSafeErrorMessage(error, "Unable to start checkout.");
       toast({
         title: "Checkout failed",

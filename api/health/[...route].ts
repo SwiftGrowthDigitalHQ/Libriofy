@@ -113,10 +113,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       maintenanceMode: false,
       missing: ["recovery_queue", "payments", "students"],
       missing_entities: ["recovery_queue", "payments", "students"],
+      recent_critical_errors: [],
       release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
       service: SERVERLESS_SERVICE_NAME,
       source: "emergency-fallback",
       status: "failed",
+      system_warnings: [],
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
     });

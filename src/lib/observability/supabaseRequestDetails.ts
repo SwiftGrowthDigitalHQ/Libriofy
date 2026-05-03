@@ -72,7 +72,7 @@ export const getSupabaseRequestDetails = (input: RequestInfo | URL, init?: Reque
         path: pathname,
         queryName,
         queryType: "rpc",
-        skipLogging: skipHeader === SUPABASE_OBSERVABILITY_SKIP_VALUE || queryName === "app_error_logs",
+        skipLogging: skipHeader === SUPABASE_OBSERVABILITY_SKIP_VALUE || queryName === "app_error_logs" || queryName === "app_event_logs",
         url: parsedUrl.toString(),
       };
     }
@@ -87,7 +87,7 @@ export const getSupabaseRequestDetails = (input: RequestInfo | URL, init?: Reque
         path: pathname,
         queryName,
         queryType: "rest",
-        skipLogging: skipHeader === SUPABASE_OBSERVABILITY_SKIP_VALUE || queryName === "app_error_logs",
+        skipLogging: skipHeader === SUPABASE_OBSERVABILITY_SKIP_VALUE || queryName === "app_error_logs" || queryName === "app_event_logs",
         url: parsedUrl.toString(),
       };
     }

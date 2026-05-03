@@ -1,3 +1,5 @@
+import type { RecentObservabilitySignal } from "./types.js";
+
 export const CRITICAL_DB_ENTITIES = ["recovery_queue", "payments", "students"] as const;
 
 export type DatabaseHealthStatus = "ok" | "degraded" | "failed";
@@ -15,9 +17,11 @@ export type DatabaseHealthPayload = {
   entities: DatabaseSchemaEntityCheck[];
   missing: string[];
   missing_entities: string[];
+  recent_critical_errors?: RecentObservabilitySignal[];
   service: string;
   source: "live" | "cache";
   status: DatabaseHealthStatus;
+  system_warnings?: RecentObservabilitySignal[];
 };
 
 export const resolveMissingDatabaseEntities = (

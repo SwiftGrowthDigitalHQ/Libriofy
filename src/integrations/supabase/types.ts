@@ -1713,6 +1713,39 @@ export type Database = {
         }
         Relationships: []
       }
+      app_event_logs: {
+        Row: {
+          created_at: string
+          entity_id: string | null
+          event_type: string
+          id: string
+          message: string | null
+          metadata: Json
+          status: string
+          user_identifier: string | null
+        }
+        Insert: {
+          created_at?: string
+          entity_id?: string | null
+          event_type: string
+          id?: string
+          message?: string | null
+          metadata?: Json
+          status: string
+          user_identifier?: string | null
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string | null
+          event_type?: string
+          id?: string
+          message?: string | null
+          metadata?: Json
+          status?: string
+          user_identifier?: string | null
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           category: Database["public"]["Enums"]["notification_category"] | null

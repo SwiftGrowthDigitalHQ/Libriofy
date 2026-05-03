@@ -33,6 +33,7 @@ import {
   type SuperAdminVerifyOtpResponse,
   type VerifyOtpResponse,
 } from "./auth.shared.js";
+import { sendEmail } from "./email.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
@@ -553,31 +554,25 @@ const sendSuperAdminOtpEmail = async ({
   fullName: string | null;
   otp: string;
 }) => {
-  const apiKey = readEnv(env, "RESEND_API_KEY");
   const from = readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
-  if (!apiKey || !from) {
+  if (!readEnv(env, "RESEND_API_KEY") || !from) {
     throw new Error("Email OTP delivery is not configured.");
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+  await sendEmail({
+    env,
+    from,
+    html: buildSuperAdminEmailHtml(otp, fullName),
+    metadata: {
+      category: "super_admin_otp",
+      delivery_channel: "email",
+      severity: "INFO",
     },
-    body: JSON.stringify({
-      from,
-      html: buildSuperAdminEmailHtml(otp, fullName),
-      subject: buildSuperAdminEmailSubject(),
-      text: buildSuperAdminEmailText(otp, fullName),
-      to: [email],
-    }),
+    subject: buildSuperAdminEmailSubject(),
+    text: buildSuperAdminEmailText(otp, fullName),
+    to: [email],
+    user: email,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Unable to send the email OTP.");
-  }
 };
 
 const sendSuperAdminWhatsappOtp = async ({

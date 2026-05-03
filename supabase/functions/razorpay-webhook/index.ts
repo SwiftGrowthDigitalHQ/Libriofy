@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { blockIfMaintenanceMode } from "../_shared/maintenance.ts";
+import { logEdgeEvent, sendEdgeAdminAlert } from "../_shared/observability.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const corsHeaders = {
@@ -104,6 +105,9 @@ serve(async (req) => {
   }
 
   const rawBody = await req.text();
+  let observabilitySupabase: ReturnType<typeof createClient> | null = null;
+  let observabilityEntityId = "";
+  let observabilityLibraryId = "";
 
   try {
     const webhookSecret = Deno.env.get("RAZORPAY_WEBHOOK_SECRET") ?? "";
@@ -143,6 +147,7 @@ serve(async (req) => {
     const paymentEntityRecord = asRecord(paymentEntity) ?? {};
     const razorpay_order_id = String(paymentEntityRecord.order_id ?? "").trim();
     const razorpay_payment_id = String(paymentEntityRecord.id ?? "").trim();
+    observabilityEntityId = razorpay_payment_id || razorpay_order_id;
 
     if (!razorpay_order_id || !razorpay_payment_id) {
       return new Response(JSON.stringify({ success: true, ignored: true }), {
@@ -153,6 +158,7 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceRoleKey);
+    observabilitySupabase = supabase;
 
     const { data: paymentRow, error: paymentFetchError } = await supabase
       .from("subscription_payments")
@@ -169,6 +175,7 @@ serve(async (req) => {
 
     const payment = paymentRow as SubscriptionPaymentRow;
     const libraryId = String(payment.library_id ?? "").trim();
+    observabilityLibraryId = libraryId;
     if (!libraryId) throw new Error("Payment row missing library_id.");
 
     if (payment.status === "captured") {
@@ -381,6 +388,24 @@ serve(async (req) => {
       }
     }
 
+    await logEdgeEvent(supabase, {
+      type: "PAYMENT_SUCCESS",
+      status: "SUCCESS",
+      user: `library:${libraryId}`,
+      entityId: razorpay_payment_id,
+      metadata: {
+        amount: payment.amount,
+        libraryId,
+        orderId: razorpay_order_id,
+        paymentId: razorpay_payment_id,
+        planCode,
+        planName: planNameFromMeta,
+        severity: "INFO",
+        source: "razorpay_webhook",
+      },
+      message: "Payment captured through Razorpay webhook.",
+    });
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -397,7 +422,36 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error("razorpay-webhook error", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    const message = error instanceof Error ? error.message : String(error);
+    if (observabilitySupabase) {
+      await logEdgeEvent(observabilitySupabase, {
+        type: "PAYMENT_FAILED",
+        status: "FAILED",
+        user: observabilityLibraryId ? `library:${observabilityLibraryId}` : "razorpay_webhook",
+        entityId: observabilityEntityId || observabilityLibraryId,
+        metadata: {
+          libraryId: observabilityLibraryId || null,
+          paymentReference: observabilityEntityId || null,
+          severity: "CRITICAL",
+          source: "razorpay_webhook",
+          stage: "unexpected_exception",
+        },
+        message,
+      });
+    }
+    await sendEdgeAdminAlert({
+      type: "PAYMENT_FAILED",
+      severity: "CRITICAL",
+      user: observabilityLibraryId ? `library:${observabilityLibraryId}` : "razorpay_webhook",
+      message,
+      metadata: {
+        libraryId: observabilityLibraryId || null,
+        paymentReference: observabilityEntityId || null,
+        source: "razorpay_webhook",
+        stage: "unexpected_exception",
+      },
+    });
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

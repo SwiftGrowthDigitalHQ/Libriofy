@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { extractErrorMessage, getSafeErrorMessage } from "@/lib/errorHandling";
+import { sendAdminAlert } from "@/lib/observability/alertService";
+import { logEvent } from "@/lib/observability/eventLogger";
 import { getReferralLink } from "@/lib/partnerLinks";
 
 const PartnerRegistrationPage = () => {
@@ -66,7 +69,30 @@ const PartnerRegistrationPage = () => {
 
     setLoading(true);
     setPartnerCode(null);
+    const registrationEmail = email.trim().toLowerCase();
+    const registrationMetadata = {
+      city: city.trim(),
+      experienceProvided: Boolean(experience.trim()),
+      hasBankDetails:
+        payoutMethod === "bank" &&
+        Boolean(bankAccountName.trim() && bankAccountNumber.trim() && bankIfsc.trim() && bankName.trim()),
+      hasUpiId: payoutMethod === "upi" && Boolean(upiId.trim()),
+      payoutMethod,
+      severity: "ERROR",
+    };
+
     try {
+      await logEvent({
+        type: "PARTNER_REGISTRATION",
+        status: "START",
+        user: registrationEmail,
+        metadata: {
+          ...registrationMetadata,
+          severity: "INFO",
+        },
+        message: "Partner registration started.",
+      });
+
       await signUp(email.trim().toLowerCase(), password, name.trim(), phone.trim(), {
         accountType: "partner",
         partnerProfile: {
@@ -88,6 +114,7 @@ const PartnerRegistrationPage = () => {
 
       const { data: authData } = await supabaseAuth.auth.getUser();
       const userId = authData?.user?.id ?? null;
+      let resolvedPartnerCode: string | null = null;
       if (userId) {
         const { data, error } = await supabase
           .from("affiliates")
@@ -96,18 +123,57 @@ const PartnerRegistrationPage = () => {
           .returns<Database["public"]["Tables"]["affiliates"]["Row"][]>()
           .maybeSingle();
         if (!error && data?.code) {
-          setPartnerCode(String(data.code));
+          resolvedPartnerCode = String(data.code);
+          setPartnerCode(resolvedPartnerCode);
         }
       }
+
+      await logEvent({
+        type: "PARTNER_REGISTRATION",
+        status: "SUCCESS",
+        user: registrationEmail,
+        entityId: userId ?? resolvedPartnerCode ?? null,
+        metadata: {
+          ...registrationMetadata,
+          partnerCode: resolvedPartnerCode,
+          severity: "INFO",
+        },
+        message: "Partner registration submitted successfully.",
+      });
 
       toast({
         title: "Partner registration submitted",
         description: "Check your email to confirm your account, then sign in to access the Partner Dashboard.",
       });
     } catch (err) {
+      const rawErrorMessage = extractErrorMessage(err) || "Unable to register partner.";
+
+      await Promise.allSettled([
+        logEvent({
+          type: "PARTNER_REGISTRATION",
+          status: "FAILED",
+          user: registrationEmail,
+          metadata: {
+            ...registrationMetadata,
+            errorMessage: rawErrorMessage,
+          },
+          message: rawErrorMessage,
+        }),
+        sendAdminAlert({
+          type: "PARTNER_REGISTRATION_FAILED",
+          severity: "ERROR",
+          user: registrationEmail,
+          message: rawErrorMessage,
+          metadata: {
+            ...registrationMetadata,
+            errorMessage: rawErrorMessage,
+          },
+        }),
+      ]);
+
       toast({
         title: "Registration failed",
-        description: err instanceof Error ? err.message : "Unable to register partner.",
+        description: getSafeErrorMessage(err, "Unable to register partner right now. Please try again in a moment."),
         variant: "destructive",
       });
     } finally {

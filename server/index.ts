@@ -12,9 +12,12 @@ import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
 import { parseBooleanSetting } from "../src/lib/maintenance.js";
 import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
+import { sendAdminAlert } from "../src/lib/observability/alertService.js";
 import { getCriticalDatabaseHealth, warmCriticalDatabaseHealth } from "../src/lib/observability/databaseHealth.server.js";
+import { logEvent } from "../src/lib/observability/eventLogger.js";
 import { buildServerReadiness } from "../src/lib/observability/serverHealth.js";
 import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring.js";
+import { isDatabaseCriticalError } from "../src/lib/observability/store.server.js";
 import { assertServerStartupEnv } from "../src/lib/observability/startupValidation.js";
 import {
   ensureOtpAuthWorkerStarted,
@@ -171,18 +174,45 @@ const sendServerError = (
   fallbackMessage: string,
   extraContext?: Record<string, unknown>,
 ) => {
-  captureServerError(error, {
+  const context = {
     method: req.method,
     path: req.originalUrl || req.path,
     requestId: res.locals.requestId,
     ...extraContext,
+  };
+
+  captureServerError(error, {
+    ...context,
   });
 
-  const message = error instanceof Error ? error.message : fallbackMessage;
+  const rawMessage = error instanceof Error ? error.message : fallbackMessage;
+
+  if (isDatabaseCriticalError(error, context)) {
+    void logEvent({
+      type: "DATABASE_CRITICAL_ERROR",
+      status: "FAILED",
+      user: String(res.locals.requestId ?? ""),
+      entityId: String(context.path ?? ""),
+      metadata: {
+        ...context,
+        severity: "CRITICAL",
+      },
+      message: rawMessage,
+    });
+
+    void sendAdminAlert({
+      type: "DATABASE_CRITICAL_ERROR",
+      severity: "CRITICAL",
+      user: String(res.locals.requestId ?? ""),
+      message: rawMessage,
+      metadata: context,
+    });
+  }
+
   res.status(500).json({
     requestId: res.locals.requestId,
     success: false,
-    message,
+    message: fallbackMessage,
   });
 };
 
@@ -296,9 +326,11 @@ const handleDatabaseHealthRoute: Parameters<typeof app.get>[1] = async (_req, re
       entities: [],
       missing: ["recovery_queue", "payments", "students"],
       missing_entities: ["recovery_queue", "payments", "students"],
+      recent_critical_errors: [],
       service: "supabase-database-health",
       source: "live",
       status: "failed",
+      system_warnings: [],
     });
   }
 };
@@ -313,6 +345,51 @@ app.get("/api/settings", async (_req, res) => {
     res.status(200).json(buildMaintenancePayload(status));
   } catch (error) {
     sendServerError(_req, res, error, "Unexpected settings lookup failure", { source: "api_settings" });
+  }
+});
+
+app.options("/api/observability/events", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.status(204).end();
+});
+
+app.options("/api/observability/alerts", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.status(204).end();
+});
+
+app.post("/api/observability/events", async (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object") {
+      res.setHeader("Cache-Control", "no-store");
+      res.status(400).json({ success: false, message: "Invalid event payload." });
+      return;
+    }
+
+    await logEvent(req.body);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({ success: true });
+  } catch (error) {
+    sendServerError(req, res, error, "Unable to record observability event.", { source: "observability_events" });
+  }
+});
+
+app.post("/api/observability/alerts", async (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object") {
+      res.setHeader("Cache-Control", "no-store");
+      res.status(400).json({ success: false, message: "Invalid alert payload." });
+      return;
+    }
+
+    const result = await sendAdminAlert(req.body);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    sendServerError(req, res, error, "Unable to send admin alert.", { source: "observability_alerts" });
   }
 });
 

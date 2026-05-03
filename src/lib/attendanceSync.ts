@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 
 import { readStoredLibraryAccessKey } from "@/lib/deviceKiosk";
+import { logEvent } from "@/lib/observability/eventLogger";
 
 export type AttendanceQueueStatus = "pending" | "failed";
 
@@ -658,6 +659,7 @@ export const syncQueuedAttendance = async ({
 
     let syncedCount = 0;
     let failedCount = 0;
+    const libraryIds = Array.from(new Set(queuedEntries.map((entry) => entry.library_id).filter(Boolean)));
 
     for (const entry of queuedEntries) {
       try {
@@ -696,10 +698,33 @@ export const syncQueuedAttendance = async ({
 
     writeLastAttendanceSyncAt(nowIso());
 
-    return {
+    const result = {
       attemptedCount: queuedEntries.length,
       syncedCount,
       failedCount,
       remainingCount: await countAttendanceQueueEntries(),
     };
+
+    if (result.attemptedCount > 0) {
+      void logEvent({
+        type: result.failedCount > 0 ? "ATTENDANCE_SYNC_FAILED" : "ATTENDANCE_SYNC_SUCCESS",
+        status: result.failedCount > 0 ? "FAILED" : "SUCCESS",
+        user: libraryIds[0] ? `library:${libraryIds[0]}` : null,
+        entityId: libraryIds[0] ?? null,
+        metadata: {
+          attemptedCount: result.attemptedCount,
+          failedCount: result.failedCount,
+          libraryIds,
+          remainingCount: result.remainingCount,
+          severity: result.failedCount > 0 ? "ERROR" : "INFO",
+          syncedCount: result.syncedCount,
+        },
+        message:
+          result.failedCount > 0
+            ? `Attendance sync finished with ${result.failedCount} failed entr${result.failedCount === 1 ? "y" : "ies"}.`
+            : `Attendance sync completed for ${result.syncedCount} entr${result.syncedCount === 1 ? "y" : "ies"}.`,
+      });
+    }
+
+    return result;
   });

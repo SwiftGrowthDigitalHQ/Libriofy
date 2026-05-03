@@ -1,5 +1,8 @@
 import { CRITICAL_DB_ENTITIES, type DatabaseHealthPayload, type DatabaseSchemaEntityCheck } from "./databaseHealth.shared.js";
+import { sendAdminAlert } from "./alertService.js";
+import { logEvent } from "./eventLogger.js";
 import { captureServerError } from "./serverMonitoring.js";
+import { listRecentObservabilitySignals } from "./store.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -9,6 +12,11 @@ const HEALTH_SERVICE_NAME = "supabase-database-health";
 let cachedHealth: { expiresAt: number; value: DatabaseHealthPayload } | null = null;
 let inFlightHealthCheck: Promise<DatabaseHealthPayload> | null = null;
 let lastLoggedFailureSignature = "";
+
+const emptySignals = {
+  recentCriticalErrors: [],
+  systemWarnings: [],
+};
 
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {
@@ -21,7 +29,10 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
   return "";
 };
 
-const buildFailedHealthPayload = (detail: string): DatabaseHealthPayload => ({
+const buildFailedHealthPayload = (
+  detail: string,
+  signals: { recentCriticalErrors: DatabaseHealthPayload["recent_critical_errors"]; systemWarnings: DatabaseHealthPayload["system_warnings"] } = emptySignals,
+): DatabaseHealthPayload => ({
   checked_at: new Date().toISOString(),
   connectivity: "fail",
   detail,
@@ -32,13 +43,29 @@ const buildFailedHealthPayload = (detail: string): DatabaseHealthPayload => ({
   })),
   missing: [...CRITICAL_DB_ENTITIES],
   missing_entities: [...CRITICAL_DB_ENTITIES],
+  recent_critical_errors: signals.recentCriticalErrors,
   service: HEALTH_SERVICE_NAME,
   source: "live",
   status: "failed",
+  system_warnings: signals.systemWarnings,
 });
+
+const loadRecentSignals = async (env: EnvLike) => {
+  try {
+    return await listRecentObservabilitySignals(env);
+  } catch (error) {
+    console.warn("[health] Unable to load recent observability signals", error);
+    captureServerError(error, {
+      source: "database_health_recent_signals",
+    });
+
+    return emptySignals;
+  }
+};
 
 const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string) => {
   if (payload.status === "ok") {
+    lastLoggedFailureSignature = "";
     return;
   }
 
@@ -65,6 +92,37 @@ const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string)
     source: "database_health",
     status: payload.status,
   });
+
+  const severity = payload.status === "failed" ? "CRITICAL" : "WARNING";
+
+  void logEvent({
+    type: "DATABASE_HEALTH_FAILED",
+    status: "FAILED",
+    user: HEALTH_SERVICE_NAME,
+    metadata: {
+      connectivity: payload.connectivity,
+      missingEntities: payload.missing_entities,
+      phase,
+      severity,
+      source: "database_health",
+      status: payload.status,
+    },
+    message: payload.detail || "Critical database schema validation failed.",
+  });
+
+  void sendAdminAlert({
+    type: "DATABASE_HEALTH_FAILED",
+    severity,
+    user: HEALTH_SERVICE_NAME,
+    message: payload.detail || "Critical database schema validation failed.",
+    metadata: {
+      connectivity: payload.connectivity,
+      missingEntities: payload.missing_entities,
+      phase,
+      source: "database_health",
+      status: payload.status,
+    },
+  });
 };
 
 const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPayload> => {
@@ -72,7 +130,7 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
   const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
 
   if (!supabaseUrl || !serviceRoleKey) {
-    return buildFailedHealthPayload("Supabase URL or service role key is missing.");
+    return buildFailedHealthPayload("Supabase URL or service role key is missing.", await loadRecentSignals(env));
   }
 
   try {
@@ -94,6 +152,7 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
     if (!response.ok) {
       return buildFailedHealthPayload(
         `Schema health RPC failed with status ${response.status}: ${rawText.slice(0, 400) || "Unknown error"}`,
+        await loadRecentSignals(env),
       );
     }
 
@@ -101,6 +160,7 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
     const missingEntities = entities
       .filter((entity) => !entity.exists_in_schema)
       .map((entity) => entity.entity_name);
+    const signals = await loadRecentSignals(env);
 
     return {
       checked_at: new Date().toISOString(),
@@ -112,13 +172,16 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
       entities,
       missing: missingEntities,
       missing_entities: missingEntities,
+      recent_critical_errors: signals.recentCriticalErrors,
       service: HEALTH_SERVICE_NAME,
       source: "live",
       status: missingEntities.length > 0 ? "degraded" : "ok",
+      system_warnings: signals.systemWarnings,
     };
   } catch (error) {
     return buildFailedHealthPayload(
       error instanceof Error ? error.message : "Unexpected database health validation failure.",
+      await loadRecentSignals(env),
     );
   }
 };

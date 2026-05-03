@@ -12,6 +12,13 @@ import {
   waitForActiveLibrarySubscription,
 } from "@/lib/billingEdgeFunctions";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
+import {
+  logPaymentInitiated,
+  logPaymentStart,
+  logPaymentSuccess,
+  type PaymentObservabilityContext,
+  reportPaymentFailure,
+} from "@/lib/observability/paymentObservability";
 import { getSupportWhatsAppUrl } from "@/lib/supportContact";
 
 type RazorpaySuccessResponse = {
@@ -65,7 +72,14 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
   const handleRenew = async () => {
     if (!libraryId) return;
     setRenewLoading(true);
+    let paymentContext: PaymentObservabilityContext = {
+      libraryId,
+      months: 1,
+      source: "subscription_gate" as const,
+    };
     try {
+      await logPaymentStart(paymentContext);
+
       const headers = await getEdgeFunctionAuthHeaders();
       const { data: orderRes, error: orderError } = await supabase.functions.invoke<CheckoutOrderResponse>("create-payment", {
         headers,
@@ -82,6 +96,15 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
         console.error("create-payment: unexpected response", orderRes);
         throw new Error("Order creation failed");
       }
+
+      paymentContext = {
+        ...paymentContext,
+        amount: orderRes.amount,
+        currency: orderRes.currency,
+        orderId: orderRes.orderId,
+      };
+
+      await logPaymentInitiated(paymentContext);
 
       await ensureRazorpayScript();
       if (!razorpayWindow.Razorpay) throw new Error("Razorpay SDK unavailable");
@@ -113,10 +136,28 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
             const activatedSubscription = await waitForActiveLibrarySubscription(libraryId);
 
             if (activatedSubscription) {
+              await logPaymentSuccess(
+                {
+                  ...paymentContext,
+                  orderId: response.razorpay_order_id,
+                  paymentId: response.razorpay_payment_id,
+                },
+                "Payment captured and subscription reactivated via webhook fallback.",
+              );
               toast({ title: "Subscription renewed", description: "Your account has been reactivated." });
               window.location.reload();
               return;
             }
+
+            await reportPaymentFailure(
+              {
+                ...paymentContext,
+                orderId: response.razorpay_order_id,
+                paymentId: response.razorpay_payment_id,
+              },
+              new Error(verifyMessage),
+              "verification",
+            );
 
             toast({
               title: isFunctionUnavailableError(verifyError) ? "Payment received, activation pending" : "Payment verification failed",
@@ -127,6 +168,14 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
             });
             return;
           }
+          await logPaymentSuccess(
+            {
+              ...paymentContext,
+              orderId: response.razorpay_order_id,
+              paymentId: response.razorpay_payment_id,
+            },
+            "Payment verified and subscription renewed.",
+          );
           toast({ title: "Subscription renewed", description: "Your account has been reactivated." });
           window.location.reload();
         },
@@ -138,6 +187,7 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
 
       razorpay.open();
     } catch (err: unknown) {
+      await reportPaymentFailure(paymentContext, err, "create_order");
       const message = getSafeErrorMessage(err, "Renewal could not be started. Try again in a moment.");
       toast({ title: "Renewal failed", description: message, variant: "destructive" });
     } finally {
