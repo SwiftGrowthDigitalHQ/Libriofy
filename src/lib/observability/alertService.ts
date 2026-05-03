@@ -1,5 +1,6 @@
 import { logEvent } from "./eventLogger";
 import type { AdminAlertInput, AlertSeverity, ObservabilityMetadata } from "./types";
+import { resolveLibriofyEmailFrom } from "../libriofyConfig.js";
 
 const OBSERVABILITY_ALERTS_ENDPOINT = "/api/observability/alerts";
 const DEFAULT_ALERT_TTL_MS = 5 * 60_000;
@@ -160,7 +161,7 @@ const deliverAlertEmail = async (input: AdminAlertInput, env: EnvLike) => {
     return false;
   }
 
-  const from = readEnv(env, "OPS_ALERT_EMAIL_FROM", "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
+  const from = resolveLibriofyEmailFrom(readEnv(env, "OPS_ALERT_EMAIL_FROM", "AUTH_EMAIL_FROM"));
   const recipients = to
     .split(",")
     .map((value) => value.trim())

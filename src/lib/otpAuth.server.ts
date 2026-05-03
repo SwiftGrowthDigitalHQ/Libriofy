@@ -36,9 +36,11 @@ import {
 import {
   getSuperAdminLoginRuntimeIssues,
   getSuperAdminVerifyRuntimeIssues,
+  hasSuperAdminEmailOtpConfig,
   type AuthConfigIssue,
 } from "./authRuntimeConfig.js";
 import { sendEmail } from "./email.js";
+import { resolveLibriofyAppUrl, resolveLibriofyEmailFrom } from "./libriofyConfig.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
@@ -236,8 +238,9 @@ const createAnonClient = (env: EnvLike) => {
 };
 
 const resolvePublicAppUrl = (env: EnvLike) =>
-  readEnv(env, "PUBLIC_APP_URL", "APP_URL", "SITE_URL", "NEXT_PUBLIC_SITE_URL", "VITE_PUBLIC_APP_URL", "VITE_APP_URL") ||
-  "https://www.libriofy.com";
+  resolveLibriofyAppUrl(
+    readEnv(env, "PUBLIC_APP_URL", "APP_URL", "SITE_URL", "NEXT_PUBLIC_SITE_URL", "VITE_PUBLIC_APP_URL", "VITE_APP_URL"),
+  );
 
 const resolveWebOtpHost = (env: EnvLike) => {
   try {
@@ -538,8 +541,7 @@ const trackSuperAdminFailure = async (redis: IORedis, email: string, ip: string)
   };
 };
 
-const canSendSuperAdminEmailOtp = (env: EnvLike) =>
-  !!readEnv(env, "RESEND_API_KEY") && !!readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
+const canSendSuperAdminEmailOtp = (env: EnvLike) => hasSuperAdminEmailOtpConfig(env);
 
 const buildSuperAdminEmailSubject = () => "Libriofy Admin Login OTP";
 
@@ -575,7 +577,7 @@ const sendSuperAdminOtpEmail = async ({
   fullName: string | null;
   otp: string;
 }) => {
-  const from = readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
+  const from = resolveLibriofyEmailFrom(readEnv(env, "AUTH_EMAIL_FROM"));
   if (!readEnv(env, "RESEND_API_KEY") || !from) {
     throw new Error("Email OTP delivery is not configured.");
   }

@@ -1,5 +1,6 @@
 import { logEvent } from "./observability/eventLogger.js";
 import type { ObservabilityMetadata } from "./observability/types.js";
+import { resolveLibriofyEmailFrom } from "./libriofyConfig.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -58,20 +59,24 @@ const sendViaResend = async (input: SendEmailInput, env: EnvLike) => {
 export const sendEmail = async (input: SendEmailInput) => {
   const env = input.env ?? (typeof process !== "undefined" ? process.env : {});
   const recipients = input.to.map((value) => value.trim()).filter(Boolean);
+  const from = resolveLibriofyEmailFrom(input.from);
 
-  if (!input.from || recipients.length === 0) {
+  if (!from || recipients.length === 0) {
     throw new Error("Email sender or recipient list is missing.");
   }
 
   try {
-    await sendViaResend(input, env);
+    await sendViaResend({
+      ...input,
+      from,
+    }, env);
 
     await logEvent({
       type: "EMAIL_SENT",
       status: "SUCCESS",
       user: normalizeText(input.user) || recipients.join(", "),
       metadata: {
-        email_from: input.from,
+        email_from: from,
         email_subject: input.subject,
         recipient_count: recipients.length,
         recipients,
@@ -88,7 +93,7 @@ export const sendEmail = async (input: SendEmailInput) => {
       status: "FAILED",
       user: normalizeText(input.user) || recipients.join(", "),
       metadata: {
-        email_from: input.from,
+        email_from: from || normalizeText(input.from),
         email_subject: input.subject,
         errorMessage,
         recipient_count: recipients.length,
@@ -107,7 +112,7 @@ export const sendEmail = async (input: SendEmailInput) => {
         user: normalizeText(input.user) || recipients.join(", "),
         message: errorMessage,
         metadata: {
-          email_from: input.from,
+          email_from: from || normalizeText(input.from),
           email_subject: input.subject,
           recipients,
           ...input.metadata,

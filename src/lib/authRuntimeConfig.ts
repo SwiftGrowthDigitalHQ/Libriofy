@@ -1,3 +1,5 @@
+import { resolveLibriofyEmailFrom } from "./libriofyConfig.js";
+
 type EnvLike = Record<string, string | undefined>;
 
 export type AuthConfigIssue = {
@@ -14,7 +16,7 @@ export const hasCustomJwtSigningConfig = (env: EnvLike) =>
   hasAny(env, "SUPABASE_JWT_SECRET", "JWT_SECRET", "APP_JWT_SECRET");
 
 export const hasSuperAdminEmailOtpConfig = (env: EnvLike) =>
-  hasValue(env.RESEND_API_KEY) && hasAny(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
+  hasValue(env.RESEND_API_KEY) && Boolean(resolveLibriofyEmailFrom(env.AUTH_EMAIL_FROM));
 
 export const getCustomAuthRuntimeIssues = (env: EnvLike): AuthConfigIssue[] => {
   const issues: AuthConfigIssue[] = [];
@@ -44,10 +46,8 @@ export const getSuperAdminLoginRuntimeIssues = (env: EnvLike): AuthConfigIssue[]
   if (!hasSuperAdminEmailOtpConfig(env)) {
     issues.push({
       code: "OTP_DELIVERY_UNAVAILABLE",
-      message: "Super admin email OTP delivery is not configured.",
-      missing: [
-        "RESEND_API_KEY+AUTH_EMAIL_FROM|RESEND_FROM_EMAIL",
-      ],
+      message: "Super admin email OTP delivery must use hello@libriofy.com via Resend.",
+      missing: ["RESEND_API_KEY+AUTH_EMAIL_FROM=hello@libriofy.com"],
     });
   }
 

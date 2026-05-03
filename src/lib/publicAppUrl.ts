@@ -23,7 +23,7 @@ export const getPublicAppBaseUrl = () => {
 
   for (const candidate of candidates) {
     const normalized = normalizeBaseUrl(candidate);
-    if (normalized) {
+    if (normalized && !isPreviewAppUrl(normalized)) {
       return normalized;
     }
   }

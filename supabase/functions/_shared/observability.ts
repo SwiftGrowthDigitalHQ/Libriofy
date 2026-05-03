@@ -23,8 +23,21 @@ type AdminAlertInput = {
 const DEFAULT_ALERT_TTL_MS = 5 * 60_000;
 const CRITICAL_ALERT_TTL_MS = 10 * 60_000;
 const alertDeduplicationCache = new Map<string, number>();
+const LIBRIOFY_AUTH_EMAIL = "hello@libriofy.com";
+const LIBRIOFY_AUTH_EMAIL_FROM = `Libriofy <${LIBRIOFY_AUTH_EMAIL}>`;
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const resolveLibriofyEmailFrom = (value: string | null | undefined) => {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const matched = normalized.match(/<([^>]+)>/);
+  const address = (matched?.[1] ?? normalized).trim().toLowerCase();
+  return address === LIBRIOFY_AUTH_EMAIL ? LIBRIOFY_AUTH_EMAIL_FROM : "";
+};
 
 const sanitizeJsonValue = (value: unknown, depth = 0): unknown => {
   if (depth > 5) {
@@ -136,7 +149,7 @@ const shouldSuppressAlert = (input: AdminAlertInput) => {
 
 const sendAlertEmail = async (input: AdminAlertInput) => {
   const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
-  const from = (Deno.env.get("OPS_ALERT_EMAIL_FROM") ?? Deno.env.get("AUTH_EMAIL_FROM") ?? Deno.env.get("RESEND_FROM_EMAIL") ?? "").trim();
+  const from = resolveLibriofyEmailFrom(Deno.env.get("OPS_ALERT_EMAIL_FROM") ?? Deno.env.get("AUTH_EMAIL_FROM"));
   const to = (Deno.env.get("OPS_ALERT_EMAIL_TO") ?? "")
     .split(",")
     .map((value) => value.trim())

@@ -6,7 +6,7 @@ import {
 } from "@/lib/otpAuth.server";
 
 const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
-  APP_URL: "https://app.example.com",
+  APP_URL: "https://www.libriofy.com",
   APP_ENV: "test",
   SUPABASE_SERVICE_ROLE_KEY: "service-role",
   SUPABASE_URL: "https://example.supabase.co",
@@ -18,7 +18,7 @@ describe("Super Admin auth runtime safeguards", () => {
   it("fails fast with a structured 503 when Redis is missing", async () => {
     const result = await resolveSuperAdminLoginRequest(
       buildEnv({
-        AUTH_EMAIL_FROM: "security@example.com",
+        AUTH_EMAIL_FROM: "hello@libriofy.com",
         RESEND_API_KEY: "resend-key",
         SUPABASE_JWT_SECRET: "jwt-secret",
       }),
@@ -47,7 +47,7 @@ describe("Super Admin auth runtime safeguards", () => {
     expect(result.statusCode).toBe(503);
     expect(result.body).toMatchObject({
       code: "OTP_DELIVERY_UNAVAILABLE",
-      message: "Super admin email OTP delivery is not configured.",
+      message: "Super admin email OTP delivery must use hello@libriofy.com via Resend.",
       success: false,
     });
   });

@@ -27,8 +27,8 @@ import {
   type SuperAdminVerifyOtpResponse,
   type VerifyOtpResponse,
 } from "@/lib/auth.shared";
+import { resolveLibriofyAppUrl } from "@/lib/libriofyConfig";
 import { normalizeBasePath } from "@/lib/maintenance";
-import { getPublicAppBaseUrl } from "@/lib/publicAppUrl";
 import { supabase, supabaseAuth } from "@/integrations/supabase/client";
 
 interface AuthContextType {
@@ -80,7 +80,11 @@ const toAuthUserFromSupabaseSession = (session: Session): AuthUser => ({
 });
 
 const buildAppRedirectUrl = (route: string) => {
-  const origin = getPublicAppBaseUrl();
+  const origin = resolveLibriofyAppUrl(
+    import.meta.env.VITE_PUBLIC_APP_URL as string | undefined,
+    import.meta.env.VITE_APP_URL as string | undefined,
+    import.meta.env.NEXT_PUBLIC_SITE_URL as string | undefined,
+  );
   const basePath = normalizeBasePath(import.meta.env.BASE_URL);
   const normalizedRoute = route.startsWith("/") ? route : `/${route}`;
   const resolvedBasePath = basePath === "/" ? "" : basePath;

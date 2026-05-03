@@ -31,6 +31,8 @@ const frontendReleaseManifestPath = path.join(projectRoot, "dist", "release.json
 const frontendIndexPath = path.join(projectRoot, "dist", "index.html");
 const serverBuildPath = path.join(projectRoot, "dist-server", "index.mjs");
 const packageLockPath = path.join(projectRoot, "package-lock.json");
+const LIBRIOFY_PUBLIC_APP_URL = "https://www.libriofy.com";
+const LIBRIOFY_AUTH_EMAIL = "hello@libriofy.com";
 
 const parseEnvFile = (filePath) => {
   if (!fs.existsSync(filePath)) {
@@ -86,6 +88,30 @@ const readManualChecks = () => {
 
 const hasValue = (value) => Boolean(typeof value === "string" && value.trim());
 
+const matchesCanonicalLibriofyUrl = (value) => {
+  if (!hasValue(value)) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(String(value).trim());
+    return parsed.protocol === "https:" && ["libriofy.com", "www.libriofy.com"].includes(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+};
+
+const matchesCanonicalLibriofyEmail = (value) => {
+  if (!hasValue(value)) {
+    return false;
+  }
+
+  const normalized = String(value).trim();
+  const matched = normalized.match(/<([^>]+)>/);
+  const address = String(matched?.[1] ?? normalized).trim().toLowerCase();
+  return address === LIBRIOFY_AUTH_EMAIL;
+};
+
 const looksLikePlaceholder = (key, rawValue) => {
   const value = String(rawValue || "").trim();
   if (!value) {
@@ -134,17 +160,14 @@ const requirementLabel = (requirement) =>
 const validateServerStartupEnv = (env) => {
   const requiredKeys = ["APP_ENV", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "STUDENT_QR_PRIVATE_KEY"];
   const missing = requiredKeys.filter((key) => !hasValue(env[key]) || looksLikePlaceholder(key, env[key]));
-  const hasBaseUrl = ["APP_URL", "PUBLIC_APP_URL", "SITE_URL"].some(
-    (key) => hasValue(env[key]) && !looksLikePlaceholder(key, env[key]),
-  );
+  const hasBaseUrl = ["APP_URL", "PUBLIC_APP_URL", "SITE_URL"].some((key) => matchesCanonicalLibriofyUrl(env[key]));
   const hasJwtSecret = ["SUPABASE_JWT_SECRET", "JWT_SECRET", "APP_JWT_SECRET"].some(
     (key) => hasValue(env[key]) && !looksLikePlaceholder(key, env[key]),
   );
-  const hasSuperAdminEmailOtp = hasValue(env.RESEND_API_KEY) &&
-    ["AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL"].some((key) => hasValue(env[key]) && !looksLikePlaceholder(key, env[key]));
+  const hasSuperAdminEmailOtp = hasValue(env.RESEND_API_KEY) && matchesCanonicalLibriofyEmail(env.AUTH_EMAIL_FROM);
 
   if (!hasBaseUrl) {
-    missing.push("APP_URL|PUBLIC_APP_URL|SITE_URL");
+    missing.push(`APP_URL|PUBLIC_APP_URL|SITE_URL=${LIBRIOFY_PUBLIC_APP_URL}`);
   }
 
   if (!hasValue(env.REDIS_URL) || looksLikePlaceholder("REDIS_URL", env.REDIS_URL)) {
@@ -156,7 +179,7 @@ const validateServerStartupEnv = (env) => {
   }
 
   if (!hasSuperAdminEmailOtp) {
-    missing.push("RESEND_API_KEY+AUTH_EMAIL_FROM|RESEND_FROM_EMAIL");
+    missing.push(`RESEND_API_KEY+AUTH_EMAIL_FROM=${LIBRIOFY_AUTH_EMAIL}`);
   }
 
   return {
@@ -483,14 +506,13 @@ const appEnvRequirements = [
     anyOf: [
       "RESEND_API_KEY",
       "AUTH_EMAIL_FROM",
-      "RESEND_FROM_EMAIL",
       "TWILIO_ACCOUNT_SID",
       "TWILIO_AUTH_TOKEN",
       "TWILIO_WHATSAPP_FROM",
     ],
     label: "super admin OTP delivery config",
   },
-  { anyOf: ["APP_URL", "PUBLIC_APP_URL", "SITE_URL"], label: "APP_URL|PUBLIC_APP_URL|SITE_URL" },
+  { anyOf: ["APP_URL", "PUBLIC_APP_URL", "SITE_URL"], label: `APP_URL|PUBLIC_APP_URL|SITE_URL=${LIBRIOFY_PUBLIC_APP_URL}` },
   { key: "APP_ENV" },
   { key: "RELEASE_SHA" },
   { key: "SENTRY_DSN" },

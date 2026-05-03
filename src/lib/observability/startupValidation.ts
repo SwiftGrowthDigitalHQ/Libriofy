@@ -1,3 +1,4 @@
+import { isLibriofyAppUrl } from "../libriofyConfig.js";
 import { getServerAuthConfigRequirements } from "../authRuntimeConfig.js";
 
 type EnvCheckResult = {
@@ -7,8 +8,8 @@ type EnvCheckResult = {
 
 const hasValue = (value: string | undefined) => Boolean(value && value.trim());
 
-const requireOneOf = (env: NodeJS.ProcessEnv, ...names: string[]) =>
-  names.some((name) => hasValue(env[name]));
+const requireCanonicalAppUrl = (env: NodeJS.ProcessEnv, ...names: string[]) =>
+  names.some((name) => isLibriofyAppUrl(env[name]));
 
 export const validateServerStartupEnv = (env: NodeJS.ProcessEnv): EnvCheckResult => {
   const missing: string[] = [];
@@ -19,8 +20,8 @@ export const validateServerStartupEnv = (env: NodeJS.ProcessEnv): EnvCheckResult
     }
   }
 
-  if (!requireOneOf(env, "APP_URL", "PUBLIC_APP_URL", "SITE_URL")) {
-    missing.push("APP_URL|PUBLIC_APP_URL|SITE_URL");
+  if (!requireCanonicalAppUrl(env, "APP_URL", "PUBLIC_APP_URL", "SITE_URL")) {
+    missing.push("APP_URL|PUBLIC_APP_URL|SITE_URL=https://www.libriofy.com");
   }
 
   for (const requirement of getServerAuthConfigRequirements(env)) {
