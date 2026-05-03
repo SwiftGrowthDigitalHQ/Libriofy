@@ -8,7 +8,7 @@ DECLARE
   v_library_id UUID;
   v_slug TEXT;
   v_full_name TEXT;
-  v_super_admin_email CONSTANT TEXT := 'shop43851@gmail.com';
+  v_super_admin_email CONSTANT TEXT := 'hello@libriofy.com';
 BEGIN
   v_full_name := COALESCE(NEW.raw_user_meta_data->>'full_name', '');
 
@@ -51,7 +51,7 @@ $$;
 DO $$
 DECLARE
   v_super_admin_id UUID;
-  v_super_admin_email CONSTANT TEXT := 'shop43851@gmail.com';
+  v_super_admin_email CONSTANT TEXT := 'hello@libriofy.com';
 BEGIN
   SELECT id
   INTO v_super_admin_id

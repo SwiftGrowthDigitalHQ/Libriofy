@@ -13,7 +13,7 @@ export type AuthDeliveryChannel = "whatsapp" | "sms";
 export type AuthLoginMethod = "otp" | "email";
 export type AuthSessionProvider = "custom" | "supabase";
 export type AuthSessionScope = "general" | "super_admin";
-export type SuperAdminOtpChannel = "email" | "whatsapp";
+export type SuperAdminOtpChannel = "email";
 
 export type AuthUser = {
   id: string;
@@ -64,8 +64,8 @@ export type RefreshSessionResponse = {
 
 export type SuperAdminLoginResponse = {
   success: boolean;
-  challengeId: string;
   channel: SuperAdminOtpChannel;
+  email: string;
   expiresIn: number;
   maskedDestination: string;
   message: string;

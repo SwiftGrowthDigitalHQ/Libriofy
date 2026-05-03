@@ -101,14 +101,14 @@ export const loginWithEmail = async (email: string, password: string) =>
     body: { email, password },
   });
 
-export const startSuperAdminLogin = async (email: string, password: string) =>
+export const startSuperAdminLogin = async (email: string) =>
   sendJsonRequest<SuperAdminLoginResponse>("/super-admin/login", {
-    body: { email, password },
+    body: { email },
   });
 
-export const verifySuperAdminOtp = async (challengeId: string, otp: string) =>
+export const verifySuperAdminOtp = async (email: string, otp: string) =>
   sendJsonRequest<SuperAdminVerifyOtpResponse>("/super-admin/verify-otp", {
-    body: { challengeId, otp },
+    body: { email, otp },
   });
 
 export const refreshAuthSession = async () =>

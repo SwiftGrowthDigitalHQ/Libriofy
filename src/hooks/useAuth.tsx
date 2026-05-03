@@ -57,11 +57,11 @@ interface AuthContextType {
       };
     },
   ) => Promise<void>;
-  startSuperAdminLogin: (email: string, password: string) => Promise<SuperAdminLoginResponse>;
+  startSuperAdminLogin: (email: string) => Promise<SuperAdminLoginResponse>;
   updatePassword: (password: string) => Promise<void>;
   user: AuthUser | null;
   verifyOtp: (phone: string, otp: string) => Promise<VerifyOtpResponse>;
-  verifySuperAdminOtp: (challengeId: string, otp: string) => Promise<SuperAdminVerifyOtpResponse>;
+  verifySuperAdminOtp: (email: string, otp: string) => Promise<SuperAdminVerifyOtpResponse>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -408,11 +408,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return response;
   };
 
-  const startSuperAdminLogin = async (email: string, password: string) =>
-    requestSuperAdminLogin(email, password);
+  const startSuperAdminLogin = async (email: string) =>
+    requestSuperAdminLogin(email);
 
-  const verifySuperAdminOtp = async (challengeId: string, otp: string) => {
-    const response = await requestSuperAdminOtpVerification(challengeId, otp);
+  const verifySuperAdminOtp = async (email: string, otp: string) => {
+    const response = await requestSuperAdminOtpVerification(email, otp);
     await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
     applySession(response.session);
     markSessionActivity();

@@ -137,9 +137,26 @@ const validateServerStartupEnv = (env) => {
   const hasBaseUrl = ["APP_URL", "PUBLIC_APP_URL", "SITE_URL"].some(
     (key) => hasValue(env[key]) && !looksLikePlaceholder(key, env[key]),
   );
+  const hasJwtSecret = ["SUPABASE_JWT_SECRET", "JWT_SECRET", "APP_JWT_SECRET"].some(
+    (key) => hasValue(env[key]) && !looksLikePlaceholder(key, env[key]),
+  );
+  const hasSuperAdminEmailOtp = hasValue(env.RESEND_API_KEY) &&
+    ["AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL"].some((key) => hasValue(env[key]) && !looksLikePlaceholder(key, env[key]));
 
   if (!hasBaseUrl) {
     missing.push("APP_URL|PUBLIC_APP_URL|SITE_URL");
+  }
+
+  if (!hasValue(env.REDIS_URL) || looksLikePlaceholder("REDIS_URL", env.REDIS_URL)) {
+    missing.push("REDIS_URL");
+  }
+
+  if (!hasJwtSecret) {
+    missing.push("SUPABASE_JWT_SECRET|JWT_SECRET|APP_JWT_SECRET");
+  }
+
+  if (!hasSuperAdminEmailOtp) {
+    missing.push("RESEND_API_KEY+AUTH_EMAIL_FROM|RESEND_FROM_EMAIL");
   }
 
   return {
@@ -459,6 +476,19 @@ const appEnvRequirements = [
   { key: "SUPABASE_URL" },
   { key: "SUPABASE_SERVICE_ROLE_KEY" },
   { key: "STUDENT_QR_PRIVATE_KEY" },
+  { key: "REDIS_URL" },
+  { anyOf: ["SUPABASE_JWT_SECRET", "JWT_SECRET", "APP_JWT_SECRET"], label: "SUPABASE_JWT_SECRET|JWT_SECRET|APP_JWT_SECRET" },
+  {
+    anyOf: [
+      "RESEND_API_KEY",
+      "AUTH_EMAIL_FROM",
+      "RESEND_FROM_EMAIL",
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "TWILIO_WHATSAPP_FROM",
+    ],
+    label: "super admin OTP delivery config",
+  },
   { anyOf: ["APP_URL", "PUBLIC_APP_URL", "SITE_URL"], label: "APP_URL|PUBLIC_APP_URL|SITE_URL" },
   { key: "APP_ENV" },
   { key: "RELEASE_SHA" },

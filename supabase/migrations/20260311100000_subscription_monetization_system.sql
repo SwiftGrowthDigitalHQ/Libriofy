@@ -353,7 +353,7 @@ DECLARE
   v_phone TEXT;
   v_trial_start TIMESTAMPTZ := now();
   v_trial_end TIMESTAMPTZ := now() + interval '7 days';
-  v_super_admin_email CONSTANT TEXT := 'shop43851@gmail.com';
+  v_super_admin_email CONSTANT TEXT := 'hello@libriofy.com';
   v_referral_input TEXT;
   v_affiliate_input TEXT;
   v_referred_by UUID;

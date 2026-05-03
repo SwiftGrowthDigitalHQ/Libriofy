@@ -3,13 +3,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowLeft,
-  Eye,
-  EyeOff,
   Loader2,
-  LockKeyhole,
   Mail,
   Shield,
-  Smartphone,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -39,16 +35,15 @@ const SuperAdminLoginPage = () => {
   }, [location.search, routeState?.from]);
 
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [otpEmail, setOtpEmail] = useState("");
   const [otp, setOtp] = useState("");
-  const [challengeId, setChallengeId] = useState("");
-  const [deliveryChannel, setDeliveryChannel] = useState<"email" | "whatsapp" | null>(null);
   const [maskedDestination, setMaskedDestination] = useState("");
   const [error, setError] = useState("");
-  const [stepLoading, setStepLoading] = useState<"credentials" | "otp" | null>(null);
+  const [stepLoading, setStepLoading] = useState<"email" | "otp" | "resend" | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [resendAvailableAt, setResendAvailableAt] = useState<number | null>(null);
+  const [resendSecondsLeft, setResendSecondsLeft] = useState(0);
 
   useEffect(() => {
     if (!expiresAt) {
@@ -67,30 +62,54 @@ const SuperAdminLoginPage = () => {
     };
   }, [expiresAt]);
 
-  const handleCredentialsSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  useEffect(() => {
+    if (!resendAvailableAt) {
+      setResendSecondsLeft(0);
+      return;
+    }
+
+    const updateCountdown = () => {
+      setResendSecondsLeft(Math.max(0, Math.ceil((resendAvailableAt - Date.now()) / 1000)));
+    };
+
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 1000);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [resendAvailableAt]);
+
+  const sendOtpToEmail = async (resend = false) => {
+    const normalizedEmail = email.trim().toLowerCase();
     setError("");
-    setStepLoading("credentials");
+    setStepLoading(resend ? "resend" : "email");
 
     try {
-      const response = await startSuperAdminLogin(email.trim().toLowerCase(), password);
-      setChallengeId(response.challengeId);
-      setDeliveryChannel(response.channel);
+      const response = await startSuperAdminLogin(normalizedEmail);
+      setEmail(response.email);
+      setOtpEmail(response.email);
       setMaskedDestination(response.maskedDestination);
       setOtp("");
       setExpiresAt(Date.now() + response.expiresIn * 1000);
+      setResendAvailableAt(Date.now() + response.retryAfter * 1000);
     } catch (submitError) {
-      const message = submitError instanceof Error ? submitError.message : "Unable to continue.";
+      const message = submitError instanceof Error ? submitError.message : "Unable to send OTP.";
       setError(message);
     } finally {
       setStepLoading(null);
     }
   };
 
+  const handleEmailSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await sendOtpToEmail(false);
+  };
+
   const handleOtpSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!challengeId) {
-      setError("Restart the login flow and request a new OTP.");
+    const normalizedEmail = otpEmail || email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError("Enter your super admin email again to continue.");
       return;
     }
 
@@ -98,7 +117,7 @@ const SuperAdminLoginPage = () => {
     setStepLoading("otp");
 
     try {
-      await verifySuperAdminOtp(challengeId, otp);
+      await verifySuperAdminOtp(normalizedEmail, otp);
       navigate(redirectTarget ?? SUPER_ADMIN_DASHBOARD_ROUTE, { replace: true });
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : "Unable to verify OTP.";
@@ -109,16 +128,16 @@ const SuperAdminLoginPage = () => {
     }
   };
 
-  const handleBackToCredentials = () => {
-    setChallengeId("");
+  const handleBackToEmail = () => {
+    setOtpEmail("");
     setOtp("");
-    setDeliveryChannel(null);
     setMaskedDestination("");
     setExpiresAt(null);
+    setResendAvailableAt(null);
     setError("");
   };
 
-  const isOtpStep = !!challengeId;
+  const isOtpStep = !!otpEmail;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4">
@@ -133,8 +152,8 @@ const SuperAdminLoginPage = () => {
               <h1 className="mt-2 text-3xl font-semibold text-zinc-100">Super Admin Login</h1>
               <p className="mt-2 text-sm text-zinc-400">
                 {isOtpStep
-                  ? "Verify the 6-digit OTP to complete your secure sign-in."
-                  : "Enter your super admin credentials to continue to OTP verification."}
+                  ? "Enter the 6-digit OTP from your inbox to finish signing in."
+                  : "Enter your approved Super Admin email to receive a one-time login code."}
               </p>
             </div>
           </div>
@@ -147,7 +166,7 @@ const SuperAdminLoginPage = () => {
           ) : null}
 
           {!isOtpStep ? (
-            <form className="space-y-4" onSubmit={handleCredentialsSubmit}>
+            <form className="space-y-4" onSubmit={handleEmailSubmit}>
               <div className="space-y-2">
                 <Label className="text-zinc-300">Email address</Label>
                 <Input
@@ -160,42 +179,20 @@ const SuperAdminLoginPage = () => {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label className="text-zinc-300">Password</Label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    className="h-12 rounded-2xl border-zinc-700 bg-zinc-950 pr-12 text-zinc-100 placeholder:text-zinc-500"
-                    placeholder="Enter your password"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((value) => !value)}
-                    className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-zinc-400 transition hover:text-zinc-200"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-
               <Button
                 type="submit"
                 className="h-12 w-full rounded-2xl bg-red-500 text-white hover:bg-red-400"
-                disabled={stepLoading === "credentials"}
+                disabled={stepLoading === "email" || stepLoading === "resend"}
               >
-                {stepLoading === "credentials" ? (
+                {stepLoading === "email" ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Verifying...
+                    Sending OTP...
                   </>
                 ) : (
                   <>
-                    <LockKeyhole className="mr-2 h-4 w-4" />
-                    Continue
+                    <Mail className="mr-2 h-4 w-4" />
+                    Send OTP
                   </>
                 )}
               </Button>
@@ -204,11 +201,16 @@ const SuperAdminLoginPage = () => {
             <form className="space-y-5" onSubmit={handleOtpSubmit}>
               <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-sm text-zinc-300">
                 <div className="flex items-center gap-2 font-medium text-zinc-100">
-                  {deliveryChannel === "email" ? <Mail className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}
+                  <Mail className="h-4 w-4" />
                   OTP sent to {maskedDestination}
                 </div>
                 <p className="mt-2 text-zinc-400">
-                  {secondsLeft > 0 ? `Code expires in ${formatCountdown(secondsLeft)}.` : "This code has expired. Request a new one."}
+                  {secondsLeft > 0 ? `Code expires in ${formatCountdown(secondsLeft)}.` : "This code has expired. Request a new OTP."}
+                </p>
+                <p className="mt-1 text-zinc-500">
+                  {resendSecondsLeft > 0
+                    ? `You can request another OTP in ${formatCountdown(resendSecondsLeft)}.`
+                    : "You can request another OTP if you did not receive it."}
                 </p>
               </div>
 
@@ -232,7 +234,7 @@ const SuperAdminLoginPage = () => {
                   type="button"
                   variant="outline"
                   className="h-12 flex-1 rounded-2xl border-zinc-700 bg-zinc-950 text-zinc-200 hover:bg-zinc-800"
-                  onClick={handleBackToCredentials}
+                  onClick={handleBackToEmail}
                 >
                   <ArrowLeft className="mr-2 h-4 w-4" />
                   Back
@@ -252,6 +254,25 @@ const SuperAdminLoginPage = () => {
                   )}
                 </Button>
               </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 w-full rounded-2xl text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+                disabled={resendSecondsLeft > 0 || stepLoading === "email" || stepLoading === "resend"}
+                onClick={() => {
+                  void sendOtpToEmail(true);
+                }}
+              >
+                {stepLoading === "resend" ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Resending OTP...
+                  </>
+                ) : (
+                  "Resend OTP"
+                )}
+              </Button>
             </form>
           )}
         </CardContent>

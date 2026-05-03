@@ -1,3 +1,5 @@
+import { getServerAuthConfigRequirements } from "../authRuntimeConfig.js";
+
 type EnvCheckResult = {
   missing: string[];
   ok: boolean;
@@ -19,6 +21,12 @@ export const validateServerStartupEnv = (env: NodeJS.ProcessEnv): EnvCheckResult
 
   if (!requireOneOf(env, "APP_URL", "PUBLIC_APP_URL", "SITE_URL")) {
     missing.push("APP_URL|PUBLIC_APP_URL|SITE_URL");
+  }
+
+  for (const requirement of getServerAuthConfigRequirements(env)) {
+    if (!missing.includes(requirement)) {
+      missing.push(requirement);
+    }
   }
 
   return {

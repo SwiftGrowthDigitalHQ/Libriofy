@@ -33,6 +33,11 @@ import {
   type SuperAdminVerifyOtpResponse,
   type VerifyOtpResponse,
 } from "./auth.shared.js";
+import {
+  getSuperAdminLoginRuntimeIssues,
+  getSuperAdminVerifyRuntimeIssues,
+  type AuthConfigIssue,
+} from "./authRuntimeConfig.js";
 import { sendEmail } from "./email.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
@@ -73,10 +78,9 @@ type UserRoleRow = {
   role: string;
 };
 
-type SuperAdminCredentialRow = {
+type SuperAdminEmailLookupRow = {
   email: string | null;
   full_name: string | null;
-  phone_number: string | null;
   user_id: string;
 };
 
@@ -119,16 +123,16 @@ type TrustedDeviceRow = {
   user_id: string;
 };
 
-type SuperAdminChallengeRecord = {
+type SuperAdminOtpRecord = {
   attempts: number;
-  challengeId: string;
+  createdAt: number;
   deliveryChannel: SuperAdminOtpChannel;
   email: string;
   expiresAt: number;
   fingerprintHash: string | null;
   fullName: string | null;
-  otpHash: string;
-  phone: string | null;
+  hashedOtp: string;
+  ip: string | null;
   userId: string;
 };
 
@@ -150,7 +154,8 @@ const DELIVERY_RECORD_TTL_SECONDS = 20 * 60;
 const SEND_OTP_IP_LIMIT = 20;
 const VERIFY_OTP_IP_LIMIT = 40;
 const EMAIL_LOGIN_IP_LIMIT = 20;
-const SUPER_ADMIN_LOGIN_IP_LIMIT = 10;
+const SUPER_ADMIN_OTP_REQUEST_LIMIT = 3;
+const SUPER_ADMIN_OTP_REQUEST_WINDOW_SECONDS = 60;
 const SUPER_ADMIN_VERIFY_IP_LIMIT = 10;
 const SUPER_ADMIN_FAILED_ATTEMPT_LIMIT = 5;
 const RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
@@ -341,8 +346,7 @@ const phoneBlockKey = (phone: string) => `auth:otp:block:${phone}`;
 const deliveryKey = (requestId: string) => `auth:otp:delivery:${requestId}`;
 const deliverySidKey = (sid: string) => `auth:otp:delivery:sid:${sid}`;
 const rateKey = (scope: string, value: string) => `auth:rate:${scope}:${value}`;
-const superAdminChallengeKey = (challengeId: string) => `auth:super-admin:challenge:${challengeId}`;
-const superAdminChallengePointerKey = (email: string) => `auth:super-admin:challenge:email:${sha256(email)}`;
+const superAdminOtpKey = (email: string) => `super_admin_otp:${email}`;
 const superAdminFailureKey = (scope: "email" | "ip", value: string) => `auth:super-admin:fail:${scope}:${value}`;
 const superAdminBlockKey = (scope: "email" | "ip", value: string) => `auth:super-admin:block:${scope}:${value}`;
 
@@ -417,37 +421,58 @@ const normalizeEmail = (value: unknown) => trimText(value).toLowerCase();
 const buildLoginDeviceLabel = (context: RequestContext) =>
   [trimText(context.deviceLabel), trimText(context.userAgent)].filter(Boolean).join(" | ") || "unknown";
 
-const getSuperAdminChallenge = async (redis: IORedis, challengeId: string) => {
-  const rawRecord = await redis.get(superAdminChallengeKey(challengeId));
+const logSuperAdminDebug = (message: string, details: Record<string, unknown>) => {
+  console.info(`[auth][super-admin] ${message}`, details);
+};
+
+const logSuperAdminRuntimeIssues = (
+  flow: "login" | "verify",
+  issues: AuthConfigIssue[],
+  context: RequestContext,
+  email?: string | null,
+) => {
+  console.error("[auth][super-admin] auth runtime configuration is incomplete", {
+    device: buildLoginDeviceLabel(context),
+    email: email ? maskEmailAddress(email) : null,
+    flow,
+    ip: trimText(context.ip) || null,
+    issues: issues.map((issue) => ({
+      code: issue.code,
+      message: issue.message,
+      missing: issue.missing,
+    })),
+  });
+};
+
+const buildRuntimeIssueResponse = <T>(issues: AuthConfigIssue[]): ServiceResponse<T> => {
+  const primaryIssue = issues[0];
+  if (!primaryIssue) {
+    return buildError(503, "Super admin sign-in is temporarily unavailable.", "AUTH_INFRA_UNAVAILABLE");
+  }
+
+  return buildError(503, primaryIssue.message, primaryIssue.code);
+};
+
+const getSuperAdminOtpRecord = async (redis: IORedis, email: string) => {
+  const rawRecord = await redis.get(superAdminOtpKey(email));
   if (!rawRecord) {
     return null;
   }
 
   try {
-    return JSON.parse(rawRecord) as SuperAdminChallengeRecord;
+    return JSON.parse(rawRecord) as SuperAdminOtpRecord;
   } catch {
     return null;
   }
 };
 
-const setSuperAdminChallenge = async (redis: IORedis, record: SuperAdminChallengeRecord) => {
+const setSuperAdminOtpRecord = async (redis: IORedis, record: SuperAdminOtpRecord) => {
   const ttlSeconds = Math.max(1, Math.ceil((record.expiresAt - Date.now()) / 1000));
-  await redis
-    .multi()
-    .set(superAdminChallengeKey(record.challengeId), JSON.stringify(record), "EX", ttlSeconds)
-    .set(superAdminChallengePointerKey(record.email), record.challengeId, "EX", ttlSeconds)
-    .exec();
+  await redis.set(superAdminOtpKey(record.email), JSON.stringify(record), "EX", ttlSeconds);
 };
 
-const clearSuperAdminChallenge = async (redis: IORedis, record: Pick<SuperAdminChallengeRecord, "challengeId" | "email">) => {
-  const pointerKey = superAdminChallengePointerKey(record.email);
-  const currentPointer = await redis.get(pointerKey);
-  const multi = redis.multi();
-  multi.del(superAdminChallengeKey(record.challengeId));
-  if (currentPointer === record.challengeId) {
-    multi.del(pointerKey);
-  }
-  await multi.exec();
+const clearSuperAdminOtpRecord = async (redis: IORedis, email: string) => {
+  await redis.del(superAdminOtpKey(email));
 };
 
 const getSuperAdminBlockedTtl = async (redis: IORedis, email: string, ip: string) => {
@@ -515,31 +540,26 @@ const trackSuperAdminFailure = async (redis: IORedis, email: string, ip: string)
 const canSendSuperAdminEmailOtp = (env: EnvLike) =>
   !!readEnv(env, "RESEND_API_KEY") && !!readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
 
-const canSendSuperAdminWhatsappOtp = (env: EnvLike) => {
-  const twilio = resolveTwilioConfig(env);
-  return !!twilio.accountSid && !!twilio.authToken && !!twilio.whatsappFrom;
-};
-
-const buildSuperAdminEmailSubject = () => "Your Libriofy Super Admin OTP";
+const buildSuperAdminEmailSubject = () => "Libriofy Admin Login OTP";
 
 const buildSuperAdminEmailText = (otp: string, fullName: string | null) =>
   [
     fullName ? `Hi ${fullName},` : "Hi,",
     "",
-    `Your Libriofy Super Admin OTP is ${otp}.`,
-    "It expires in 5 minutes.",
-    "Do not share this code with anyone.",
+    `Your OTP is: ${otp}`,
+    "Valid for 5 minutes.",
+    "Do not share this code.",
   ].join("\n");
 
 const buildSuperAdminEmailHtml = (otp: string, fullName: string | null) => `
   <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#18181b;">
     <p style="margin:0 0 16px;">${fullName ? `Hi ${fullName},` : "Hi,"}</p>
-    <p style="margin:0 0 16px;">Use this OTP to finish your Libriofy Super Admin login:</p>
+    <p style="margin:0 0 16px;">Use this code to access the Libriofy Super Admin panel:</p>
     <div style="margin:0 0 20px;padding:18px 20px;border-radius:16px;background:#111827;color:#fff;font-size:32px;letter-spacing:8px;font-weight:700;text-align:center;">
       ${otp}
     </div>
-    <p style="margin:0 0 8px;">This code expires in 5 minutes.</p>
-    <p style="margin:0;color:#52525b;">Do not share this code with anyone.</p>
+    <p style="margin:0 0 8px;">Valid for 5 minutes.</p>
+    <p style="margin:0;color:#52525b;">Do not share this code.</p>
   </div>
 `;
 
@@ -575,33 +595,6 @@ const sendSuperAdminOtpEmail = async ({
   });
 };
 
-const sendSuperAdminWhatsappOtp = async ({
-  env,
-  otp,
-  phone,
-}: {
-  env: EnvLike;
-  otp: string;
-  phone: string;
-}) => {
-  const twilio = resolveTwilioConfig(env);
-  const defaultCountryCode = resolveDefaultCountryCode(env);
-  if (!twilio.accountSid || !twilio.authToken || !twilio.whatsappFrom) {
-    throw new Error("WhatsApp OTP delivery is not configured.");
-  }
-
-  await sendViaTwilio({
-    accountSid: twilio.accountSid,
-    authToken: twilio.authToken,
-    body: `Libriofy Super Admin OTP: ${otp}. Valid for 5 minutes. Do not share.`,
-    channel: "whatsapp",
-    defaultCountryCode,
-    from: twilio.whatsappFrom,
-    statusCallback: resolveTwilioStatusCallbackUrl(env) || undefined,
-    to: phone,
-  });
-};
-
 const isSuperAdminEmailAllowedByEnv = (env: EnvLike, email: string) => {
   const allowList = readEnv(env, "SUPER_ADMIN_ALLOWED_EMAILS", "SUPER_ADMIN_EMAIL_ALLOWLIST");
   if (!allowList) {
@@ -634,7 +627,7 @@ const logLoginAttempt = async ({
   env: EnvLike;
   reason?: string | null;
   status: "success" | "failed";
-  step: "password" | "otp";
+  step: "email" | "otp";
   userId?: string | null;
 }) => {
   try {
@@ -715,18 +708,17 @@ const findUserByPhone = async (env: EnvLike, phone: string) => {
   return loadAuthUserById(env, typedProfile.user_id);
 };
 
-const resolveSuperAdminCredentialUser = async (env: EnvLike, email: string, password: string) => {
+const resolveSuperAdminEmailUser = async (env: EnvLike, email: string) => {
   const serviceClient = createServiceClient(env);
-  const { data, error } = await serviceClient.rpc("super_admin_verify_password", {
+  const { data, error } = await serviceClient.rpc("find_super_admin_by_email", {
     candidate_email: email,
-    candidate_password: password,
   });
 
   if (error) {
     throw error;
   }
 
-  const row = Array.isArray(data) ? (data[0] as SuperAdminCredentialRow | undefined) : undefined;
+  const row = Array.isArray(data) ? (data[0] as SuperAdminEmailLookupRow | undefined) : undefined;
   if (!row?.user_id) {
     return null;
   }
@@ -736,7 +728,6 @@ const resolveSuperAdminCredentialUser = async (env: EnvLike, email: string, pass
     ...user,
     email: user.email ?? row.email ?? null,
     fullName: user.fullName ?? row.full_name ?? null,
-    phone: user.phone ?? row.phone_number ?? null,
   } satisfies AuthUser;
 };
 
@@ -767,14 +758,14 @@ const mintAccessToken = ({
   const now = Math.floor(Date.now() / 1000);
   const provider =
     sessionScope === "super_admin"
-      ? "super_admin_mfa"
+      ? "super_admin_email_otp"
       : loginMethod === "otp"
         ? "phone_otp"
         : "email_password";
   const authMethods =
     sessionScope === "super_admin"
       ? [
-          { method: "password", timestamp: now },
+          { method: "email", timestamp: now },
           { method: "otp", timestamp: now },
         ]
       : [{ method: loginMethod === "otp" ? "otp" : "password", timestamp: now }];
@@ -1355,37 +1346,72 @@ export const resolveSuperAdminLoginRequest = async (
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
       : {};
+  const email = normalizeEmail(body.email);
+  const runtimeIssues = getSuperAdminLoginRuntimeIssues(env);
+
+  if (runtimeIssues.length) {
+    logSuperAdminRuntimeIssues("login", runtimeIssues, context, email);
+    return buildRuntimeIssueResponse(runtimeIssues);
+  }
+
+  logSuperAdminDebug("login request received", {
+    device: buildLoginDeviceLabel(context),
+    email: maskEmailAddress(email),
+    ip: trimText(context.ip) || null,
+  });
 
   const redis = getRedisConnection(env);
   const ip = trimText(context.ip);
-  const ipRetryAfter = await enforceRateLimit(
-    redis,
-    "super-admin-login-ip",
-    ip,
-    SUPER_ADMIN_LOGIN_IP_LIMIT,
-    RATE_LIMIT_WINDOW_SECONDS,
-  );
-  if (ipRetryAfter) {
-    return buildError(429, "Too many super admin login attempts from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
-      retryAfter: ipRetryAfter,
+  const [ipRetryAfter, emailRetryAfter] = await Promise.all([
+    enforceRateLimit(
+      redis,
+      "super-admin-send-otp-ip",
+      ip,
+      SUPER_ADMIN_OTP_REQUEST_LIMIT,
+      SUPER_ADMIN_OTP_REQUEST_WINDOW_SECONDS,
+    ),
+    enforceRateLimit(
+      redis,
+      "super-admin-send-otp-email",
+      email,
+      SUPER_ADMIN_OTP_REQUEST_LIMIT,
+      SUPER_ADMIN_OTP_REQUEST_WINDOW_SECONDS,
+    ),
+  ]);
+  const retryAfter = Math.max(ipRetryAfter || 0, emailRetryAfter || 0);
+  if (retryAfter > 0) {
+    logSuperAdminDebug("OTP request rate limited", {
+      email: maskEmailAddress(email),
+      emailRetryAfter: emailRetryAfter || null,
+      ip: ip || null,
+      ipRetryAfter: ipRetryAfter || null,
+    });
+    return buildError(429, "Too many Super Admin OTP requests. Please wait a bit.", "RATE_LIMITED", {
+      retryAfter,
     });
   }
 
-  const email = normalizeEmail(body.email);
-  const password = trimText(body.password);
-  if (!email || !password) {
-    return buildError(400, "Email and password are required.", "INVALID_REQUEST");
+  if (!email) {
+    logSuperAdminDebug("login request rejected because email is missing", {
+      email: maskEmailAddress(email),
+    });
+    return buildError(400, "Enter your approved Super Admin email to continue.", "INVALID_REQUEST");
   }
 
   const blockedTtl = await getSuperAdminBlockedTtl(redis, email, ip);
   if (blockedTtl > 0) {
+    logSuperAdminDebug("login blocked after repeated failures", {
+      email: maskEmailAddress(email),
+      ip: ip || null,
+      retryAfter: blockedTtl,
+    });
     await logLoginAttempt({
       context,
       email,
       env,
       reason: "blocked",
       status: "failed",
-      step: "password",
+      step: "email",
     });
     return buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
       retryAfter: blockedTtl,
@@ -1394,97 +1420,116 @@ export const resolveSuperAdminLoginRequest = async (
 
   if (!isSuperAdminEmailAllowedByEnv(env, email)) {
     const failure = await trackSuperAdminFailure(redis, email, ip);
+    logSuperAdminDebug("login rejected because email is not allow-listed", {
+      blocked: failure.blocked,
+      email: maskEmailAddress(email),
+      ip: ip || null,
+      retryAfter: failure.retryAfter || null,
+    });
     await logLoginAttempt({
       context,
       email,
       env,
       reason: "email_not_allowed",
       status: "failed",
-      step: "password",
+      step: "email",
     });
 
     return failure.blocked
       ? buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
           retryAfter: failure.retryAfter || SUPER_ADMIN_BLOCK_WINDOW_SECONDS,
         })
-      : buildError(401, "Invalid email or password.", "INVALID_CREDENTIALS");
+      : buildError(403, "This email is not authorized for Super Admin access.", "ACCESS_DENIED");
   }
 
-  const user = await resolveSuperAdminCredentialUser(env, email, password);
-  if (!user || !user.roles.includes("super_admin")) {
+  const user = await resolveSuperAdminEmailUser(env, email);
+  logSuperAdminDebug("super admin email lookup completed", {
+    email: maskEmailAddress(email),
+    matched: Boolean(user),
+    roles: user?.roles ?? [],
+    userId: user?.id ?? null,
+  });
+  const hasSuperAdminRole = !!user?.roles.includes("super_admin");
+  logSuperAdminDebug("role check completed", {
+    email: maskEmailAddress(email),
+    hasSuperAdminRole,
+    userId: user?.id ?? null,
+  });
+
+  if (!user || !hasSuperAdminRole) {
     const failure = await trackSuperAdminFailure(redis, email, ip);
     await logLoginAttempt({
       context,
       email,
       env,
-      reason: "invalid_credentials",
+      reason: "access_denied",
       status: "failed",
-      step: "password",
+      step: "email",
     });
 
     return failure.blocked
       ? buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
           retryAfter: failure.retryAfter || SUPER_ADMIN_BLOCK_WINDOW_SECONDS,
         })
-      : buildError(401, "Invalid email or password.", "INVALID_CREDENTIALS");
+      : buildError(403, "This email is not authorized for Super Admin access.", "ACCESS_DENIED");
   }
 
   const otp = String(randomInt(0, 1_000_000)).padStart(6, "0");
-  const challengeId = createRequestId();
-  const otpHash = await bcrypt.hash(otp, OTP_HASH_ROUNDS);
+  const hashedOtp = await bcrypt.hash(otp, OTP_HASH_ROUNDS);
   const normalizedAccountEmail = normalizeEmail(user.email ?? email);
-  const existingChallengeId = await redis.get(superAdminChallengePointerKey(normalizedAccountEmail));
-  if (existingChallengeId) {
-    await redis.del(superAdminChallengeKey(existingChallengeId), superAdminChallengePointerKey(normalizedAccountEmail));
-  }
+  const deliveryChannel: SuperAdminOtpChannel = "email";
+  const preferredEmail = normalizedAccountEmail;
 
-  let channel: SuperAdminOtpChannel | null = null;
-  let maskedDestination = "";
-  const preferredEmail = normalizeEmail(user.email);
-
-  if (preferredEmail && canSendSuperAdminEmailOtp(env)) {
-    try {
-      await sendSuperAdminOtpEmail({
-        email: preferredEmail,
-        env,
-        fullName: user.fullName,
-        otp,
-      });
-      channel = "email";
-      maskedDestination = maskEmailAddress(preferredEmail);
-    } catch (error) {
-      console.warn("[auth] Super admin email OTP failed, checking WhatsApp fallback", error);
-    }
-  }
-
-  if (!channel && user.phone && canSendSuperAdminWhatsappOtp(env)) {
-    await sendSuperAdminWhatsappOtp({
-      env,
-      otp,
-      phone: user.phone,
-    });
-    channel = "whatsapp";
-    maskedDestination = user.phone.replace(/\d(?=\d{4})/g, "*");
-  }
-
-  if (!channel) {
-    return buildError(
-      503,
-      "No OTP delivery channel is configured for this super admin account.",
-      "OTP_DELIVERY_UNAVAILABLE",
-    );
-  }
-
-  await setSuperAdminChallenge(redis, {
+  await setSuperAdminOtpRecord(redis, {
     attempts: 0,
-    challengeId,
-    deliveryChannel: channel,
+    createdAt: Date.now(),
+    deliveryChannel,
     email: normalizedAccountEmail,
     expiresAt: Date.now() + SUPER_ADMIN_OTP_TTL_SECONDS * 1000,
     fingerprintHash: trimText(context.deviceFingerprint) ? sha256(trimText(context.deviceFingerprint)) : null,
     fullName: user.fullName,
-    otpHash,
-    phone: user.phone,
+    hashedOtp,
+    ip: ip || null,
+    userId: user.id,
+  });
+  logSuperAdminDebug("OTP record stored", {
+    channel: deliveryChannel,
+    email: maskEmailAddress(normalizedAccountEmail),
+    expiresIn: SUPER_ADMIN_OTP_TTL_SECONDS,
+    userId: user.id,
+  });
+
+  try {
+    await sendSuperAdminOtpEmail({
+      email: preferredEmail,
+      env,
+      fullName: user.fullName,
+      otp,
+    });
+  } catch (error) {
+    await clearSuperAdminOtpRecord(redis, normalizedAccountEmail);
+    console.warn("[auth] Super admin email OTP delivery failed", error);
+    await logLoginAttempt({
+      channel: deliveryChannel,
+      context,
+      email: normalizedAccountEmail,
+      env,
+      reason: "otp_delivery_failed",
+      status: "failed",
+      step: "email",
+      userId: user.id,
+    });
+    return buildError(503, "Unable to send the Super Admin OTP right now.", "OTP_DELIVERY_UNAVAILABLE");
+  }
+
+  await logLoginAttempt({
+    channel: deliveryChannel,
+    context,
+    email: normalizedAccountEmail,
+    env,
+    reason: "otp_sent",
+    status: "success",
+    step: "email",
     userId: user.id,
   });
 
@@ -1492,11 +1537,11 @@ export const resolveSuperAdminLoginRequest = async (
     statusCode: 200,
     body: {
       success: true,
-      challengeId,
-      channel,
+      channel: deliveryChannel,
+      email: normalizedAccountEmail,
       expiresIn: SUPER_ADMIN_OTP_TTL_SECONDS,
-      maskedDestination,
-      message: `OTP sent via ${channel === "email" ? "email" : "WhatsApp"}.`,
+      maskedDestination: maskEmailAddress(preferredEmail),
+      message: "OTP sent to your Super Admin email.",
       retryAfter: OTP_COOLDOWN_SECONDS,
     },
   };
@@ -1511,6 +1556,21 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
       : {};
+  const runtimeIssues = getSuperAdminVerifyRuntimeIssues(env);
+  const email = normalizeEmail(body.email);
+  const otp = trimText(body.otp);
+
+  if (runtimeIssues.length) {
+    logSuperAdminRuntimeIssues("verify", runtimeIssues, context, email);
+    return buildRuntimeIssueResponse(runtimeIssues);
+  }
+
+  logSuperAdminDebug("OTP verification request received", {
+    device: buildLoginDeviceLabel(context),
+    email: maskEmailAddress(email),
+    hasOtp: Boolean(otp),
+    ip: trimText(context.ip) || null,
+  });
 
   const redis = getRedisConnection(env);
   const ip = trimText(context.ip);
@@ -1522,70 +1582,100 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     RATE_LIMIT_WINDOW_SECONDS,
   );
   if (ipRetryAfter) {
+    logSuperAdminDebug("OTP verification IP rate limited", {
+      email: maskEmailAddress(email),
+      ip: ip || null,
+      retryAfter: ipRetryAfter,
+    });
     return buildError(429, "Too many OTP verification attempts from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
       retryAfter: ipRetryAfter,
     });
   }
 
-  const challengeId = trimText(body.challengeId);
-  const otp = trimText(body.otp);
-  if (!challengeId || !isValidOtpCode(otp)) {
+  if (!email || !isValidOtpCode(otp)) {
+    logSuperAdminDebug("OTP verification rejected because input is invalid", {
+      email: maskEmailAddress(email),
+      otpLength: otp.length,
+    });
     return buildError(400, "Enter the 6-digit OTP to continue.", "INVALID_REQUEST");
   }
 
-  const challenge = await getSuperAdminChallenge(redis, challengeId);
-  if (!challenge) {
+  const otpRecord = await getSuperAdminOtpRecord(redis, email);
+  logSuperAdminDebug("OTP record lookup completed", {
+    email: maskEmailAddress(email),
+    recordFound: Boolean(otpRecord),
+  });
+  if (!otpRecord) {
+    await logLoginAttempt({
+      channel: "email",
+      context,
+      email,
+      env,
+      reason: "otp_missing_or_expired",
+      status: "failed",
+      step: "otp",
+    });
     return buildError(410, "OTP expired. Restart the super admin login flow.", "OTP_EXPIRED");
   }
 
-  const blockedTtl = await getSuperAdminBlockedTtl(redis, challenge.email, ip);
+  const blockedTtl = await getSuperAdminBlockedTtl(redis, otpRecord.email, ip);
   if (blockedTtl > 0) {
+    logSuperAdminDebug("OTP verification blocked after repeated failures", {
+      email: maskEmailAddress(otpRecord.email),
+      ip: ip || null,
+      retryAfter: blockedTtl,
+    });
     await logLoginAttempt({
-      channel: challenge.deliveryChannel,
+      channel: otpRecord.deliveryChannel,
       context,
-      email: challenge.email,
+      email: otpRecord.email,
       env,
       reason: "blocked",
       status: "failed",
       step: "otp",
-      userId: challenge.userId,
+      userId: otpRecord.userId,
     });
     return buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
       retryAfter: blockedTtl,
     });
   }
 
-  if (challenge.expiresAt <= Date.now()) {
-    await clearSuperAdminChallenge(redis, challenge);
+  if (otpRecord.expiresAt <= Date.now()) {
+    await clearSuperAdminOtpRecord(redis, otpRecord.email);
     await logLoginAttempt({
-      channel: challenge.deliveryChannel,
+      channel: otpRecord.deliveryChannel,
       context,
-      email: challenge.email,
+      email: otpRecord.email,
       env,
       reason: "otp_expired",
       status: "failed",
       step: "otp",
-      userId: challenge.userId,
+      userId: otpRecord.userId,
     });
     return buildError(410, "OTP expired. Restart the super admin login flow.", "OTP_EXPIRED");
   }
 
   if (
-    challenge.fingerprintHash &&
+    otpRecord.fingerprintHash &&
     trimText(context.deviceFingerprint) &&
-    challenge.fingerprintHash !== sha256(trimText(context.deviceFingerprint))
+    otpRecord.fingerprintHash !== sha256(trimText(context.deviceFingerprint))
   ) {
-    await clearSuperAdminChallenge(redis, challenge);
-    const failure = await trackSuperAdminFailure(redis, challenge.email, ip);
+    logSuperAdminDebug("OTP verification failed because device fingerprint changed", {
+      email: maskEmailAddress(otpRecord.email),
+      ip: ip || null,
+      userId: otpRecord.userId,
+    });
+    await clearSuperAdminOtpRecord(redis, otpRecord.email);
+    const failure = await trackSuperAdminFailure(redis, otpRecord.email, ip);
     await logLoginAttempt({
-      channel: challenge.deliveryChannel,
+      channel: otpRecord.deliveryChannel,
       context,
-      email: challenge.email,
+      email: otpRecord.email,
       env,
       reason: "device_mismatch",
       status: "failed",
       step: "otp",
-      userId: challenge.userId,
+      userId: otpRecord.userId,
     });
 
     return failure.blocked
@@ -1595,41 +1685,46 @@ export const resolveSuperAdminVerifyOtpRequest = async (
       : buildError(401, "Device verification failed. Restart login and try again.", "DEVICE_MISMATCH");
   }
 
-  const matches = await bcrypt.compare(otp, challenge.otpHash);
+  const matches = await bcrypt.compare(otp, otpRecord.hashedOtp);
+  logSuperAdminDebug("OTP comparison completed", {
+    email: maskEmailAddress(otpRecord.email),
+    matched: matches,
+    userId: otpRecord.userId,
+  });
   if (!matches) {
-    const nextAttempts = challenge.attempts + 1;
-    const failure = await trackSuperAdminFailure(redis, challenge.email, ip);
+    const nextAttempts = otpRecord.attempts + 1;
+    const failure = await trackSuperAdminFailure(redis, otpRecord.email, ip);
 
     if (nextAttempts >= SUPER_ADMIN_FAILED_ATTEMPT_LIMIT || failure.blocked) {
-      await clearSuperAdminChallenge(redis, challenge);
+      await clearSuperAdminOtpRecord(redis, otpRecord.email);
       await logLoginAttempt({
-        channel: challenge.deliveryChannel,
+        channel: otpRecord.deliveryChannel,
         context,
-        email: challenge.email,
+        email: otpRecord.email,
         env,
         reason: "otp_attempts_exceeded",
         status: "failed",
         step: "otp",
-        userId: challenge.userId,
+        userId: otpRecord.userId,
       });
       return buildError(429, "Too many failed attempts. Try again in 15 minutes.", "LOGIN_BLOCKED", {
         retryAfter: failure.retryAfter || SUPER_ADMIN_BLOCK_WINDOW_SECONDS,
       });
     }
 
-    await setSuperAdminChallenge(redis, {
-      ...challenge,
+    await setSuperAdminOtpRecord(redis, {
+      ...otpRecord,
       attempts: nextAttempts,
     });
     await logLoginAttempt({
-      channel: challenge.deliveryChannel,
+      channel: otpRecord.deliveryChannel,
       context,
-      email: challenge.email,
+      email: otpRecord.email,
       env,
       reason: "otp_invalid",
       status: "failed",
       step: "otp",
-      userId: challenge.userId,
+      userId: otpRecord.userId,
     });
 
     return buildError(401, "OTP is incorrect or expired.", "OTP_INVALID", {
@@ -1637,20 +1732,27 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     });
   }
 
-  await clearSuperAdminChallenge(redis, challenge);
-  await clearSuperAdminFailures(redis, challenge.email, ip);
+  await clearSuperAdminOtpRecord(redis, otpRecord.email);
+  await clearSuperAdminFailures(redis, otpRecord.email, ip);
 
-  const user = await loadAuthUserById(env, challenge.userId);
-  if (!user.roles.includes("super_admin")) {
+  const user = await loadAuthUserById(env, otpRecord.userId);
+  const hasSuperAdminRole = user.roles.includes("super_admin");
+  logSuperAdminDebug("post-OTP role check completed", {
+    email: maskEmailAddress(otpRecord.email),
+    hasSuperAdminRole,
+    roles: user.roles,
+    userId: otpRecord.userId,
+  });
+  if (!hasSuperAdminRole) {
     await logLoginAttempt({
-      channel: challenge.deliveryChannel,
+      channel: otpRecord.deliveryChannel,
       context,
-      email: challenge.email,
+      email: otpRecord.email,
       env,
-      reason: "role_missing_after_challenge",
+      reason: "role_missing_after_otp",
       status: "failed",
       step: "otp",
-      userId: challenge.userId,
+      userId: otpRecord.userId,
     });
     return buildError(403, "Super admin access is no longer available for this account.", "ACCESS_DENIED");
   }
@@ -1658,7 +1760,7 @@ export const resolveSuperAdminVerifyOtpRequest = async (
   const authenticated = await createAuthenticatedResponse({
     ...context,
     authLevel: 2,
-    deliveryChannel: challenge.deliveryChannel,
+    deliveryChannel: otpRecord.deliveryChannel,
     env,
     idleTimeoutSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
     loginMethod: "email",
@@ -1666,23 +1768,30 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     sessionTtlSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
     user,
   });
+  logSuperAdminDebug("super admin session issued", {
+    authLevel: 2,
+    channel: otpRecord.deliveryChannel,
+    email: maskEmailAddress(otpRecord.email),
+    sessionScope: "super_admin",
+    userId: otpRecord.userId,
+  });
 
   await logLoginAttempt({
-    channel: challenge.deliveryChannel,
+    channel: otpRecord.deliveryChannel,
     context,
-    email: challenge.email,
+    email: otpRecord.email,
     env,
     reason: "super_admin_login",
     status: "success",
     step: "otp",
-    userId: challenge.userId,
+    userId: otpRecord.userId,
   });
 
   return {
     statusCode: 200,
     body: {
       success: true,
-      channel: challenge.deliveryChannel,
+      channel: otpRecord.deliveryChannel,
       message: "Super admin login successful.",
       session: authenticated.session,
     },
