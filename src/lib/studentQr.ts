@@ -1,4 +1,4 @@
-import { getPublicAppBaseUrl, isPreviewAppUrl } from "@/lib/publicAppUrl";
+import { getPublicAppBaseUrl, isPreviewAppUrl } from "./publicAppUrl.js";
 
 const JWT_ALG = "RS256" as const;
 const WEB_CRYPTO_RSA_ALG = "RSASSA-PKCS1-v1_5" as const;

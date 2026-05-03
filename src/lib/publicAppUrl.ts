@@ -1,4 +1,4 @@
-import { normalizeBasePath } from "@/lib/maintenance";
+import { normalizeBasePath } from "./maintenance.js";
 
 const PRODUCTION_PUBLIC_APP_URL = "https://www.libriofy.com";
 const VERCEL_PREVIEW_HOST_SUFFIX = ["vercel", "app"].join(".");
