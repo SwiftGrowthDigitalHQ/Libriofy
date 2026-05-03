@@ -40,7 +40,13 @@ import {
   type AuthConfigIssue,
 } from "./authRuntimeConfig.js";
 import { sendEmail } from "./email.js";
-import { resolveLibriofyAppUrl, resolveLibriofyEmailFrom } from "./libriofyConfig.js";
+import {
+  isAllowedLibriofyRequestHost,
+  isAllowedLibriofyRequestOrigin,
+  resolveLibriofyAppUrl,
+  resolveLibriofyEmailFrom,
+} from "./libriofyConfig.js";
+import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
@@ -51,7 +57,10 @@ type RequestContext = {
   cookieHeader?: string;
   deviceFingerprint?: string;
   deviceLabel?: string;
+  host?: string;
   ip?: string;
+  origin?: string;
+  referer?: string;
   userAgent?: string;
 };
 
@@ -154,20 +163,24 @@ type FallbackJobData = {
 const OTP_HASH_ROUNDS = 8;
 const DELIVERY_RECORD_TTL_SECONDS = 20 * 60;
 const SEND_OTP_IP_LIMIT = 20;
+const SEND_OTP_USER_LIMIT = 1;
 const VERIFY_OTP_IP_LIMIT = 40;
 const EMAIL_LOGIN_IP_LIMIT = 20;
-const SUPER_ADMIN_OTP_REQUEST_LIMIT = 3;
-const SUPER_ADMIN_OTP_REQUEST_WINDOW_SECONDS = 60;
+const OTP_REQUEST_WINDOW_SECONDS = 60;
+const SUPER_ADMIN_OTP_REQUEST_LIMIT = 1;
+const SUPER_ADMIN_OTP_REQUEST_WINDOW_SECONDS = OTP_REQUEST_WINDOW_SECONDS;
 const SUPER_ADMIN_VERIFY_IP_LIMIT = 10;
 const SUPER_ADMIN_FAILED_ATTEMPT_LIMIT = 5;
 const RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
 const BLOCK_WINDOW_SECONDS = 10 * 60;
 const SUPER_ADMIN_BLOCK_WINDOW_SECONDS = 15 * 60;
 const FALLBACK_QUEUE_NAME = "libriofy-auth-whatsapp-fallback";
+const WARNING_LOG_TTL_MS = 5 * 60_000;
 
 const redisClients = new Map<string, IORedis>();
 const queueInstances = new Map<string, Queue<FallbackJobData>>();
 const startedWorkerKeys = new Set<string>();
+const authWarningLogCache = new Map<string, number>();
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -258,6 +271,157 @@ const shouldUseSecureCookies = (env: EnvLike) => {
   }
 };
 
+const isNonProductionAuthEnv = (env: EnvLike) => {
+  const appEnv = readEnv(env, "APP_ENV", "NODE_ENV").toLowerCase();
+  return !appEnv || appEnv === "development" || appEnv === "dev" || appEnv === "test" || appEnv === "local";
+};
+
+const toSafeErrorMessage = (error: unknown) =>
+  trimText(error instanceof Error ? error.message : String(error)) || "Unexpected error";
+
+const normalizeOriginForLog = (value: string) => {
+  const normalized = trimText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  try {
+    const url = new URL(normalized);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return normalized.slice(0, 120);
+  }
+};
+
+const shouldSuppressAuthWarning = (dedupeKey: string, ttlMs = WARNING_LOG_TTL_MS) => {
+  const now = Date.now();
+  const lastLoggedAt = authWarningLogCache.get(dedupeKey) ?? 0;
+  if (lastLoggedAt > 0 && now - lastLoggedAt < ttlMs) {
+    return true;
+  }
+
+  authWarningLogCache.set(dedupeKey, now);
+  return false;
+};
+
+const logAuthWarning = (
+  type: string,
+  message: string,
+  metadata: Record<string, unknown>,
+  {
+    dedupeKey = type,
+    entityId,
+    ttlMs = WARNING_LOG_TTL_MS,
+    user,
+  }: {
+    dedupeKey?: string;
+    entityId?: string | null;
+    ttlMs?: number;
+    user?: string | null;
+  } = {},
+) => {
+  if (shouldSuppressAuthWarning(dedupeKey, ttlMs)) {
+    return;
+  }
+
+  void logInternalWarning({
+    type,
+    entityId,
+    user,
+    message,
+    metadata: {
+      area: "auth",
+      ...metadata,
+    },
+  });
+};
+
+const logAuthError = (
+  type: string,
+  message: string,
+  metadata: Record<string, unknown>,
+  {
+    dedupeKey = type,
+    entityId,
+    ttlMs = WARNING_LOG_TTL_MS,
+    user,
+  }: {
+    dedupeKey?: string;
+    entityId?: string | null;
+    ttlMs?: number;
+    user?: string | null;
+  } = {},
+) => {
+  if (shouldSuppressAuthWarning(dedupeKey, ttlMs)) {
+    return;
+  }
+
+  void logInternalError({
+    type,
+    entityId,
+    user,
+    message,
+    metadata: {
+      area: "auth",
+      ...metadata,
+    },
+  });
+};
+
+const logAuthInfo = (type: string, message: string, metadata: Record<string, unknown>) => {
+  if (readEnv(process.env, "AUTH_DEBUG_LOGS").toLowerCase() !== "true") {
+    return;
+  }
+
+  void logInternalInfo({
+    type,
+    message,
+    metadata: {
+      area: "auth",
+      ...metadata,
+    },
+  });
+};
+
+const ensureApprovedAuthOrigin = <T,>(
+  env: EnvLike,
+  context: RequestContext,
+  routeName: string,
+): ServiceResponse<T> | null => {
+  const allowLocalhost = isNonProductionAuthEnv(env);
+  const origin = trimText(context.origin);
+  const referer = trimText(context.referer);
+  const host = trimText(context.host);
+
+  if (!origin && !referer && allowLocalhost) {
+    return null;
+  }
+
+  if (
+    isAllowedLibriofyRequestOrigin(origin, { allowLocalhost }) ||
+    isAllowedLibriofyRequestOrigin(referer, { allowLocalhost }) ||
+    (!origin && !referer && allowLocalhost && isAllowedLibriofyRequestHost(host, { allowLocalhost: true }))
+  ) {
+    return null;
+  }
+
+  logAuthWarning(
+    "AUTH_ORIGIN_REJECTED",
+    "Rejected an auth request from an unapproved origin.",
+    {
+      host: host || null,
+      origin: normalizeOriginForLog(origin) || null,
+      referer: normalizeOriginForLog(referer) || null,
+      route: routeName,
+    },
+    {
+      dedupeKey: `auth-origin:${routeName}:${normalizeOriginForLog(origin) || normalizeOriginForLog(referer) || host || "missing"}`,
+    },
+  );
+
+  return buildError(403, "This request origin is not allowed.", "ORIGIN_NOT_ALLOWED");
+};
+
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 const buildSessionCookie = (env: EnvLike, value: string, maxAgeSeconds: number) =>
@@ -314,7 +478,16 @@ const getRedisConnection = (env: EnvLike) => {
   });
 
   client.on("error", (error) => {
-    console.warn("[auth] Redis connection error", error);
+    logAuthWarning(
+      "AUTH_REDIS_CONNECTION_ERROR",
+      "Redis connection reported an auth infrastructure error.",
+      {
+        error_message: toSafeErrorMessage(error),
+      },
+      {
+        dedupeKey: `auth-redis:${redisUrl}`,
+      },
+    );
   });
 
   redisClients.set(redisUrl, client);
@@ -426,7 +599,7 @@ const buildLoginDeviceLabel = (context: RequestContext) =>
   [trimText(context.deviceLabel), trimText(context.userAgent)].filter(Boolean).join(" | ") || "unknown";
 
 const logSuperAdminDebug = (message: string, details: Record<string, unknown>) => {
-  console.info(`[auth][super-admin] ${message}`, details);
+  logAuthInfo("SUPER_ADMIN_DEBUG", message, details);
 };
 
 const logSuperAdminRuntimeIssues = (
@@ -435,17 +608,24 @@ const logSuperAdminRuntimeIssues = (
   context: RequestContext,
   email?: string | null,
 ) => {
-  console.error("[auth][super-admin] auth runtime configuration is incomplete", {
-    device: buildLoginDeviceLabel(context),
-    email: email ? maskEmailAddress(email) : null,
-    flow,
-    ip: trimText(context.ip) || null,
-    issues: issues.map((issue) => ({
-      code: issue.code,
-      message: issue.message,
-      missing: issue.missing,
-    })),
-  });
+  logAuthError(
+    "SUPER_ADMIN_RUNTIME_CONFIG_INCOMPLETE",
+    "Super admin auth runtime configuration is incomplete.",
+    {
+      device: buildLoginDeviceLabel(context),
+      email: email ? maskEmailAddress(email) : null,
+      flow,
+      ip: trimText(context.ip) || null,
+      issues: issues.map((issue) => ({
+        code: issue.code,
+        message: issue.message,
+        missing: issue.missing,
+      })),
+    },
+    {
+      dedupeKey: `super-admin-runtime:${flow}`,
+    },
+  );
 };
 
 const buildRuntimeIssueResponse = <T>(issues: AuthConfigIssue[]): ServiceResponse<T> => {
@@ -646,7 +826,17 @@ const logLoginAttempt = async ({
       user_id: trimText(userId) || null,
     });
   } catch (error) {
-    console.warn("[auth] Failed to persist login log", error);
+    logAuthWarning(
+      "AUTH_LOGIN_LOG_PERSIST_FAILED",
+      "Failed to persist an auth login log entry.",
+      {
+        error_message: toSafeErrorMessage(error),
+        step,
+      },
+      {
+        dedupeKey: `auth-login-log:${step}`,
+      },
+    );
   }
 };
 
@@ -1334,7 +1524,16 @@ export const ensureOtpAuthWorkerStarted = (env: EnvLike) => {
   );
 
   worker.on("error", (error) => {
-    console.warn("[auth] OTP fallback worker error", error);
+    logAuthWarning(
+      "AUTH_OTP_FALLBACK_WORKER_ERROR",
+      "OTP fallback worker reported an internal error.",
+      {
+        error_message: toSafeErrorMessage(error),
+      },
+      {
+        dedupeKey: `auth-fallback-worker:${redisUrl}`,
+      },
+    );
   });
 
   startedWorkerKeys.add(redisUrl);
@@ -1345,6 +1544,11 @@ export const resolveSuperAdminLoginRequest = async (
   requestBody: unknown,
   context: RequestContext = {},
 ): Promise<ServiceResponse<SuperAdminLoginResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "super-admin-login");
+  if (originError) {
+    return originError;
+  }
+
   const body =
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
@@ -1383,6 +1587,20 @@ export const resolveSuperAdminLoginRequest = async (
   ]);
   const retryAfter = Math.max(ipRetryAfter || 0, emailRetryAfter || 0);
   if (retryAfter > 0) {
+    logAuthWarning(
+      "SUPER_ADMIN_OTP_REQUEST_RATE_LIMITED",
+      "Super admin OTP request was rate limited.",
+      {
+        email: maskEmailAddress(email),
+        email_retry_after: emailRetryAfter || null,
+        ip: ip || null,
+        ip_retry_after: ipRetryAfter || null,
+      },
+      {
+        dedupeKey: `super-admin-otp-rate-limit:${email || ip || "unknown"}`,
+        user: email ? maskEmailAddress(email) : null,
+      },
+    );
     logSuperAdminDebug("OTP request rate limited", {
       email: maskEmailAddress(email),
       emailRetryAfter: emailRetryAfter || null,
@@ -1511,7 +1729,19 @@ export const resolveSuperAdminLoginRequest = async (
     });
   } catch (error) {
     await clearSuperAdminOtpRecord(redis, normalizedAccountEmail);
-    console.warn("[auth] Super admin email OTP delivery failed", error);
+    logAuthError(
+      "SUPER_ADMIN_OTP_DELIVERY_FAILED",
+      "Super admin email OTP delivery failed.",
+      {
+        email: maskEmailAddress(normalizedAccountEmail),
+        error_message: toSafeErrorMessage(error),
+        user_id: user.id,
+      },
+      {
+        dedupeKey: `super-admin-otp-delivery:${normalizedAccountEmail}`,
+        user: maskEmailAddress(normalizedAccountEmail),
+      },
+    );
     await logLoginAttempt({
       channel: deliveryChannel,
       context,
@@ -1555,6 +1785,11 @@ export const resolveSuperAdminVerifyOtpRequest = async (
   requestBody: unknown,
   context: RequestContext = {},
 ): Promise<ServiceResponse<SuperAdminVerifyOtpResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "super-admin-verify-otp");
+  if (originError) {
+    return originError;
+  }
+
   const body =
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
@@ -1585,6 +1820,19 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     RATE_LIMIT_WINDOW_SECONDS,
   );
   if (ipRetryAfter) {
+    logAuthWarning(
+      "SUPER_ADMIN_OTP_VERIFY_RATE_LIMITED",
+      "Super admin OTP verification was rate limited.",
+      {
+        email: maskEmailAddress(email),
+        ip: ip || null,
+        retry_after: ipRetryAfter,
+      },
+      {
+        dedupeKey: `super-admin-otp-verify-rate-limit:${email || ip || "unknown"}`,
+        user: email ? maskEmailAddress(email) : null,
+      },
+    );
     logSuperAdminDebug("OTP verification IP rate limited", {
       email: maskEmailAddress(email),
       ip: ip || null,
@@ -1809,28 +2057,38 @@ export const resolveSendOtpRequest = async (
 ): Promise<ServiceResponse<SendOtpResponse>> => {
   ensureOtpAuthWorkerStarted(env);
 
+  const originError = ensureApprovedAuthOrigin(env, context, "send-otp");
+  if (originError) {
+    return originError;
+  }
+
   const body =
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
       : {};
 
-  const redis = getRedisConnection(env);
-  const ipRetryAfter = await enforceRateLimit(
-    redis,
-    "send-otp-ip",
-    trimText(context.ip),
-    SEND_OTP_IP_LIMIT,
-    RATE_LIMIT_WINDOW_SECONDS,
-  );
-  if (ipRetryAfter) {
-    return buildError(429, "Too many OTP requests from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
-      retryAfter: ipRetryAfter,
-    });
-  }
-
   const phone = normalizePhoneNumber(body.phone, resolveDefaultCountryCode(env));
   if (!phone) {
     return buildError(400, "Enter a valid mobile number in E.164 format.", "INVALID_PHONE");
+  }
+
+  const redis = getRedisConnection(env);
+  const ipRetryAfter = await enforceRateLimit(redis, "send-otp-ip", trimText(context.ip), SEND_OTP_IP_LIMIT, RATE_LIMIT_WINDOW_SECONDS);
+  if (ipRetryAfter) {
+    logAuthWarning(
+      "OTP_REQUEST_IP_RATE_LIMITED",
+      "Phone OTP request was rate limited by IP.",
+      {
+        ip: trimText(context.ip) || null,
+        retry_after: ipRetryAfter,
+      },
+      {
+        dedupeKey: `otp-send-ip:${trimText(context.ip) || "unknown"}`,
+      },
+    );
+    return buildError(429, "Too many OTP requests from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
+      retryAfter: ipRetryAfter,
+    });
   }
 
   const blockedTtl = await redis.ttl(phoneBlockKey(phone));
@@ -1844,6 +2102,30 @@ export const resolveSendOtpRequest = async (
   if (cooldownTtl > 0) {
     return buildError(429, `Resend available in ${cooldownTtl}s.`, "OTP_COOLDOWN", {
       retryAfter: cooldownTtl,
+    });
+  }
+
+  const userRetryAfter = await enforceRateLimit(
+    redis,
+    "send-otp-phone",
+    phone,
+    SEND_OTP_USER_LIMIT,
+    OTP_REQUEST_WINDOW_SECONDS,
+  );
+  if (userRetryAfter) {
+    logAuthWarning(
+      "OTP_REQUEST_USER_RATE_LIMITED",
+      "Phone OTP request was rate limited for the same user.",
+      {
+        phone: phone.replace(/\d(?=\d{4})/g, "*"),
+        retry_after: userRetryAfter,
+      },
+      {
+        dedupeKey: `otp-send-phone:${phone}`,
+      },
+    );
+    return buildError(429, `Resend available in ${userRetryAfter}s.`, "OTP_COOLDOWN", {
+      retryAfter: userRetryAfter,
     });
   }
 
@@ -1896,6 +2178,11 @@ export const resolveVerifyOtpRequest = async (
   requestBody: unknown,
   context: RequestContext = {},
 ): Promise<ServiceResponse<VerifyOtpResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "verify-otp");
+  if (originError) {
+    return originError;
+  }
+
   const body =
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
@@ -1910,6 +2197,17 @@ export const resolveVerifyOtpRequest = async (
     RATE_LIMIT_WINDOW_SECONDS,
   );
   if (ipRetryAfter) {
+    logAuthWarning(
+      "OTP_VERIFY_IP_RATE_LIMITED",
+      "Phone OTP verification was rate limited by IP.",
+      {
+        ip: trimText(context.ip) || null,
+        retry_after: ipRetryAfter,
+      },
+      {
+        dedupeKey: `otp-verify-ip:${trimText(context.ip) || "unknown"}`,
+      },
+    );
     return buildError(429, "Too many OTP verification attempts from this IP. Please wait a bit.", "IP_RATE_LIMITED", {
       retryAfter: ipRetryAfter,
     });
@@ -1982,6 +2280,11 @@ export const resolveEmailLoginRequest = async (
   requestBody: unknown,
   context: RequestContext = {},
 ): Promise<ServiceResponse<LoginEmailResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "login-email");
+  if (originError) {
+    return originError;
+  }
+
   const body =
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
@@ -2002,7 +2305,16 @@ export const resolveEmailLoginRequest = async (
       });
     }
   } catch (error) {
-    console.warn("[auth] Email login rate limit unavailable, continuing without Redis", error);
+    logAuthWarning(
+      "AUTH_EMAIL_LOGIN_RATE_LIMIT_UNAVAILABLE",
+      "Email login rate limiting was unavailable; request continued without Redis enforcement.",
+      {
+        error_message: toSafeErrorMessage(error),
+      },
+      {
+        dedupeKey: "auth-email-login-rate-limit-unavailable",
+      },
+    );
   }
 
   const email = trimText(body.email).toLowerCase();
@@ -2056,6 +2368,11 @@ export const resolveRefreshSessionRequest = async (
   _requestBody: unknown,
   context: RequestContext = {},
 ): Promise<ServiceResponse<RefreshSessionResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "refresh-session");
+  if (originError) {
+    return originError;
+  }
+
   const refreshToken = readRefreshTokenFromCookies(context.cookieHeader);
   if (!refreshToken) {
     return buildError(401, "Session expired. Please sign in again.", "SESSION_MISSING");
@@ -2163,6 +2480,11 @@ export const resolveLogoutRequest = async (
   _requestBody: unknown,
   context: RequestContext = {},
 ): Promise<ServiceResponse<{ message: string; success: true }>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "logout");
+  if (originError) {
+    return originError;
+  }
+
   await revokeRefreshToken(env, readRefreshTokenFromCookies(context.cookieHeader), "logout");
 
   return {
@@ -2180,6 +2502,11 @@ export const resolveLogoutAllRequest = async (
   _requestBody: unknown,
   context: RequestContext = {},
 ): Promise<ServiceResponse<{ message: string; success: true }>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "logout-all");
+  if (originError) {
+    return originError;
+  }
+
   const authUser = await resolveRequestAuthUser(env, context.authorization);
   const refreshToken = readRefreshTokenFromCookies(context.cookieHeader);
   const trustedSession = !authUser ? await getTrustedDeviceSession(env, refreshToken) : null;

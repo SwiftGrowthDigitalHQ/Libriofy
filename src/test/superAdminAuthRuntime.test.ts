@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveSendOtpRequest,
   resolveSuperAdminLoginRequest,
   resolveSuperAdminVerifyOtpRequest,
 } from "@/lib/otpAuth.server";
@@ -65,6 +66,26 @@ describe("Super Admin auth runtime safeguards", () => {
     expect(result.body).toMatchObject({
       code: "AUTH_INFRA_UNAVAILABLE",
       message: "Custom auth token signing is not configured.",
+      success: false,
+    });
+  });
+
+  it("rejects phone OTP requests from unapproved origins before touching Redis", async () => {
+    const result = await resolveSendOtpRequest(
+      buildEnv({
+        APP_ENV: "production",
+      }),
+      { phone: "+919876543210" },
+      {
+        ip: "127.0.0.1",
+        origin: "https://evil.example",
+      },
+    );
+
+    expect(result.statusCode).toBe(403);
+    expect(result.body).toMatchObject({
+      code: "ORIGIN_NOT_ALLOWED",
+      message: "This request origin is not allowed.",
       success: false,
     });
   });

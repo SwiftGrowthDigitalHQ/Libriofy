@@ -1,6 +1,10 @@
+import { getUserHeaderSanitizationInfo } from "./httpHeaders";
+import { logInternalWarning } from "./observability/internalLogger";
+
 const textEncoder = new TextEncoder();
 
 let fingerprintPromise: Promise<string> | null = null;
+const reportedDeviceLabelSanitizations = new Set<string>();
 
 const digestToHex = (buffer: ArrayBuffer) =>
   Array.from(new Uint8Array(buffer))
@@ -51,10 +55,37 @@ export const getDeviceFingerprint = () => {
 
 export const getDeviceLabel = () => {
   if (typeof navigator === "undefined") {
-    return "Unknown device";
+    return "Unknown Device";
   }
 
-  const platform = navigator.platform || "Unknown platform";
-  const language = navigator.language || "Unknown locale";
-  return `${platform} • ${language}`;
+  const labelParts = [navigator.platform, navigator.language]
+    .map((value) => getUserHeaderSanitizationInfo(value))
+    .filter((entry) => {
+      if (!entry.changed) {
+        return Boolean(entry.value);
+      }
+
+      const dedupeKey = `${entry.changeTypes.join(",")}:${entry.becameEmpty}`;
+      if (!reportedDeviceLabelSanitizations.has(dedupeKey)) {
+        reportedDeviceLabelSanitizations.add(dedupeKey);
+        void logInternalWarning({
+          type: "USER_HEADER_SANITIZED",
+          entityId: "x-device-label",
+          message: "A user-generated auth header value was sanitized before request dispatch.",
+          metadata: {
+            became_empty: entry.becameEmpty,
+            change_types: entry.changeTypes,
+            header_name: "x-device-label",
+            original_length: entry.originalLength,
+            sanitized_length: entry.sanitizedLength,
+            source: "device_label",
+          },
+        });
+      }
+
+      return Boolean(entry.value);
+    })
+    .map((entry) => entry.value);
+
+  return labelParts.length > 0 ? labelParts.join(" | ") : "Unknown Device";
 };

@@ -20,13 +20,99 @@ type AdminAlertInput = {
   metadata?: Record<string, unknown>;
 };
 
+type HeaderInputValue = string | null | undefined;
+type HeaderValueMode = "sanitize" | "strict";
+
 const DEFAULT_ALERT_TTL_MS = 5 * 60_000;
 const CRITICAL_ALERT_TTL_MS = 10 * 60_000;
 const alertDeduplicationCache = new Map<string, number>();
 const LIBRIOFY_AUTH_EMAIL = "hello@libriofy.com";
 const LIBRIOFY_AUTH_EMAIL_FROM = `Libriofy <${LIBRIOFY_AUTH_EMAIL}>`;
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const INVALID_SYSTEM_HEADER_VALUE_PATTERN = /[^\x20-\x7E]/;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F-\u009F]+/g;
+const NON_ASCII_CHARACTER_PATTERN = /[^\x20-\x7E]+/g;
+const WHITESPACE_PATTERN = /\s+/g;
+const RESEND_ALLOWED_HEADERS = ["Authorization", "Content-Type"] as const;
+const WEBHOOK_ALLOWED_HEADERS = ["Content-Type"] as const;
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const normalizeHeaderName = (value: string) => value.trim().toLowerCase();
+
+const validateHeaderName = (value: string) => {
+  const normalized = value.trim();
+  if (!normalized || !HEADER_NAME_PATTERN.test(normalized)) {
+    throw new Error(`Invalid header name: ${value}`);
+  }
+
+  return normalized;
+};
+
+const sanitizeUserHeaderValue = (value: HeaderInputValue) =>
+  String(value ?? "")
+    .normalize("NFKC")
+    .replace(CONTROL_CHARACTER_PATTERN, " ")
+    .replace(NON_ASCII_CHARACTER_PATTERN, " ")
+    .replace(WHITESPACE_PATTERN, " ")
+    .trim();
+
+const validateSystemHeaderValue = (value: HeaderInputValue) => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (INVALID_SYSTEM_HEADER_VALUE_PATTERN.test(normalized)) {
+    throw new Error("System header values must contain printable ASCII characters only.");
+  }
+
+  return normalized;
+};
+
+const sanitizeHeaders = (
+  headers: Record<string, HeaderInputValue>,
+  allowedHeaders: readonly string[],
+  valueModes: Partial<Record<string, HeaderValueMode>> = {},
+) => {
+  const allowedHeaderNames = new Set(
+    allowedHeaders.map((headerName) => normalizeHeaderName(validateHeaderName(headerName))),
+  );
+  const resolvedValueModes = new Map(
+    Object.entries(valueModes).map(([headerName, mode]) => [
+      normalizeHeaderName(validateHeaderName(headerName)),
+      mode,
+    ]),
+  );
+
+  return Object.fromEntries(
+    Object.entries(headers).flatMap(([key, value]) => {
+      const validatedKey = validateHeaderName(key);
+      const normalizedHeaderName = normalizeHeaderName(validatedKey);
+      const valueMode = resolvedValueModes.get(normalizedHeaderName) ?? "strict";
+      const sanitizedValue =
+        valueMode === "sanitize" ? sanitizeUserHeaderValue(value) : validateSystemHeaderValue(value);
+      if (!sanitizedValue) {
+        return [];
+      }
+
+      if (!allowedHeaderNames.has(normalizedHeaderName)) {
+        throw new Error(`Header is not allowed: ${validatedKey}`);
+      }
+
+      return [[validatedKey, sanitizedValue]];
+    }),
+  ) as Record<string, string>;
+};
+
+const buildBearerAuthorizationHeader = (token: HeaderInputValue, errorMessage: string) => {
+  const sanitizedToken = validateSystemHeaderValue(token);
+  if (!sanitizedToken) {
+    throw new Error(errorMessage);
+  }
+
+  return `Bearer ${sanitizedToken}`;
+};
 
 const resolveLibriofyEmailFrom = (value: string | null | undefined) => {
   const normalized = normalizeText(value);
@@ -148,7 +234,7 @@ const shouldSuppressAlert = (input: AdminAlertInput) => {
 };
 
 const sendAlertEmail = async (input: AdminAlertInput) => {
-  const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+  const apiKey = validateSystemHeaderValue(Deno.env.get("RESEND_API_KEY"));
   const from = resolveLibriofyEmailFrom(Deno.env.get("OPS_ALERT_EMAIL_FROM") ?? Deno.env.get("AUTH_EMAIL_FROM"));
   const to = (Deno.env.get("OPS_ALERT_EMAIL_TO") ?? "")
     .split(",")
@@ -161,10 +247,10 @@ const sendAlertEmail = async (input: AdminAlertInput) => {
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
+    headers: sanitizeHeaders({
+      Authorization: buildBearerAuthorizationHeader(apiKey, "RESEND_API_KEY is not configured."),
       "Content-Type": "application/json",
-    },
+    }, RESEND_ALLOWED_HEADERS),
     body: JSON.stringify({
       from,
       html: buildAlertHtml(input),
@@ -190,9 +276,9 @@ const sendAlertWebhook = async (input: AdminAlertInput) => {
 
   const response = await fetch(webhookUrl, {
     method: "POST",
-    headers: {
+    headers: sanitizeHeaders({
       "Content-Type": "application/json",
-    },
+    }, WEBHOOK_ALLOWED_HEADERS),
     body: JSON.stringify({
       alert: input,
       body: buildAlertText(input),

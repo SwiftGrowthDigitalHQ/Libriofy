@@ -1,4 +1,5 @@
 import { getStoredAccessToken } from "@/lib/authSession";
+import { buildBearerAuthorizationHeader, sanitizeHeaders } from "@/lib/httpHeaders";
 
 export type StudentQrTokenMap = Record<string, string>;
 
@@ -23,6 +24,8 @@ type StudentQrSigningResponseBody =
     };
 
 const STUDENT_QR_API_URL = import.meta.env.VITE_STUDENT_QR_API_URL ?? "/api/student-qr";
+const STUDENT_QR_AUTH_ALLOWED_HEADERS = ["Authorization"] as const;
+const STUDENT_QR_REQUEST_ALLOWED_HEADERS = ["Authorization", "Content-Type"] as const;
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -31,13 +34,16 @@ const uniqueStudentIds = (studentIds: string[]) =>
 
 const getAuthHeaders = async () => {
   const accessToken = await getStoredAccessToken();
-  if (!accessToken) {
-    throw new Error("Please sign in again to generate student QR cards.");
-  }
+  const headers = sanitizeHeaders({
+    Authorization: buildBearerAuthorizationHeader(
+      accessToken,
+      "Please sign in again to generate student QR cards.",
+    ),
+  }, {
+    allowedHeaders: STUDENT_QR_AUTH_ALLOWED_HEADERS,
+  });
 
-  return {
-    Authorization: `Bearer ${accessToken}`,
-  };
+  return headers;
 };
 
 const parseResponseBody = async (response: Response): Promise<StudentQrSigningResponseBody> => {
@@ -71,10 +77,12 @@ export const fetchSignedStudentQrTokens = async ({
 
   const response = await fetch(STUDENT_QR_API_URL, {
     method: "POST",
-    headers: {
+    headers: sanitizeHeaders({
       "Content-Type": "application/json",
       ...(await getAuthHeaders()),
-    },
+    }, {
+      allowedHeaders: STUDENT_QR_REQUEST_ALLOWED_HEADERS,
+    }),
     body: JSON.stringify({
       library_id: normalizedLibraryId,
       student_ids: normalizedStudentIds,

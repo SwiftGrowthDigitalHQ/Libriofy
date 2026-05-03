@@ -1,4 +1,5 @@
 import { logEvent } from "./observability/eventLogger.js";
+import { buildBearerAuthorizationHeader, sanitizeHeaders, validateSystemHeaderValue } from "./httpHeaders.js";
 import type { ObservabilityMetadata } from "./observability/types.js";
 import { resolveLibriofyEmailFrom } from "./libriofyConfig.js";
 
@@ -16,13 +17,15 @@ type SendEmailInput = {
   user?: string | null;
 };
 
+const RESEND_ALLOWED_HEADERS = ["Authorization", "Content-Type"] as const;
+
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {
-    const value = env[name];
-    if (value && value.trim()) {
-      return value.trim();
+    const value = validateSystemHeaderValue(env[name]);
+    if (value) {
+      return value;
     }
   }
 
@@ -35,12 +38,16 @@ const sendViaResend = async (input: SendEmailInput, env: EnvLike) => {
     throw new Error("RESEND_API_KEY is not configured.");
   }
 
+  const headers = sanitizeHeaders({
+    Authorization: buildBearerAuthorizationHeader(apiKey, "RESEND_API_KEY is not configured."),
+    "Content-Type": "application/json",
+  }, {
+    allowedHeaders: RESEND_ALLOWED_HEADERS,
+  });
+
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       from: input.from,
       html: input.html ?? undefined,
@@ -84,6 +91,8 @@ export const sendEmail = async (input: SendEmailInput) => {
         ...(input.metadata ?? {}),
       },
       message: input.subject,
+    }, {
+      skipConsole: true,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -102,6 +111,8 @@ export const sendEmail = async (input: SendEmailInput) => {
         ...(input.metadata ?? {}),
       },
       message: errorMessage,
+    }, {
+      skipConsole: true,
     });
 
     if (!input.suppressFailureAlert) {

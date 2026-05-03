@@ -1,6 +1,7 @@
-import { logEvent } from "./eventLogger";
-import type { AdminAlertInput, AlertSeverity, ObservabilityMetadata } from "./types";
 import { resolveLibriofyEmailFrom } from "../libriofyConfig.js";
+import { logEvent } from "./eventLogger";
+import { sanitizeObservabilityMetadata } from "./logSanitizer";
+import type { AdminAlertInput, AlertSeverity, ObservabilityMetadata } from "./types";
 
 const OBSERVABILITY_ALERTS_ENDPOINT = "/api/observability/alerts";
 const DEFAULT_ALERT_TTL_MS = 5 * 60_000;
@@ -17,47 +18,7 @@ type EnvLike = Record<string, string | undefined>;
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-const sanitizeJsonValue = (value: unknown, depth = 0): unknown => {
-  if (depth > 5) {
-    return "[truncated]";
-  }
-
-  if (value == null) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    return value.length > 2_000 ? `${value.slice(0, 2_000)}…` : value;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (Array.isArray(value)) {
-    return value.slice(0, 50).map((entry) => sanitizeJsonValue(entry, depth + 1));
-  }
-
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).slice(0, 50);
-    return Object.fromEntries(entries.map(([key, entryValue]) => [key, sanitizeJsonValue(entryValue, depth + 1)]));
-  }
-
-  return String(value);
-};
-
-const normalizeMetadata = (metadata: unknown): ObservabilityMetadata => {
-  const sanitized = sanitizeJsonValue(metadata);
-  if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) {
-    return {};
-  }
-
-  return sanitized as ObservabilityMetadata;
-};
+const normalizeMetadata = (metadata: unknown): ObservabilityMetadata => sanitizeObservabilityMetadata(metadata);
 
 const normalizeAlertInput = (input: AdminAlertInput): AdminAlertInput => ({
   type: normalizeText(input.type) || "UNKNOWN_ALERT",
@@ -251,13 +212,6 @@ const postAlertToApi = async (input: AdminAlertInput): Promise<AlertDeliveryResu
 export const sendAdminAlert = async (rawInput: AdminAlertInput): Promise<AlertDeliveryResult> => {
   const input = normalizeAlertInput(rawInput);
 
-  console.error(`[alert] ${input.type}`, {
-    message: input.message,
-    metadata: input.metadata,
-    severity: input.severity,
-    user: input.user,
-  });
-
   try {
     if (typeof window === "undefined") {
       return await deliverAlertOnServer(input);
@@ -275,9 +229,9 @@ export const sendAdminAlert = async (rawInput: AdminAlertInput): Promise<AlertDe
         severity: "ERROR",
       },
       message: `Unable to deliver admin alert for ${input.type}.`,
+    }, {
+      skipConsole: true,
     });
-
-    console.error("[observability] Failed to deliver admin alert", error);
 
     return {
       deduped: false,

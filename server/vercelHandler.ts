@@ -49,7 +49,10 @@ type AuthContext = {
   cookieHeader?: string;
   deviceFingerprint?: string;
   deviceLabel?: string;
+  host?: string;
   ip?: string;
+  origin?: string;
+  referer?: string;
   userAgent?: string;
 };
 
@@ -127,7 +130,10 @@ const readRequestContext = (req: ApiRequest): AuthContext => {
     cookieHeader: readHeaderValue(headers, "cookie"),
     deviceFingerprint: readHeaderValue(headers, "x-device-fingerprint"),
     deviceLabel: readHeaderValue(headers, "x-device-label"),
+    host: readHeaderValue(headers, "host") || readHeaderValue(headers, "x-forwarded-host"),
     ip: extractClientIp(headers),
+    origin: readHeaderValue(headers, "origin"),
+    referer: readHeaderValue(headers, "referer"),
     userAgent: extractUserAgent(headers),
   };
 };

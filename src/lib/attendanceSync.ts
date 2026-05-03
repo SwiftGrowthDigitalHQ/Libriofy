@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 
 import { readStoredLibraryAccessKey } from "@/lib/deviceKiosk";
+import { sanitizeHeaders } from "@/lib/httpHeaders";
 import { logEvent } from "@/lib/observability/eventLogger";
 
 export type AttendanceQueueStatus = "pending" | "failed";
@@ -75,6 +76,8 @@ const STORE_NAME = "attendance_queue";
 const LAST_SYNC_STORAGE_KEY = "libriofy:attendance-last-sync";
 const ATTENDANCE_SYNC_LOCK_NAME = "libriofy-attendance-sync";
 const DEFAULT_TIMEOUT_MS = 8000;
+const ATTENDANCE_REQUEST_ALLOWED_HEADERS = ["Content-Type", "x-device-token"] as const;
+const ATTENDANCE_FALLBACK_ALLOWED_HEADERS = ["x-device-token"] as const;
 
 let queueDbPromise: Promise<IDBDatabase> | null = null;
 let lastEntryTimestamp = "";
@@ -317,13 +320,12 @@ const buildRequestBody = (entry: AttendanceQueueEntry) => {
 };
 
 const buildRequestHeaders = (deviceToken?: string) => {
-  const headers: Record<string, string> = {
+  const headers = sanitizeHeaders({
     "Content-Type": "application/json",
-  };
-
-  if (deviceToken) {
-    headers["x-device-token"] = deviceToken;
-  }
+    "x-device-token": deviceToken,
+  }, {
+    allowedHeaders: ATTENDANCE_REQUEST_ALLOWED_HEADERS,
+  });
 
   return headers;
 };
@@ -332,10 +334,11 @@ const invokeSupabaseFallback = async (
   entry: AttendanceQueueEntry,
   deviceToken?: string,
 ): Promise<AttendanceScanPayload> => {
-  const headers: Record<string, string> = {};
-  if (deviceToken) {
-    headers["x-device-token"] = deviceToken;
-  }
+  const headers = sanitizeHeaders({
+    "x-device-token": deviceToken,
+  }, {
+    allowedHeaders: ATTENDANCE_FALLBACK_ALLOWED_HEADERS,
+  });
 
   const { data, error } = await supabase.functions.invoke("scan-attendance", {
     body: buildRequestBody(entry),

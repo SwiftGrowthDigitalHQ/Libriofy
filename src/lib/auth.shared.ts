@@ -1,6 +1,6 @@
 export const OTP_LENGTH = 6;
 export const OTP_TTL_SECONDS = 2 * 60;
-export const OTP_COOLDOWN_SECONDS = 30;
+export const OTP_COOLDOWN_SECONDS = 60;
 export const OTP_MAX_ATTEMPTS = 3;
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const SUPER_ADMIN_OTP_TTL_SECONDS = 5 * 60;

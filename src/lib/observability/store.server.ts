@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import type { Database } from "../../integrations/supabase/types";
+import { sanitizeObservabilityMetadata } from "./logSanitizer";
 import { SUPABASE_OBSERVABILITY_SKIP_HEADER, SUPABASE_OBSERVABILITY_SKIP_VALUE } from "./supabaseRequestDetails";
 import type { AlertSeverity, EventLogInput, RecentObservabilitySignal } from "./types";
 
@@ -13,47 +14,7 @@ const ALERT_SEVERITIES = new Set<AlertSeverity>(["INFO", "WARNING", "ERROR", "CR
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-const sanitizeJsonValue = (value: unknown, depth = 0): unknown => {
-  if (depth > 5) {
-    return "[truncated]";
-  }
-
-  if (value == null) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    return value.length > 2_000 ? `${value.slice(0, 2_000)}…` : value;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (Array.isArray(value)) {
-    return value.slice(0, 50).map((entry) => sanitizeJsonValue(entry, depth + 1));
-  }
-
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).slice(0, 50);
-    return Object.fromEntries(entries.map(([key, entryValue]) => [key, sanitizeJsonValue(entryValue, depth + 1)]));
-  }
-
-  return String(value);
-};
-
-const normalizeMetadata = (metadata: unknown) => {
-  const sanitized = sanitizeJsonValue(metadata);
-  if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) {
-    return {};
-  }
-
-  return sanitized as Record<string, unknown>;
-};
+const normalizeMetadata = (metadata: unknown) => sanitizeObservabilityMetadata(metadata);
 
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {

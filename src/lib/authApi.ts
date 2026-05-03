@@ -8,6 +8,7 @@ import type {
   VerifyOtpResponse,
 } from "@/lib/auth.shared";
 import { getDeviceFingerprint, getDeviceLabel } from "@/lib/deviceFingerprint";
+import { buildBearerAuthorizationHeader, sanitizeHeaders } from "@/lib/httpHeaders";
 
 type ApiErrorPayload = {
   code?: string;
@@ -24,6 +25,10 @@ type JsonRequestOptions = {
 };
 
 const AUTH_API_PREFIX = "/api/auth";
+const AUTH_API_ALLOWED_HEADERS = ["Authorization", "Content-Type", "x-device-fingerprint", "x-device-label"] as const;
+const AUTH_API_VALUE_MODES = {
+  "x-device-label": "sanitize",
+} as const;
 
 const normalizeAuthApiBase = (rawBase: string | undefined) => {
   const trimmed = typeof rawBase === "string" ? rawBase.trim() : "";
@@ -47,12 +52,19 @@ const AUTH_API_BASE = normalizeAuthApiBase(import.meta.env.VITE_AUTH_API_BASE);
 
 const toApiUrl = (path: string) => `${AUTH_API_BASE}${AUTH_API_PREFIX}${path}`;
 
-const buildRequestHeaders = async (headers?: Record<string, string>) => ({
-  "Content-Type": "application/json",
-  "x-device-fingerprint": await getDeviceFingerprint(),
-  "x-device-label": getDeviceLabel(),
-  ...(headers ?? {}),
-});
+const buildRequestHeaders = async (headers?: Record<string, string>) => {
+  const nextHeaders = sanitizeHeaders({
+    "Content-Type": "application/json",
+    "x-device-fingerprint": await getDeviceFingerprint(),
+    "x-device-label": getDeviceLabel(),
+    ...(headers ?? {}),
+  }, {
+    allowedHeaders: AUTH_API_ALLOWED_HEADERS,
+    valueModes: AUTH_API_VALUE_MODES,
+  });
+
+  return nextHeaders;
+};
 
 const readJsonResponse = async <T>(response: Response): Promise<T> => {
   try {
@@ -119,7 +131,9 @@ export const logoutCurrentSession = async () =>
 
 export const logoutAllSessions = async (accessToken?: string | null) =>
   sendJsonRequest<{ message: string; success: true }>("/logout-all", {
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    headers: accessToken
+      ? { Authorization: buildBearerAuthorizationHeader(accessToken, "Missing access token.") }
+      : undefined,
   });
 
 export const extractSessionFromResponse = (response: { session: ClientAuthSession }) => response.session;

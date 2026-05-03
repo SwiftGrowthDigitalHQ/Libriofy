@@ -1,50 +1,15 @@
 import type { EventLogInput, ObservabilityMetadata } from "./types";
+import { sanitizeObservabilityMetadata } from "./logSanitizer";
 
 const OBSERVABILITY_EVENTS_ENDPOINT = "/api/observability/events";
 
+type LogEventOptions = {
+  skipConsole?: boolean;
+};
+
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-const sanitizeJsonValue = (value: unknown, depth = 0): unknown => {
-  if (depth > 5) {
-    return "[truncated]";
-  }
-
-  if (value == null) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    return value.length > 2_000 ? `${value.slice(0, 2_000)}…` : value;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (Array.isArray(value)) {
-    return value.slice(0, 50).map((entry) => sanitizeJsonValue(entry, depth + 1));
-  }
-
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).slice(0, 50);
-    return Object.fromEntries(entries.map(([key, entryValue]) => [key, sanitizeJsonValue(entryValue, depth + 1)]));
-  }
-
-  return String(value);
-};
-
-const normalizeMetadata = (metadata: unknown): ObservabilityMetadata => {
-  const sanitized = sanitizeJsonValue(metadata);
-  if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) {
-    return {};
-  }
-
-  return sanitized as ObservabilityMetadata;
-};
+const normalizeMetadata = (metadata: unknown): ObservabilityMetadata => sanitizeObservabilityMetadata(metadata);
 
 const normalizeEventInput = (input: EventLogInput): EventLogInput => {
   const metadata = normalizeMetadata(input.metadata);
@@ -78,17 +43,20 @@ const postEventToApi = async (event: EventLogInput) => {
   }
 };
 
-export const logEvent = async (input: EventLogInput) => {
+export const logEvent = async (input: EventLogInput, options: LogEventOptions = {}) => {
   const event = normalizeEventInput(input);
-  const consoleMethod = event.status === "FAILED" ? console.error : console.info;
 
-  consoleMethod(`[event] ${event.type}`, {
-    entityId: event.entityId,
-    message: event.message,
-    metadata: event.metadata,
-    status: event.status,
-    user: event.user,
-  });
+  if (!options.skipConsole) {
+    const consoleMethod = event.status === "FAILED" ? console.error : console.info;
+
+    consoleMethod(`[event] ${event.type}`, {
+      entityId: event.entityId,
+      message: event.message,
+      metadata: event.metadata,
+      status: event.status,
+      user: event.user,
+    });
+  }
 
   try {
     if (typeof window === "undefined") {
@@ -101,9 +69,11 @@ export const logEvent = async (input: EventLogInput) => {
       await postEventToApi(event);
     }
   } catch (error) {
-    console.error("[observability] Failed to persist event log", {
-      eventType: event.type,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    if (!options.skipConsole) {
+      console.error("[observability] Failed to persist event log", {
+        eventType: event.type,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 };

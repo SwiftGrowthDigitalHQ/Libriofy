@@ -1,10 +1,12 @@
 import { supabase } from "@/integrations/supabase/client";
 import { getStoredAccessToken } from "@/lib/authSession";
+import { buildBearerAuthorizationHeader, sanitizeHeaders } from "@/lib/httpHeaders";
 import { evaluateSubscriptionAccess, type LibrarySubscriptionRecord } from "@/lib/subscription";
 
 type FunctionErrorLike = Error | { message: string; context?: Response };
 
 const EDGE_FUNCTION_SEND_FAILURE = "Failed to send a request to the Edge Function";
+const EDGE_FUNCTION_AUTH_ALLOWED_HEADERS = ["Authorization"] as const;
 
 const normalizeFunctionErrorBody = async (context?: Response) => {
   if (!context) {
@@ -69,7 +71,13 @@ export const readFunctionErrorMessage = async (error: FunctionErrorLike, functio
 
 export const getEdgeFunctionAuthHeaders = async () => {
   const accessToken = await getStoredAccessToken();
-  return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+  return accessToken
+    ? sanitizeHeaders({
+        Authorization: buildBearerAuthorizationHeader(accessToken, "Missing access token."),
+      }, {
+        allowedHeaders: EDGE_FUNCTION_AUTH_ALLOWED_HEADERS,
+      })
+    : undefined;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));

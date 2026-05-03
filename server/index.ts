@@ -136,7 +136,10 @@ const readRequestContext = (req: Request) => ({
       : Array.isArray(req.headers["x-device-label"])
         ? req.headers["x-device-label"][0]
         : undefined,
+  host: req.headers.host,
   ip: req.ip,
+  origin: req.headers.origin,
+  referer: req.headers.referer,
   userAgent: req.headers["user-agent"],
 });
 

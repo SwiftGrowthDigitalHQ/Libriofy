@@ -1,3 +1,5 @@
+import { sanitizeHeaders } from "./httpHeaders";
+
 export type DeviceHeartbeatStatus = {
   appVersion?: string | null;
   cameraReady?: boolean;
@@ -27,6 +29,8 @@ export type DeviceHeartbeatFailure = {
 
 export type DeviceHeartbeatResponse = DeviceHeartbeatSuccess | DeviceHeartbeatFailure;
 
+const DEVICE_HEARTBEAT_ALLOWED_HEADERS = ["Content-Type"] as const;
+
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
 export const sendDeviceHeartbeat = async ({
@@ -46,9 +50,11 @@ export const sendDeviceHeartbeat = async ({
 }): Promise<DeviceHeartbeatResponse> => {
   const response = await fetch(apiUrl, {
     method: "POST",
-    headers: {
+    headers: sanitizeHeaders({
       "Content-Type": "application/json",
-    },
+    }, {
+      allowedHeaders: DEVICE_HEARTBEAT_ALLOWED_HEADERS,
+    }),
     body: JSON.stringify({
       device_id: trimText(deviceId),
       library_access_key: trimText(libraryAccessKey),
