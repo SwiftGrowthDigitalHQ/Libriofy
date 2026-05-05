@@ -1,7 +1,7 @@
 import { resolveLibriofyEmailFrom } from "../libriofyConfig.js";
-import { logEvent } from "./eventLogger";
-import { sanitizeObservabilityMetadata } from "./logSanitizer";
-import type { AdminAlertInput, AlertSeverity, ObservabilityMetadata } from "./types";
+import { logEvent } from "./eventLogger.js";
+import { sanitizeObservabilityMetadata } from "./logSanitizer.js";
+import type { AdminAlertInput, AlertSeverity, ObservabilityMetadata } from "./types.js";
 
 const OBSERVABILITY_ALERTS_ENDPOINT = "/api/observability/alerts";
 const DEFAULT_ALERT_TTL_MS = 5 * 60_000;
@@ -18,7 +18,21 @@ type EnvLike = Record<string, string | undefined>;
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-const normalizeMetadata = (metadata: unknown): ObservabilityMetadata => sanitizeObservabilityMetadata(metadata);
+const emptyAlertDeliveryResult = (): AlertDeliveryResult => ({
+  deduped: false,
+  delivered: false,
+  via: [],
+});
+
+const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+const normalizeMetadata = (metadata: unknown): ObservabilityMetadata => {
+  try {
+    return sanitizeObservabilityMetadata(metadata);
+  } catch {
+    return {};
+  }
+};
 
 const normalizeAlertInput = (input: AdminAlertInput): AdminAlertInput => ({
   type: normalizeText(input.type) || "UNKNOWN_ALERT",
@@ -209,8 +223,52 @@ const postAlertToApi = async (input: AdminAlertInput): Promise<AlertDeliveryResu
   return (await response.json()) as AlertDeliveryResult;
 };
 
+const reportAlertFailure = (
+  error: unknown,
+  input: Pick<AdminAlertInput, "severity" | "type">,
+) => {
+  try {
+    console.error("[observability] Failed to deliver admin alert", {
+      alertType: normalizeText(input.type) || "UNKNOWN_ALERT",
+      message: getErrorMessage(error),
+      severity: input.severity,
+    });
+  } catch {
+    // Observability must never fail the caller.
+  }
+};
+
+const logAlertDeliveryFailure = async (input: AdminAlertInput, error: unknown) => {
+  try {
+    await logEvent({
+      type: "ADMIN_ALERT_DELIVERY_FAILED",
+      status: "FAILED",
+      user: input.user,
+      metadata: {
+        alert_type: input.type,
+        errorMessage: getErrorMessage(error),
+        severity: "ERROR",
+      },
+      message: `Unable to deliver admin alert for ${input.type}.`,
+    }, {
+      skipConsole: true,
+    });
+  } catch {
+    // Secondary observability must never fail the alert caller.
+  }
+};
+
 export const sendAdminAlert = async (rawInput: AdminAlertInput): Promise<AlertDeliveryResult> => {
-  const input = normalizeAlertInput(rawInput);
+  let input: AdminAlertInput;
+  try {
+    input = normalizeAlertInput(rawInput);
+  } catch (error) {
+    reportAlertFailure(error, {
+      severity: rawInput.severity,
+      type: rawInput.type,
+    });
+    return emptyAlertDeliveryResult();
+  }
 
   try {
     if (typeof window === "undefined") {
@@ -219,24 +277,8 @@ export const sendAdminAlert = async (rawInput: AdminAlertInput): Promise<AlertDe
 
     return await postAlertToApi(input);
   } catch (error) {
-    await logEvent({
-      type: "ADMIN_ALERT_DELIVERY_FAILED",
-      status: "FAILED",
-      user: input.user,
-      metadata: {
-        alert_type: input.type,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        severity: "ERROR",
-      },
-      message: `Unable to deliver admin alert for ${input.type}.`,
-    }, {
-      skipConsole: true,
-    });
-
-    return {
-      deduped: false,
-      delivered: false,
-      via: [],
-    };
+    await logAlertDeliveryFailure(input, error);
+    reportAlertFailure(error, input);
+    return emptyAlertDeliveryResult();
   }
 };

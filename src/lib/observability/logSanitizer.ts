@@ -1,4 +1,4 @@
-import type { ObservabilityMetadata } from "./types";
+import type { ObservabilityMetadata } from "./types.js";
 
 const REDACTED_VALUE = "[redacted]";
 const SENSITIVE_KEY_PATTERN =

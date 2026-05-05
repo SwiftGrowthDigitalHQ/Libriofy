@@ -18,6 +18,14 @@ type ApiResponse = {
   statusCode: number;
 };
 
+const runObservabilitySafely = async <T>(operation: () => Promise<T>, fallback: T): Promise<T> => {
+  try {
+    return await operation();
+  } catch {
+    return fallback;
+  }
+};
+
 const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHeaders?: Record<string, string | string[]>) => {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -69,7 +77,7 @@ const handleEventRoute = async (req: ApiRequest, res: ApiResponse) => {
     return;
   }
 
-  await logEvent(body as EventLogInput);
+  await runObservabilitySafely(() => logEvent(body as EventLogInput), undefined);
 
   sendJson(res, 200, { success: true });
 };
@@ -95,7 +103,11 @@ const handleAlertRoute = async (req: ApiRequest, res: ApiResponse) => {
     return;
   }
 
-  const result = await sendAdminAlert(body as AdminAlertInput);
+  const result = await runObservabilitySafely(() => sendAdminAlert(body as AdminAlertInput), {
+    deduped: false,
+    delivered: false,
+    via: [] as Array<"email" | "webhook">,
+  });
 
   sendJson(res, 200, {
     success: true,

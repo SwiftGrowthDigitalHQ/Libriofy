@@ -21,6 +21,14 @@ const RESEND_ALLOWED_HEADERS = ["Authorization", "Content-Type"] as const;
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
+const runEmailObservabilitySafely = async (operation: () => Promise<unknown> | unknown) => {
+  try {
+    await Promise.resolve(operation()).catch(() => undefined);
+  } catch {
+    // Observability must never fail email delivery.
+  }
+};
+
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {
     const value = validateSystemHeaderValue(env[name]);
@@ -78,56 +86,62 @@ export const sendEmail = async (input: SendEmailInput) => {
       from,
     }, env);
 
-    await logEvent({
-      type: "EMAIL_SENT",
-      status: "SUCCESS",
-      user: normalizeText(input.user) || recipients.join(", "),
-      metadata: {
-        email_from: from,
-        email_subject: input.subject,
-        recipient_count: recipients.length,
-        recipients,
-        severity: "INFO",
-        ...(input.metadata ?? {}),
-      },
-      message: input.subject,
-    }, {
-      skipConsole: true,
-    });
+    await runEmailObservabilitySafely(() =>
+      logEvent({
+        type: "EMAIL_SENT",
+        status: "SUCCESS",
+        user: normalizeText(input.user) || recipients.join(", "),
+        metadata: {
+          email_from: from,
+          email_subject: input.subject,
+          recipient_count: recipients.length,
+          recipients,
+          severity: "INFO",
+          ...(input.metadata ?? {}),
+        },
+        message: input.subject,
+      }, {
+        skipConsole: true,
+      }),
+    );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    await logEvent({
-      type: "EMAIL_FAILED",
-      status: "FAILED",
-      user: normalizeText(input.user) || recipients.join(", "),
-      metadata: {
-        email_from: from || normalizeText(input.from),
-        email_subject: input.subject,
-        errorMessage,
-        recipient_count: recipients.length,
-        recipients,
-        severity: "ERROR",
-        ...(input.metadata ?? {}),
-      },
-      message: errorMessage,
-    }, {
-      skipConsole: true,
-    });
-
-    if (!input.suppressFailureAlert) {
-      const { sendAdminAlert } = await import("./observability/alertService.js");
-      await sendAdminAlert({
+    await runEmailObservabilitySafely(() =>
+      logEvent({
         type: "EMAIL_FAILED",
-        severity: "ERROR",
+        status: "FAILED",
         user: normalizeText(input.user) || recipients.join(", "),
-        message: errorMessage,
         metadata: {
           email_from: from || normalizeText(input.from),
           email_subject: input.subject,
+          errorMessage,
+          recipient_count: recipients.length,
           recipients,
-          ...input.metadata,
+          severity: "ERROR",
+          ...(input.metadata ?? {}),
         },
+        message: errorMessage,
+      }, {
+        skipConsole: true,
+      }),
+    );
+
+    if (!input.suppressFailureAlert) {
+      await runEmailObservabilitySafely(async () => {
+        const { sendAdminAlert } = await import("./observability/alertService.js");
+        await sendAdminAlert({
+          type: "EMAIL_FAILED",
+          severity: "ERROR",
+          user: normalizeText(input.user) || recipients.join(", "),
+          message: errorMessage,
+          metadata: {
+            email_from: from || normalizeText(input.from),
+            email_subject: input.subject,
+            recipients,
+            ...input.metadata,
+          },
+        });
       });
     }
 

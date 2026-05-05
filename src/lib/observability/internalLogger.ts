@@ -1,5 +1,5 @@
-import { logEvent } from "./eventLogger";
-import type { ObservabilityMetadata } from "./types";
+import { logEvent } from "./eventLogger.js";
+import type { ObservabilityMetadata } from "./types.js";
 
 type InternalLogInput = {
   entityId?: string | null;
@@ -14,38 +14,32 @@ const withSeverity = (severity: "INFO" | "WARNING" | "ERROR", metadata?: Observa
   ...(metadata ?? {}),
 });
 
+const runInternalLog = (
+  input: InternalLogInput,
+  severity: "INFO" | "WARNING" | "ERROR",
+  status: "FAILED" | "SUCCESS",
+) => {
+  try {
+    return Promise.resolve(logEvent({
+      type: input.type,
+      status,
+      user: input.user,
+      entityId: input.entityId,
+      metadata: withSeverity(severity, input.metadata),
+      message: input.message,
+    }, {
+      skipConsole: true,
+    })).catch(() => undefined);
+  } catch {
+    return Promise.resolve();
+  }
+};
+
 export const logInternalInfo = (input: InternalLogInput) =>
-  logEvent({
-    type: input.type,
-    status: "SUCCESS",
-    user: input.user,
-    entityId: input.entityId,
-    metadata: withSeverity("INFO", input.metadata),
-    message: input.message,
-  }, {
-    skipConsole: true,
-  });
+  runInternalLog(input, "INFO", "SUCCESS");
 
 export const logInternalWarning = (input: InternalLogInput) =>
-  logEvent({
-    type: input.type,
-    status: "SUCCESS",
-    user: input.user,
-    entityId: input.entityId,
-    metadata: withSeverity("WARNING", input.metadata),
-    message: input.message,
-  }, {
-    skipConsole: true,
-  });
+  runInternalLog(input, "WARNING", "SUCCESS");
 
 export const logInternalError = (input: InternalLogInput) =>
-  logEvent({
-    type: input.type,
-    status: "FAILED",
-    user: input.user,
-    entityId: input.entityId,
-    metadata: withSeverity("ERROR", input.metadata),
-    message: input.message,
-  }, {
-    skipConsole: true,
-  });
+  runInternalLog(input, "ERROR", "FAILED");

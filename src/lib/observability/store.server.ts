@@ -1,9 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 
-import type { Database } from "../../integrations/supabase/types";
-import { sanitizeObservabilityMetadata } from "./logSanitizer";
-import { SUPABASE_OBSERVABILITY_SKIP_HEADER, SUPABASE_OBSERVABILITY_SKIP_VALUE } from "./supabaseRequestDetails";
-import type { AlertSeverity, EventLogInput, RecentObservabilitySignal } from "./types";
+import type { Database } from "../../integrations/supabase/types.js";
+import { sanitizeObservabilityMetadata } from "./logSanitizer.js";
+import { SUPABASE_OBSERVABILITY_SKIP_HEADER, SUPABASE_OBSERVABILITY_SKIP_VALUE } from "./supabaseRequestDetails.js";
+import type { AlertSeverity, EventLogInput, RecentObservabilitySignal } from "./types.js";
 
 type EnvLike = Record<string, string | undefined>;
 

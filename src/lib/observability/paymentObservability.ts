@@ -1,6 +1,6 @@
-import { extractErrorMessage } from "../errorHandling";
-import { sendAdminAlert } from "./alertService";
-import { logEvent } from "./eventLogger";
+import { extractErrorMessage } from "../errorHandling.js";
+import { sendAdminAlert } from "./alertService.js";
+import { logEvent } from "./eventLogger.js";
 
 export type PaymentObservabilityContext = {
   amount?: number | null;

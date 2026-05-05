@@ -1,4 +1,4 @@
-import type { AlertSeverity, EventClassification, EventLogInput, ObservabilityMetadata } from "./types";
+import type { AlertSeverity, EventClassification, EventLogInput, ObservabilityMetadata } from "./types.js";
 
 export type ObservabilityThresholdPolicy = {
   failureThreshold: number;

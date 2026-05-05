@@ -138,22 +138,32 @@ const sendAuthResponse = (res: ApiResponse, result: ResolverResult) => {
   );
 };
 
+const runObservabilitySafely = (operation: () => Promise<unknown> | unknown) => {
+  try {
+    void Promise.resolve(operation()).catch(() => undefined);
+  } catch {
+    // Observability must never fail auth responses.
+  }
+};
+
 const logUnexpectedAuthFailure = (pathname: string, error: unknown) => {
-  void logEvent({
-    type: "AUTH_ERROR",
-    status: "FAILED",
-    classification: "AUTH_ERROR",
-    entityId: pathname,
-    metadata: {
-      area: "auth",
-      error_message: error instanceof Error ? error.message : String(error),
-      path: pathname,
-      severity: "ERROR",
-    },
-    message: `Unexpected auth route failure for ${pathname}.`,
-  }, {
-    skipConsole: true,
-  });
+  runObservabilitySafely(() =>
+    logEvent({
+      type: "AUTH_ERROR",
+      status: "FAILED",
+      classification: "AUTH_ERROR",
+      entityId: pathname,
+      metadata: {
+        area: "auth",
+        error_message: error instanceof Error ? error.message : String(error),
+        path: pathname,
+        severity: "ERROR",
+      },
+      message: `Unexpected auth route failure for ${pathname}.`,
+    }, {
+      skipConsole: true,
+    }),
+  );
 };
 
 const createRouteResolverMap = (env: Record<string, string | undefined>): Record<AuthApiRoutePath, AuthResolver> => ({

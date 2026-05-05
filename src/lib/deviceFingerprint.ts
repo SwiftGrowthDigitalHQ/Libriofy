@@ -1,5 +1,5 @@
-import { getUserHeaderSanitizationInfo } from "./httpHeaders";
-import { logInternalWarning } from "./observability/internalLogger";
+import { getUserHeaderSanitizationInfo } from "./httpHeaders.js";
+import { logInternalWarning } from "./observability/internalLogger.js";
 
 const textEncoder = new TextEncoder();
 

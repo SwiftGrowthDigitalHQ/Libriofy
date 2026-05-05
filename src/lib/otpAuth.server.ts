@@ -325,6 +325,14 @@ const shouldSuppressAuthWarning = (dedupeKey: string, ttlMs = WARNING_LOG_TTL_MS
   return false;
 };
 
+const runAuthObservabilitySafely = (operation: () => Promise<unknown> | unknown) => {
+  try {
+    void Promise.resolve(operation()).catch(() => undefined);
+  } catch {
+    // Observability must never fail auth flows.
+  }
+};
+
 const logAuthWarning = (
   type: string,
   message: string,
@@ -345,16 +353,18 @@ const logAuthWarning = (
     return;
   }
 
-  void logInternalWarning({
-    type,
-    entityId,
-    user,
-    message,
-    metadata: {
-      area: "auth",
-      ...metadata,
-    },
-  });
+  runAuthObservabilitySafely(() =>
+    logInternalWarning({
+      type,
+      entityId,
+      user,
+      message,
+      metadata: {
+        area: "auth",
+        ...metadata,
+      },
+    }),
+  );
 };
 
 const logAuthError = (
@@ -377,16 +387,18 @@ const logAuthError = (
     return;
   }
 
-  void logInternalError({
-    type,
-    entityId,
-    user,
-    message,
-    metadata: {
-      area: "auth",
-      ...metadata,
-    },
-  });
+  runAuthObservabilitySafely(() =>
+    logInternalError({
+      type,
+      entityId,
+      user,
+      message,
+      metadata: {
+        area: "auth",
+        ...metadata,
+      },
+    }),
+  );
 };
 
 const logAuthInfo = (type: string, message: string, metadata: Record<string, unknown>) => {
@@ -394,14 +406,16 @@ const logAuthInfo = (type: string, message: string, metadata: Record<string, unk
     return;
   }
 
-  void logInternalInfo({
-    type,
-    message,
-    metadata: {
-      area: "auth",
-      ...metadata,
-    },
-  });
+  runAuthObservabilitySafely(() =>
+    logInternalInfo({
+      type,
+      message,
+      metadata: {
+        area: "auth",
+        ...metadata,
+      },
+    }),
+  );
 };
 
 const logAuthLifecycleEvent = ({
@@ -421,24 +435,26 @@ const logAuthLifecycleEvent = ({
   type: "AUTH_ERROR" | "AUTH_SUCCESS" | "OTP_FAILED" | "OTP_SENT";
   userId?: string | null;
 }) => {
-  void logEvent({
-    type,
-    status,
-    classification: status === "FAILED" ? "AUTH_ERROR" : null,
-    entityId: trimText(userId) || null,
-    user: email ? maskEmailAddress(email) : null,
-    metadata: {
-      area: "auth",
-      device: buildLoginDeviceLabel(context),
-      flow: "super_admin",
-      ip: trimText(context.ip) || null,
-      severity: status === "FAILED" ? "ERROR" : "INFO",
-      ...(metadata ?? {}),
-    },
-    message,
-  }, {
-    skipConsole: true,
-  });
+  runAuthObservabilitySafely(() =>
+    logEvent({
+      type,
+      status,
+      classification: status === "FAILED" ? "AUTH_ERROR" : null,
+      entityId: trimText(userId) || null,
+      user: email ? maskEmailAddress(email) : null,
+      metadata: {
+        area: "auth",
+        device: buildLoginDeviceLabel(context),
+        flow: "super_admin",
+        ip: trimText(context.ip) || null,
+        severity: status === "FAILED" ? "ERROR" : "INFO",
+        ...(metadata ?? {}),
+      },
+      message,
+    }, {
+      skipConsole: true,
+    }),
+  );
 };
 
 const ensureApprovedAuthOrigin = (
