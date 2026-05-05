@@ -70,6 +70,10 @@
       "destination": "/api/auth/super-admin/verify-otp"
     },
     {
+      "source": "/auth/super-admin/verify",
+      "destination": "/api/auth/super-admin/verify"
+    },
+    {
       "source": "/auth/refresh",
       "destination": "/api/auth/refresh"
     },

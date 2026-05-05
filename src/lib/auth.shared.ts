@@ -62,6 +62,16 @@ export type RefreshSessionResponse = {
   session: ClientAuthSession;
 };
 
+export type AuthErrorResponse = {
+  success: false;
+  code?: string;
+  error: string;
+  message: string;
+  remainingAttempts?: number;
+  requestId?: string;
+  retryAfter?: number;
+};
+
 export type SuperAdminLoginResponse = {
   success: boolean;
   channel: SuperAdminOtpChannel;

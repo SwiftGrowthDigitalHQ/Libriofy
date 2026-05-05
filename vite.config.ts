@@ -83,7 +83,12 @@ const partnerAiPlugin = (env: Record<string, string>): Plugin => ({
         res.statusCode = 405;
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");
-        res.end(JSON.stringify({ success: false, message: "Method not allowed" }));
+        res.end(JSON.stringify({
+          success: false,
+          code: "METHOD_NOT_ALLOWED",
+          error: "Method not allowed.",
+          message: "Method not allowed.",
+        }));
         return;
       }
 
@@ -351,7 +356,15 @@ const scanAttendancePlugin = (env: Record<string, string>): Plugin => ({
         res.setHeader("Cache-Control", "no-store");
         res.end(JSON.stringify(result.body));
       } catch (error) {
-        next(error);
+        res.statusCode = 503;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+        res.end(JSON.stringify({
+          success: false,
+          code: "AUTH_ERROR",
+          error: "Authentication service is temporarily unavailable.",
+          message: "Authentication service is temporarily unavailable.",
+        }));
       }
     };
 
@@ -511,6 +524,7 @@ const authPlugin = (env: Record<string, string>): Plugin => ({
     server.middlewares.use("/auth/verify-otp", handleVerifyOtp);
     server.middlewares.use("/auth/login-email", handleEmailLogin);
     server.middlewares.use("/auth/super-admin/login", handleSuperAdminLogin);
+    server.middlewares.use("/auth/super-admin/verify", handleSuperAdminVerifyOtp);
     server.middlewares.use("/auth/super-admin/verify-otp", handleSuperAdminVerifyOtp);
     server.middlewares.use("/auth/refresh", handleRefresh);
     server.middlewares.use("/auth/logout", handleLogout);
@@ -520,6 +534,7 @@ const authPlugin = (env: Record<string, string>): Plugin => ({
     server.middlewares.use("/api/auth/verify-otp", handleVerifyOtp);
     server.middlewares.use("/api/auth/login-email", handleEmailLogin);
     server.middlewares.use("/api/auth/super-admin/login", handleSuperAdminLogin);
+    server.middlewares.use("/api/auth/super-admin/verify", handleSuperAdminVerifyOtp);
     server.middlewares.use("/api/auth/super-admin/verify-otp", handleSuperAdminVerifyOtp);
     server.middlewares.use("/api/auth/refresh", handleRefresh);
     server.middlewares.use("/api/auth/logout", handleLogout);

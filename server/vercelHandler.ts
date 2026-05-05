@@ -89,7 +89,12 @@ const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHead
 };
 
 const sendMethodNotAllowed = (res: ApiResponse, allowedMethod: string) => {
-  sendJson(res, 405, { success: false, message: "Method not allowed" }, { Allow: allowedMethod });
+  sendJson(res, 405, {
+    success: false,
+    code: "METHOD_NOT_ALLOWED",
+    error: "Method not allowed.",
+    message: "Method not allowed.",
+  }, { Allow: allowedMethod });
 };
 
 const buildMaintenancePayload = (status: {
@@ -221,9 +226,12 @@ const handleAuthRoute = async (req: ApiRequest, res: ApiResponse, resolver: Auth
     const result = await resolver(readParsedBody(req), readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendJson(res, 500, {
+    const message = "Authentication service is temporarily unavailable.";
+    sendJson(res, 503, {
       success: false,
-      message: error instanceof Error ? error.message : "Unexpected auth failure",
+      code: "AUTH_ERROR",
+      error: message,
+      message,
     });
   }
 };
@@ -562,6 +570,7 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
       await handleAuthRoute(req, res, (body, context) => resolveSuperAdminLoginRequest(process.env, body, context));
       return;
     case "/api/auth/super-admin/verify-otp":
+    case "/api/auth/super-admin/verify":
       await handleAuthRoute(req, res, (body, context) => resolveSuperAdminVerifyOtpRequest(process.env, body, context));
       return;
     case "/api/auth/refresh":

@@ -34,9 +34,9 @@ import {
   type VerifyOtpResponse,
 } from "./auth.shared.js";
 import {
+  getCustomAuthRuntimeIssues,
   getSuperAdminLoginRuntimeIssues,
   getSuperAdminVerifyRuntimeIssues,
-  hasSuperAdminEmailOtpConfig,
   type AuthConfigIssue,
 } from "./authRuntimeConfig.js";
 import { sendEmail } from "./email.js";
@@ -47,6 +47,7 @@ import {
   resolveLibriofyEmailFrom,
 } from "./libriofyConfig.js";
 import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.js";
+import { logEvent } from "./observability/eventLogger.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
@@ -66,6 +67,7 @@ type RequestContext = {
 
 type ErrorResponseBody = {
   code?: string;
+  error: string;
   message: string;
   remainingAttempts?: number;
   retryAfter?: number;
@@ -206,10 +208,29 @@ const buildError = <T>(
   statusCode,
   body: {
     success: false,
+    error: message,
     message,
     ...(code ? { code } : {}),
     ...(extras ?? {}),
   },
+});
+
+const buildErrorWithCookies = <T>(
+  statusCode: number,
+  message: string,
+  code: string,
+  cookies: string[],
+  extras?: Partial<ErrorResponseBody>,
+): ServiceResponse<T> => ({
+  statusCode,
+  body: {
+    success: false,
+    code,
+    error: message,
+    message,
+    ...(extras ?? {}),
+  },
+  cookies,
 });
 
 const createServiceClient = (env: EnvLike) => {
@@ -383,11 +404,48 @@ const logAuthInfo = (type: string, message: string, metadata: Record<string, unk
   });
 };
 
-const ensureApprovedAuthOrigin = <T,>(
+const logAuthLifecycleEvent = ({
+  context,
+  email,
+  message,
+  metadata,
+  status,
+  type,
+  userId,
+}: {
+  context: RequestContext;
+  email?: string | null;
+  message: string;
+  metadata?: Record<string, unknown>;
+  status: "FAILED" | "SUCCESS";
+  type: "AUTH_ERROR" | "AUTH_SUCCESS" | "OTP_FAILED" | "OTP_SENT";
+  userId?: string | null;
+}) => {
+  void logEvent({
+    type,
+    status,
+    classification: status === "FAILED" ? "AUTH_ERROR" : null,
+    entityId: trimText(userId) || null,
+    user: email ? maskEmailAddress(email) : null,
+    metadata: {
+      area: "auth",
+      device: buildLoginDeviceLabel(context),
+      flow: "super_admin",
+      ip: trimText(context.ip) || null,
+      severity: status === "FAILED" ? "ERROR" : "INFO",
+      ...(metadata ?? {}),
+    },
+    message,
+  }, {
+    skipConsole: true,
+  });
+};
+
+const ensureApprovedAuthOrigin = (
   env: EnvLike,
   context: RequestContext,
   routeName: string,
-): ServiceResponse<T> | null => {
+): ServiceResponse<never> | null => {
   const allowLocalhost = isNonProductionAuthEnv(env);
   const origin = trimText(context.origin);
   const referer = trimText(context.referer);
@@ -628,7 +686,7 @@ const logSuperAdminRuntimeIssues = (
   );
 };
 
-const buildRuntimeIssueResponse = <T>(issues: AuthConfigIssue[]): ServiceResponse<T> => {
+const buildRuntimeIssueResponse = (issues: AuthConfigIssue[]): ServiceResponse<never> => {
   const primaryIssue = issues[0];
   if (!primaryIssue) {
     return buildError(503, "Super admin sign-in is temporarily unavailable.", "AUTH_INFRA_UNAVAILABLE");
@@ -720,8 +778,6 @@ const trackSuperAdminFailure = async (redis: IORedis, email: string, ip: string)
     retryAfter: Math.max(retryAfter, 0),
   };
 };
-
-const canSendSuperAdminEmailOtp = (env: EnvLike) => hasSuperAdminEmailOtpConfig(env);
 
 const buildSuperAdminEmailSubject = () => "Libriofy Admin Login OTP";
 
@@ -837,6 +893,68 @@ const logLoginAttempt = async ({
         dedupeKey: `auth-login-log:${step}`,
       },
     );
+  }
+
+  if (status === "failed") {
+    logAuthLifecycleEvent({
+      context,
+      email,
+      message: trimText(reason) || "Super admin authentication failed.",
+      metadata: {
+        channel: channel ?? null,
+        reason: trimText(reason) || null,
+        step,
+      },
+      status: "FAILED",
+      type: "AUTH_ERROR",
+      userId,
+    });
+  }
+
+  if (status === "success" && reason === "super_admin_login") {
+    logAuthLifecycleEvent({
+      context,
+      email,
+      message: "Super admin authentication succeeded.",
+      metadata: {
+        channel: channel ?? null,
+        step,
+      },
+      status: "SUCCESS",
+      type: "AUTH_SUCCESS",
+      userId,
+    });
+  }
+
+  if (status === "success" && reason === "otp_sent") {
+    logAuthLifecycleEvent({
+      context,
+      email,
+      message: "Super admin OTP sent.",
+      metadata: {
+        channel: channel ?? null,
+        step,
+      },
+      status: "SUCCESS",
+      type: "OTP_SENT",
+      userId,
+    });
+  }
+
+  if (reason === "otp_delivery_failed" || (status === "failed" && step === "otp")) {
+    logAuthLifecycleEvent({
+      context,
+      email,
+      message: trimText(reason) || "Super admin OTP verification failed.",
+      metadata: {
+        channel: channel ?? null,
+        reason: trimText(reason) || null,
+        step,
+      },
+      status: "FAILED",
+      type: "OTP_FAILED",
+      userId,
+    });
   }
 };
 
@@ -2378,101 +2496,144 @@ export const resolveRefreshSessionRequest = async (
     return buildError(401, "Session expired. Please sign in again.", "SESSION_MISSING");
   }
 
-  const trustedSession = await getTrustedDeviceSession(env, refreshToken);
-  if (!trustedSession) {
+  try {
+    const trustedSession = await getTrustedDeviceSession(env, refreshToken);
+    if (!trustedSession) {
+      return buildErrorWithCookies(
+        401,
+        "Session expired. Please sign in again.",
+        "SESSION_EXPIRED",
+        [buildClearedSessionCookie(env)],
+      );
+    }
+
+    if (
+      trustedSession.device_fingerprint_hash &&
+      trimText(context.deviceFingerprint) &&
+      trustedSession.device_fingerprint_hash !== sha256(trimText(context.deviceFingerprint))
+    ) {
+      await revokeRefreshToken(env, refreshToken, "device_mismatch");
+      return buildErrorWithCookies(
+        401,
+        "Device verification failed. Please sign in again.",
+        "DEVICE_MISMATCH",
+        [buildClearedSessionCookie(env)],
+      );
+    }
+
+    if (trustedSession.session_scope === "super_admin" && trustedSession.auth_level < 2) {
+      await revokeRefreshToken(env, refreshToken, "super_admin_mfa_required");
+      return buildErrorWithCookies(
+        401,
+        "Super admin verification has expired. Please sign in again.",
+        "SUPER_ADMIN_MFA_REQUIRED",
+        [buildClearedSessionCookie(env)],
+      );
+    }
+
+    const user = await loadAuthUserById(env, trustedSession.user_id);
+    if (trustedSession.session_scope === "super_admin" && !user.roles.includes("super_admin")) {
+      await revokeRefreshToken(env, refreshToken, "super_admin_role_removed");
+      return buildErrorWithCookies(
+        401,
+        "Super admin access is no longer available for this account.",
+        "ACCESS_REVOKED",
+        [buildClearedSessionCookie(env)],
+      );
+    }
+
+    const runtimeIssues = getCustomAuthRuntimeIssues(env);
+    if (runtimeIssues.length) {
+      logAuthError(
+        "AUTH_REFRESH_RUNTIME_CONFIG_INCOMPLETE",
+        "Session refresh runtime configuration is incomplete.",
+        {
+          ip: trimText(context.ip) || null,
+          issues: runtimeIssues.map((issue) => ({
+            code: issue.code,
+            message: issue.message,
+            missing: issue.missing,
+          })),
+          user_id: trustedSession.user_id,
+        },
+        {
+          dedupeKey: "auth-refresh-runtime",
+        },
+      );
+      return buildErrorWithCookies(
+        503,
+        runtimeIssues[0]?.message || "Unable to refresh the session right now. Please sign in again.",
+        runtimeIssues[0]?.code || "AUTH_REFRESH_ERROR",
+        [buildClearedSessionCookie(env)],
+      );
+    }
+
+    const nextRefreshToken = await rotateTrustedDeviceSession({
+      deviceFingerprint: context.deviceFingerprint,
+      deviceSession: trustedSession,
+      env,
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+    const accessToken = mintAccessToken({
+      authLevel: trustedSession.auth_level,
+      env,
+      loginMethod: trustedSession.login_method,
+      sessionId: trustedSession.id,
+      sessionScope: trustedSession.session_scope,
+      user,
+    });
+    const sessionTtlSeconds =
+      trustedSession.session_scope === "super_admin"
+        ? trustedSession.idle_timeout_seconds ?? SUPER_ADMIN_IDLE_TIMEOUT_SECONDS
+        : TRUSTED_DEVICE_TTL_SECONDS;
+
     return {
-      statusCode: 401,
+      statusCode: 200,
       body: {
-        success: false,
-        message: "Session expired. Please sign in again.",
-        code: "SESSION_EXPIRED",
+        success: true,
+        message: "Session restored.",
+        session: createClientSession({
+          accessToken,
+          authLevel: trustedSession.auth_level,
+          idleTimeoutSeconds: trustedSession.idle_timeout_seconds,
+          loginMethod: trustedSession.login_method,
+          provider: "custom",
+          sessionScope: trustedSession.session_scope,
+          trustedDevice: true,
+          user,
+        }),
       },
-      cookies: [buildClearedSessionCookie(env)],
+      cookies: [buildSessionCookie(env, nextRefreshToken, sessionTtlSeconds)],
     };
-  }
-
-  if (
-    trustedSession.device_fingerprint_hash &&
-    trimText(context.deviceFingerprint) &&
-    trustedSession.device_fingerprint_hash !== sha256(trimText(context.deviceFingerprint))
-  ) {
-    await revokeRefreshToken(env, refreshToken, "device_mismatch");
-    return {
-      statusCode: 401,
-      body: {
-        success: false,
-        message: "Device verification failed. Please sign in again.",
-        code: "DEVICE_MISMATCH",
+  } catch (error) {
+    logAuthError(
+      "AUTH_REFRESH_FAILED",
+      "Session refresh failed unexpectedly.",
+      {
+        error_message: toSafeErrorMessage(error),
+        ip: trimText(context.ip) || null,
       },
-      cookies: [buildClearedSessionCookie(env)],
-    };
-  }
-
-  if (trustedSession.session_scope === "super_admin" && trustedSession.auth_level < 2) {
-    await revokeRefreshToken(env, refreshToken, "super_admin_mfa_required");
-    return {
-      statusCode: 401,
-      body: {
-        success: false,
-        message: "Super admin verification has expired. Please sign in again.",
-        code: "SUPER_ADMIN_MFA_REQUIRED",
+      {
+        dedupeKey: "auth-refresh-failed",
       },
-      cookies: [buildClearedSessionCookie(env)],
-    };
-  }
-
-  const user = await loadAuthUserById(env, trustedSession.user_id);
-  if (trustedSession.session_scope === "super_admin" && !user.roles.includes("super_admin")) {
-    await revokeRefreshToken(env, refreshToken, "super_admin_role_removed");
-    return {
-      statusCode: 401,
-      body: {
-        success: false,
-        message: "Super admin access is no longer available for this account.",
-        code: "ACCESS_REVOKED",
+    );
+    logAuthLifecycleEvent({
+      context,
+      message: "Session refresh failed unexpectedly.",
+      metadata: {
+        error_message: toSafeErrorMessage(error),
       },
-      cookies: [buildClearedSessionCookie(env)],
-    };
+      status: "FAILED",
+      type: "AUTH_ERROR",
+    });
+    return buildErrorWithCookies(
+      503,
+      "Unable to refresh the session right now. Please sign in again.",
+      "AUTH_REFRESH_ERROR",
+      [buildClearedSessionCookie(env)],
+    );
   }
-
-  const nextRefreshToken = await rotateTrustedDeviceSession({
-    deviceFingerprint: context.deviceFingerprint,
-    deviceSession: trustedSession,
-    env,
-    ip: context.ip,
-    userAgent: context.userAgent,
-  });
-  const accessToken = mintAccessToken({
-    authLevel: trustedSession.auth_level,
-    env,
-    loginMethod: trustedSession.login_method,
-    sessionId: trustedSession.id,
-    sessionScope: trustedSession.session_scope,
-    user,
-  });
-  const sessionTtlSeconds =
-    trustedSession.session_scope === "super_admin"
-      ? trustedSession.idle_timeout_seconds ?? SUPER_ADMIN_IDLE_TIMEOUT_SECONDS
-      : TRUSTED_DEVICE_TTL_SECONDS;
-
-  return {
-    statusCode: 200,
-    body: {
-      success: true,
-      message: "Session restored.",
-      session: createClientSession({
-        accessToken,
-        authLevel: trustedSession.auth_level,
-        idleTimeoutSeconds: trustedSession.idle_timeout_seconds,
-        loginMethod: trustedSession.login_method,
-        provider: "custom",
-        sessionScope: trustedSession.session_scope,
-        trustedDevice: true,
-        user,
-      }),
-    },
-    cookies: [buildSessionCookie(env, nextRefreshToken, sessionTtlSeconds)],
-  };
 };
 
 export const resolveLogoutRequest = async (

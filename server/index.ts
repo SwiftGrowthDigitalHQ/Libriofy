@@ -176,6 +176,10 @@ const sendServerError = (
   error: unknown,
   fallbackMessage: string,
   extraContext?: Record<string, unknown>,
+  responseOverrides?: {
+    code?: string;
+    statusCode?: number;
+  },
 ) => {
   const context = {
     method: req.method,
@@ -212,10 +216,26 @@ const sendServerError = (
     });
   }
 
-  res.status(500).json({
+  res.status(responseOverrides?.statusCode ?? 500).json({
     requestId: res.locals.requestId,
     success: false,
+    code: responseOverrides?.code ?? "SERVER_ERROR",
+    error: fallbackMessage,
     message: fallbackMessage,
+  });
+};
+
+const sendAuthServerError = (
+  req: Request,
+  res: Response,
+  error: unknown,
+  fallbackMessage: string,
+  extraContext?: Record<string, unknown>,
+  code = "AUTH_ERROR",
+) => {
+  sendServerError(req, res, error, fallbackMessage, extraContext, {
+    code,
+    statusCode: 503,
   });
 };
 
@@ -454,7 +474,7 @@ app.post("/auth/send-otp", async (req, res) => {
     const result = await resolveSendOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected send OTP failure", { source: "auth_send_otp" });
+    sendAuthServerError(req, res, error, "Unable to send OTP right now.", { source: "auth_send_otp" });
   }
 });
 
@@ -463,7 +483,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     const result = await resolveVerifyOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected OTP verification failure", { source: "auth_verify_otp" });
+    sendAuthServerError(req, res, error, "Unable to verify OTP right now.", { source: "auth_verify_otp" });
   }
 });
 
@@ -472,7 +492,7 @@ app.post("/auth/login-email", async (req, res) => {
     const result = await resolveEmailLoginRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected email login failure", { source: "auth_login_email" });
+    sendAuthServerError(req, res, error, "Unable to sign in right now.", { source: "auth_login_email" });
   }
 });
 
@@ -481,16 +501,16 @@ app.post("/auth/super-admin/login", async (req, res) => {
     const result = await resolveSuperAdminLoginRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected super admin login failure", { source: "super_admin_login" });
+    sendAuthServerError(req, res, error, "Unable to start Super Admin login right now.", { source: "super_admin_login" });
   }
 });
 
-app.post("/auth/super-admin/verify-otp", async (req, res) => {
+app.post(["/auth/super-admin/verify", "/auth/super-admin/verify-otp"], async (req, res) => {
   try {
     const result = await resolveSuperAdminVerifyOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected super admin OTP verification failure", {
+    sendAuthServerError(req, res, error, "Unable to verify the Super Admin OTP right now.", {
       source: "super_admin_verify_otp",
     });
   }
@@ -501,7 +521,9 @@ app.post("/auth/refresh", async (req, res) => {
     const result = await resolveRefreshSessionRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected session refresh failure", { source: "auth_refresh" });
+    sendAuthServerError(req, res, error, "Unable to refresh the session right now. Please sign in again.", {
+      source: "auth_refresh",
+    }, "AUTH_REFRESH_ERROR");
   }
 });
 
@@ -510,7 +532,7 @@ app.post("/auth/logout", async (req, res) => {
     const result = await resolveLogoutRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected logout failure", { source: "auth_logout" });
+    sendAuthServerError(req, res, error, "Unable to log out right now.", { source: "auth_logout" });
   }
 });
 
@@ -519,7 +541,9 @@ app.post("/auth/logout-all", async (req, res) => {
     const result = await resolveLogoutAllRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected logout-all failure", { source: "auth_logout_all" });
+    sendAuthServerError(req, res, error, "Unable to log out of all devices right now.", {
+      source: "auth_logout_all",
+    });
   }
 });
 
@@ -528,7 +552,9 @@ app.post("/auth/twilio-status", async (req, res) => {
     const result = await resolveTwilioStatusCallbackRequest(process.env, req.body);
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected Twilio callback failure", { source: "twilio_status" });
+    sendAuthServerError(req, res, error, "Unable to process the OTP status callback right now.", {
+      source: "twilio_status",
+    });
   }
 });
 
@@ -537,7 +563,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
     const result = await resolveSendOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected send OTP failure", { source: "api_auth_send_otp" });
+    sendAuthServerError(req, res, error, "Unable to send OTP right now.", { source: "api_auth_send_otp" });
   }
 });
 
@@ -546,7 +572,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     const result = await resolveVerifyOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected OTP verification failure", { source: "api_auth_verify_otp" });
+    sendAuthServerError(req, res, error, "Unable to verify OTP right now.", { source: "api_auth_verify_otp" });
   }
 });
 
@@ -555,7 +581,7 @@ app.post("/api/auth/login-email", async (req, res) => {
     const result = await resolveEmailLoginRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected email login failure", { source: "api_auth_login_email" });
+    sendAuthServerError(req, res, error, "Unable to sign in right now.", { source: "api_auth_login_email" });
   }
 });
 
@@ -564,16 +590,18 @@ app.post("/api/auth/super-admin/login", async (req, res) => {
     const result = await resolveSuperAdminLoginRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected super admin login failure", { source: "api_super_admin_login" });
+    sendAuthServerError(req, res, error, "Unable to start Super Admin login right now.", {
+      source: "api_super_admin_login",
+    });
   }
 });
 
-app.post("/api/auth/super-admin/verify-otp", async (req, res) => {
+app.post(["/api/auth/super-admin/verify", "/api/auth/super-admin/verify-otp"], async (req, res) => {
   try {
     const result = await resolveSuperAdminVerifyOtpRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected super admin OTP verification failure", {
+    sendAuthServerError(req, res, error, "Unable to verify the Super Admin OTP right now.", {
       source: "api_super_admin_verify_otp",
     });
   }
@@ -584,7 +612,9 @@ app.post("/api/auth/refresh", async (req, res) => {
     const result = await resolveRefreshSessionRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected session refresh failure", { source: "api_auth_refresh" });
+    sendAuthServerError(req, res, error, "Unable to refresh the session right now. Please sign in again.", {
+      source: "api_auth_refresh",
+    }, "AUTH_REFRESH_ERROR");
   }
 });
 
@@ -593,7 +623,7 @@ app.post("/api/auth/logout", async (req, res) => {
     const result = await resolveLogoutRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected logout failure", { source: "api_auth_logout" });
+    sendAuthServerError(req, res, error, "Unable to log out right now.", { source: "api_auth_logout" });
   }
 });
 
@@ -602,7 +632,9 @@ app.post("/api/auth/logout-all", async (req, res) => {
     const result = await resolveLogoutAllRequest(process.env, req.body, readRequestContext(req));
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected logout-all failure", { source: "api_auth_logout_all" });
+    sendAuthServerError(req, res, error, "Unable to log out of all devices right now.", {
+      source: "api_auth_logout_all",
+    });
   }
 });
 
@@ -611,7 +643,9 @@ app.post("/api/auth/twilio-status", async (req, res) => {
     const result = await resolveTwilioStatusCallbackRequest(process.env, req.body);
     sendAuthResponse(res, result);
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected Twilio callback failure", { source: "api_twilio_status" });
+    sendAuthServerError(req, res, error, "Unable to process the OTP status callback right now.", {
+      source: "api_twilio_status",
+    });
   }
 });
 

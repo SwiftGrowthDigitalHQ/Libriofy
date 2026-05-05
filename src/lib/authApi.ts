@@ -1,4 +1,5 @@
 import type {
+  AuthErrorResponse,
   ClientAuthSession,
   LoginEmailResponse,
   RefreshSessionResponse,
@@ -12,8 +13,10 @@ import { buildBearerAuthorizationHeader, sanitizeHeaders } from "@/lib/httpHeade
 
 type ApiErrorPayload = {
   code?: string;
+  error?: string;
   message?: string;
   remainingAttempts?: number;
+  requestId?: string;
   retryAfter?: number;
   success?: boolean;
 };
@@ -74,22 +77,52 @@ const readJsonResponse = async <T>(response: Response): Promise<T> => {
   }
 };
 
+const getDefaultErrorMessage = (response: Response) => {
+  if (response.status === 404) {
+    return "Authentication endpoint not found.";
+  }
+
+  if (response.status === 429) {
+    return "Too many authentication attempts. Please wait and try again.";
+  }
+
+  if (response.status >= 500) {
+    return "Authentication service is temporarily unavailable.";
+  }
+
+  return "Authentication request failed.";
+};
+
 const toError = async (response: Response) => {
   const payload = await readJsonResponse<ApiErrorPayload>(response);
-  const error = new Error(payload.message || "Authentication request failed.") as Error & ApiErrorPayload;
+  const message = payload.error || payload.message || getDefaultErrorMessage(response);
+  const error = new Error(message) as Error & ApiErrorPayload & { status?: number };
   error.code = payload.code;
+  error.error = payload.error;
+  error.requestId = payload.requestId;
   error.remainingAttempts = payload.remainingAttempts;
   error.retryAfter = payload.retryAfter;
+  error.status = response.status;
   return error;
 };
 
 const sendJsonRequest = async <T>(path: string, options: JsonRequestOptions = {}) => {
-  const response = await fetch(toApiUrl(path), {
-    method: options.method ?? "POST",
-    headers: await buildRequestHeaders(options.headers),
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    credentials: "include",
-  });
+  let response: Response;
+  try {
+    response = await fetch(toApiUrl(path), {
+      method: options.method ?? "POST",
+      headers: await buildRequestHeaders(options.headers),
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      credentials: "include",
+    });
+  } catch (requestError) {
+    const error = new Error("Unable to reach the authentication service.") as Error &
+      Partial<AuthErrorResponse> & { status?: number };
+    error.code = "NETWORK_ERROR";
+    error.error = error.message;
+    error.status = 0;
+    throw error;
+  }
 
   if (!response.ok) {
     throw await toError(response);
@@ -119,7 +152,7 @@ export const startSuperAdminLogin = async (email: string) =>
   });
 
 export const verifySuperAdminOtp = async (email: string, otp: string) =>
-  sendJsonRequest<SuperAdminVerifyOtpResponse>("/super-admin/verify-otp", {
+  sendJsonRequest<SuperAdminVerifyOtpResponse>("/super-admin/verify", {
     body: { email, otp },
   });
 
