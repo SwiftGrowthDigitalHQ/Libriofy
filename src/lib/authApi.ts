@@ -1,9 +1,12 @@
 import type {
   AuthErrorResponse,
   ClientAuthSession,
+  ImpersonationAuditResponse,
   LoginEmailResponse,
   RefreshSessionResponse,
   SendOtpResponse,
+  StartImpersonationResponse,
+  StopImpersonationResponse,
   SuperAdminLoginResponse,
   SuperAdminVerifyOtpResponse,
   VerifyOtpResponse,
@@ -24,6 +27,7 @@ type ApiErrorPayload = {
 type JsonRequestOptions = {
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
+  keepalive?: boolean;
   method?: "GET" | "POST";
 };
 
@@ -114,6 +118,7 @@ const sendJsonRequest = async <T>(path: string, options: JsonRequestOptions = {}
       headers: await buildRequestHeaders(options.headers),
       body: options.body ? JSON.stringify(options.body) : undefined,
       credentials: "include",
+      keepalive: options.keepalive,
     });
   } catch (requestError) {
     const error = new Error("Unable to reach the authentication service.") as Error &
@@ -158,6 +163,47 @@ export const verifySuperAdminOtp = async (email: string, otp: string) =>
 
 export const refreshAuthSession = async () =>
   sendJsonRequest<RefreshSessionResponse>("/refresh");
+
+export const startImpersonation = async ({
+  libraryId,
+  reason,
+  targetUserId,
+}: {
+  libraryId?: string | null;
+  reason?: string | null;
+  targetUserId: string;
+}) =>
+  sendJsonRequest<StartImpersonationResponse>("/impersonation/start", {
+    body: {
+      libraryId,
+      reason,
+      targetUserId,
+    },
+  });
+
+export const stopImpersonation = async () =>
+  sendJsonRequest<StopImpersonationResponse>("/impersonation/stop");
+
+export const auditImpersonationActivity = async ({
+  action,
+  metadata,
+  requestPath,
+  requestSource,
+}: {
+  action: string;
+  metadata?: Record<string, unknown>;
+  requestPath?: string;
+  requestSource?: string;
+}) =>
+  sendJsonRequest<ImpersonationAuditResponse>("/impersonation/audit", {
+    body: {
+      action,
+      metadata,
+      requestPath,
+      requestSource,
+    },
+    keepalive: true,
+  });
 
 export const logoutCurrentSession = async () =>
   sendJsonRequest<{ message: string; success: true }>("/logout");

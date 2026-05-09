@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { MAINTENANCE_SETTINGS_KEY, parseBooleanSetting, type MaintenanceStatus } from "./maintenance.js";
-import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 type MaintenanceSettingRow = {

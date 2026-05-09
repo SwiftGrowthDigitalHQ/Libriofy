@@ -8,10 +8,28 @@ const migrationFiles = fs
   .filter((fileName) => fileName.endsWith(".sql"))
   .sort((left, right) => left.localeCompare(right));
 
+const LEGACY_RELEASE_SAFETY_EXEMPTIONS = new Set([
+  "20260309180000_library_owner_saas_subscription_system.sql",
+  "20260311133000_multi_role_notifications.sql",
+  "20260313120000_locker_management_system.sql",
+  "20260313203000_whatsapp_renewal_reminder_system.sql",
+  "20260314190000_partner_sales_system.sql",
+  "20260326152000_student_photo_uploads.sql",
+  "20260507143000_queue_runtime_and_billing_resilience.sql",
+]);
+
 const issues = [];
 
 const pushIssue = (fileName, message) => {
   issues.push({ fileName, message });
+};
+
+const pushReleaseSafetyIssue = (fileName, message) => {
+  if (LEGACY_RELEASE_SAFETY_EXEMPTIONS.has(fileName)) {
+    return;
+  }
+
+  pushIssue(fileName, message);
 };
 
 const stripLineComments = (source) => source.replace(/--.*$/gm, "");
@@ -150,6 +168,27 @@ for (const fileName of migrationFiles) {
     pushIssue(
       fileName,
       "Rebuilding public.subscriptions must use DROP VIEW IF EXISTS + CREATE VIEW to avoid column-removal conflicts.",
+    );
+  }
+
+  if (/ALTER\s+TABLE[\s\S]+?\bDROP\s+COLUMN\b/im.test(uncommentedSource)) {
+    pushReleaseSafetyIssue(
+      fileName,
+      "DROP COLUMN is not release-safe without an explicit expand/contract migration plan and rollback handling.",
+    );
+  }
+
+  if (/ALTER\s+TABLE[\s\S]+?\bALTER\s+COLUMN\b[\s\S]+?\bTYPE\b/im.test(uncommentedSource)) {
+    pushReleaseSafetyIssue(
+      fileName,
+      "ALTER COLUMN TYPE can break backward compatibility and must be isolated behind an explicit compatibility plan.",
+    );
+  }
+
+  if (/ALTER\s+TABLE[\s\S]+?\bADD\s+COLUMN\b[\s\S]+?\bNOT\s+NULL\b/im.test(uncommentedSource) && !/\bDEFAULT\b/im.test(uncommentedSource)) {
+    pushReleaseSafetyIssue(
+      fileName,
+      "Adding a NOT NULL column without a DEFAULT/backfill path is not release-safe for rolling deployments.",
     );
   }
 }

@@ -11,6 +11,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import DomainRouter from "@/components/DomainRouter";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import AuthRoute from "@/components/auth/AuthRoute";
+import ImpersonationBanner from "@/components/auth/ImpersonationBanner";
 import { PWAProvider } from "@/components/pwa/PWAProvider";
 import { hasStoredLibraryBinding } from "@/lib/deviceKiosk";
 import { queryClient } from "@/lib/queryClient";
@@ -62,6 +63,13 @@ const SuperAdminLoginPage = lazy(() => import("./pages/SuperAdminLoginPage"));
 const SuperAdminDashboard = lazy(() => import("./pages/SuperAdminDashboard"));
 const SuperAdminLibraries = lazy(() => import("./pages/SuperAdminLibraries"));
 const SuperAdminRevenue = lazy(() => import("./pages/SuperAdminRevenue"));
+const SuperAdminBilling = lazy(() => import("./pages/SuperAdminBilling"));
+const SuperAdminIncidents = lazy(() => import("./pages/SuperAdminIncidents"));
+const SuperAdminAnalytics = lazy(() => import("./pages/SuperAdminAnalytics"));
+const SuperAdminBroadcasts = lazy(() => import("./pages/SuperAdminBroadcasts"));
+const SuperAdminAutomation = lazy(() => import("./pages/SuperAdminAutomation"));
+const SuperAdminFeatureFlags = lazy(() => import("./pages/SuperAdminFeatureFlags"));
+const SuperAdminObservability = lazy(() => import("./pages/SuperAdminObservability"));
 const SuperAdminSubscriptions = lazy(() => import("./pages/SuperAdminSubscriptions"));
 const SuperAdminPartners = lazy(() => import("./pages/SuperAdminPartners"));
 const SuperAdminLeads = lazy(() => import("./pages/SuperAdminLeads"));
@@ -100,9 +108,9 @@ const DeviceSetupRoute = () => {
 };
 
 const App = () => (
-  <MaintenanceGate useHashRouter={useHashRouter}>
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
+  <QueryClientProvider client={queryClient}>
+    <AuthProvider>
+      <MaintenanceGate useHashRouter={useHashRouter}>
         <TooltipProvider>
           <Toaster />
           <Sonner />
@@ -112,6 +120,7 @@ const App = () => (
               {...(useHashRouter ? {} : { basename: import.meta.env.BASE_URL })}
             >
               <GlobalErrorBoundary>
+                <ImpersonationBanner />
                 <Suspense fallback={<RouteFallback />}>
                   <DomainRouter>
                     <Routes>
@@ -390,6 +399,83 @@ const App = () => (
                       }
                     />
                     <Route
+                      path="/admin/billing"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminBilling />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/incidents"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminIncidents />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/analytics"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminAnalytics />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/broadcasts"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminBroadcasts />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/automation"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminAutomation />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/feature-flags"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminFeatureFlags />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/observability"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminObservability />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/admin/subscriptions"
                       element={
                         <ProtectedRoute
@@ -477,9 +563,9 @@ const App = () => (
             </Router>
           </PWAProvider>
         </TooltipProvider>
-      </AuthProvider>
-    </QueryClientProvider>
-  </MaintenanceGate>
+      </MaintenanceGate>
+    </AuthProvider>
+  </QueryClientProvider>
 );
 
 export default App;

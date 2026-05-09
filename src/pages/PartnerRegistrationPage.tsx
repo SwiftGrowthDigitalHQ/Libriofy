@@ -10,8 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { extractErrorMessage, getSafeErrorMessage } from "@/lib/errorHandling";
-import { sendAdminAlert } from "@/lib/observability/alertService";
-import { logEvent } from "@/lib/observability/eventLogger";
+import { sendAdminAlert } from "@/lib/observability/alertService.client";
+import { logEvent } from "@/lib/observability/eventLogger.client";
 import { getReferralLink } from "@/lib/partnerLinks";
 
 const PartnerRegistrationPage = () => {

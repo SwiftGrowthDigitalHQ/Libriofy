@@ -47,7 +47,7 @@ const settingsNavItem: DashboardNavItem = { icon: Settings, label: "Settings", p
 
 const DashboardLayout = ({ children }: { children: ReactNode }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const { user, signOut, logoutAllDevices } = useAuth();
+  const { session, user, signOut, logoutAllDevices } = useAuth();
   const { libraryId } = useCurrentLibraryId();
   const { isSuperAdmin } = useIsSuperAdmin();
   const { data: subscription } = useLibrarySubscription();
@@ -161,7 +161,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
                 <LogOut className="w-4 h-4 flex-shrink-0" />
                 {!collapsed && <span>Sign Out</span>}
               </button>
-              {!collapsed ? (
+              {!collapsed && !session?.impersonation ? (
                 <button
                   onClick={async () => { await logoutAllDevices(); navigate("/auth"); }}
                   className="w-full rounded-lg px-3 py-2 text-left text-xs text-sidebar-foreground/45 transition hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80"

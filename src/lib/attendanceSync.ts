@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 import { readStoredLibraryAccessKey } from "@/lib/deviceKiosk";
 import { sanitizeHeaders } from "@/lib/httpHeaders";
-import { logEvent } from "@/lib/observability/eventLogger";
+import { logEvent } from "@/lib/observability/eventLogger.client";
 
 export type AttendanceQueueStatus = "pending" | "failed";
 

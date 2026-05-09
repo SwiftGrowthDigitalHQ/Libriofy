@@ -8,6 +8,8 @@ import {
   logoutCurrentSession,
   refreshAuthSession,
   sendOtp as requestOtp,
+  startImpersonation as requestStartImpersonation,
+  stopImpersonation as requestStopImpersonation,
   startSuperAdminLogin as requestSuperAdminLogin,
   verifyOtp as requestOtpVerification,
   verifySuperAdminOtp as requestSuperAdminOtpVerification,
@@ -58,7 +60,9 @@ interface AuthContextType {
       };
     },
   ) => Promise<void>;
+  startImpersonation: (input: { libraryId?: string | null; reason?: string | null; targetUserId: string }) => Promise<ClientAuthSession>;
   startSuperAdminLogin: (email: string) => Promise<SuperAdminLoginResponse>;
+  stopImpersonation: () => Promise<ClientAuthSession>;
   updatePassword: (password: string) => Promise<void>;
   user: AuthUser | null;
   verifyOtp: (phone: string, otp: string) => Promise<VerifyOtpResponse>;
@@ -105,7 +109,7 @@ const readLastActivityTimestamp = () => {
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const initialSession = getStoredAuthSession();
   const [session, setSession] = useState<ClientAuthSession | null>(initialSession);
-  const [user, setUser] = useState<AuthUser | null>(initialSession?.user ?? null);
+  const [user, setUser] = useState<AuthUser | null>(initialSession?.effectiveUser ?? initialSession?.user ?? null);
   const [loading, setLoading] = useState(true);
   const sessionRef = useRef<ClientAuthSession | null>(initialSession);
   const refreshTimerRef = useRef<number | null>(null);
@@ -140,7 +144,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const applySession = useCallback((nextSession: ClientAuthSession | null) => {
     sessionRef.current = nextSession;
     setSession(nextSession);
-    setUser(nextSession?.user ?? null);
+    setUser(nextSession?.effectiveUser ?? nextSession?.user ?? null);
     setStoredAuthSession(nextSession);
     void supabase.realtime.setAuth(nextSession?.accessToken ?? "");
 
@@ -161,10 +165,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     applySession({
       accessToken: nextSession.access_token,
       authLevel: 1,
+      effectiveUser: toAuthUserFromSupabaseSession(nextSession),
       expiresAt: nextSession.expires_at ?? Math.floor(Date.now() / 1000) + 3600,
       idleTimeoutSeconds: null,
+      impersonation: null,
       loginMethod: "email",
       provider: "supabase",
+      realUser: null,
       sessionScope: "general",
       trustedDevice: false,
       user: toAuthUserFromSupabaseSession(nextSession),
@@ -416,6 +423,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const startSuperAdminLogin = async (email: string) =>
     requestSuperAdminLogin(email);
 
+  const startImpersonation = async (input: { libraryId?: string | null; reason?: string | null; targetUserId: string }) => {
+    const response = await requestStartImpersonation(input);
+    await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
+    applySession(response.session);
+    markSessionActivity();
+    return response.session;
+  };
+
+  const stopImpersonation = async () => {
+    const response = await requestStopImpersonation();
+    await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
+    applySession(response.session);
+    markSessionActivity();
+    return response.session;
+  };
+
   const verifySuperAdminOtp = async (email: string, otp: string) => {
     const response = await requestSuperAdminOtpVerification(email, otp);
     await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
@@ -501,6 +524,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logoutAllDevices = async () => {
+    if (sessionRef.current?.impersonation) {
+      throw new Error("Stop impersonation before signing out all devices.");
+    }
+
     const accessToken = sessionRef.current?.accessToken ?? null;
     applySession(null);
     clearActivityTimestamp();
@@ -525,7 +552,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         signIn,
         signOut,
         signUp,
+        startImpersonation,
         startSuperAdminLogin,
+        stopImpersonation,
         updatePassword,
         user,
         verifyOtp,

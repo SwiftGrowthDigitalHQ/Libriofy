@@ -1,7 +1,10 @@
 import { isLibriofyAppUrl } from "../libriofyConfig.js";
 import { getServerAuthConfigRequirements } from "../authRuntimeConfig.js";
+import { validateRuntimeConfiguration } from "./runtimeGovernance.server.js";
 
 type EnvCheckResult = {
+  checks?: ReturnType<typeof validateRuntimeConfiguration>["checks"];
+  driftWarnings?: string[];
   missing: string[];
   ok: boolean;
 };
@@ -12,17 +15,11 @@ const requireCanonicalAppUrl = (env: NodeJS.ProcessEnv, ...names: string[]) =>
   names.some((name) => isLibriofyAppUrl(env[name]));
 
 export const validateServerStartupEnv = (env: NodeJS.ProcessEnv): EnvCheckResult => {
-  const missing: string[] = [];
-
-  for (const variableName of ["APP_ENV", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "STUDENT_QR_PRIVATE_KEY"]) {
-    if (!hasValue(env[variableName])) {
-      missing.push(variableName);
-    }
-  }
-
-  if (!requireCanonicalAppUrl(env, "APP_URL", "PUBLIC_APP_URL", "SITE_URL")) {
-    missing.push("APP_URL|PUBLIC_APP_URL|SITE_URL=https://www.libriofy.com");
-  }
+  const runtimeConfig = validateRuntimeConfiguration(env, {
+    hasDist: true,
+    target: "express",
+  });
+  const missing = [...runtimeConfig.missing];
 
   for (const requirement of getServerAuthConfigRequirements(env)) {
     if (!missing.includes(requirement)) {
@@ -30,9 +27,17 @@ export const validateServerStartupEnv = (env: NodeJS.ProcessEnv): EnvCheckResult
     }
   }
 
+  if (!requireCanonicalAppUrl(env, "APP_URL", "PUBLIC_APP_URL", "SITE_URL")) {
+    if (!missing.includes("APP_URL|PUBLIC_APP_URL|SITE_URL=https://www.libriofy.com")) {
+      missing.push("APP_URL|PUBLIC_APP_URL|SITE_URL=https://www.libriofy.com");
+    }
+  }
+
   return {
+    checks: runtimeConfig.checks,
+    driftWarnings: runtimeConfig.driftWarnings,
     missing,
-    ok: missing.length === 0,
+    ok: runtimeConfig.ok && missing.length === 0,
   };
 };
 

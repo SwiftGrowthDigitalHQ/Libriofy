@@ -8,11 +8,13 @@ export const SUPER_ADMIN_IDLE_TIMEOUT_SECONDS = 30 * 60;
 export const TRUSTED_DEVICE_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const AUTH_REFRESH_COOKIE_NAME = "libriofy_refresh";
 export const AUTH_DEVICE_HEADER = "x-device-fingerprint";
+export const IMPERSONATION_ACCESS_TOKEN_TTL_SECONDS = 2 * 60;
+export const IMPERSONATION_SESSION_TTL_SECONDS = 30 * 60;
 
 export type AuthDeliveryChannel = "whatsapp" | "sms";
 export type AuthLoginMethod = "otp" | "email";
 export type AuthSessionProvider = "custom" | "supabase";
-export type AuthSessionScope = "general" | "super_admin";
+export type AuthSessionScope = "general" | "super_admin" | "impersonation";
 export type SuperAdminOtpChannel = "email";
 
 export type AuthUser = {
@@ -23,13 +25,24 @@ export type AuthUser = {
   roles: string[];
 };
 
+export type AuthImpersonationContext = {
+  effectiveUser: AuthUser;
+  expiresAt: string;
+  impersonationId: string;
+  realUser: AuthUser;
+  startedAt: string;
+};
+
 export type ClientAuthSession = {
   accessToken: string;
   authLevel: number;
+  effectiveUser?: AuthUser;
   expiresAt: number;
   idleTimeoutSeconds: number | null;
+  impersonation?: AuthImpersonationContext | null;
   loginMethod: AuthLoginMethod;
   provider: AuthSessionProvider;
+  realUser?: AuthUser | null;
   sessionScope: AuthSessionScope;
   trustedDevice: boolean;
   user: AuthUser;
@@ -60,6 +73,23 @@ export type RefreshSessionResponse = {
   success: boolean;
   message: string;
   session: ClientAuthSession;
+};
+
+export type StartImpersonationResponse = {
+  success: boolean;
+  message: string;
+  session: ClientAuthSession;
+};
+
+export type StopImpersonationResponse = {
+  success: boolean;
+  message: string;
+  session: ClientAuthSession;
+};
+
+export type ImpersonationAuditResponse = {
+  success: boolean;
+  message: string;
 };
 
 export type AuthErrorResponse = {
@@ -222,5 +252,28 @@ export const maskEmailAddress = (value: string) => {
   return `${maskedLocal}@${domain}`;
 };
 
-export const isVerifiedSuperAdminSession = (session: ClientAuthSession | null | undefined) =>
-  !!session && session.sessionScope === "super_admin" && session.authLevel >= 2;
+export const getEffectiveSessionUser = (session: ClientAuthSession | null | undefined) =>
+  session?.effectiveUser ?? session?.impersonation?.effectiveUser ?? session?.user ?? null;
+
+export const getRealSessionUser = (session: ClientAuthSession | null | undefined) =>
+  session?.realUser ?? session?.impersonation?.realUser ?? null;
+
+export const getSessionImpersonation = (session: ClientAuthSession | null | undefined) =>
+  session?.impersonation ?? null;
+
+export const isImpersonationSession = (session: ClientAuthSession | null | undefined) =>
+  !!getSessionImpersonation(session)?.impersonationId;
+
+export const isVerifiedSuperAdminSession = (session: ClientAuthSession | null | undefined) => {
+  if (!session || session.authLevel < 2) {
+    return false;
+  }
+
+  if (session.sessionScope !== "super_admin" && session.sessionScope !== "impersonation") {
+    return false;
+  }
+
+  const effectiveUser = getEffectiveSessionUser(session);
+  const realUser = getRealSessionUser(session);
+  return [effectiveUser, realUser].some((candidate) => candidate?.roles.includes("super_admin"));
+};

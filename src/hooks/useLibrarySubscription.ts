@@ -8,8 +8,14 @@ import {
   type SubscriptionPlanCatalogRecord,
 } from "@/lib/subscription";
 
-export const useLibrarySubscription = (libraryIdOverride?: string | null) => {
-  const { libraryId } = useCurrentLibraryId();
+type UseLibrarySubscriptionOptions = { enabled?: boolean };
+
+export const useLibrarySubscription = (
+  libraryIdOverride?: string | null,
+  options?: UseLibrarySubscriptionOptions,
+) => {
+  const isEnabled = options?.enabled ?? true;
+  const { libraryId } = useCurrentLibraryId({ enabled: isEnabled });
   const resolvedLibraryId = libraryIdOverride === undefined ? libraryId : libraryIdOverride;
 
   return useQuery({
@@ -57,7 +63,7 @@ export const useLibrarySubscription = (libraryIdOverride?: string | null) => {
         libraries: Array.isArray(normalized.libraries) ? normalized.libraries[0] ?? null : normalized.libraries ?? null,
       } satisfies LibrarySubscriptionRecord;
     },
-    enabled: !!resolvedLibraryId,
+    enabled: isEnabled && !!resolvedLibraryId,
   });
 };
 

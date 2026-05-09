@@ -46,6 +46,9 @@ describe("auth API route handling", () => {
   it("supports the canonical Super Admin auth paths", () => {
     expect(isSupportedAuthApiPath("/api/auth/super-admin/login")).toBe(true);
     expect(isSupportedAuthApiPath("/api/auth/super-admin/verify")).toBe(true);
+    expect(isSupportedAuthApiPath("/api/auth/impersonation/start")).toBe(true);
+    expect(isSupportedAuthApiPath("/api/auth/impersonation/stop")).toBe(true);
+    expect(isSupportedAuthApiPath("/api/auth/impersonation/audit")).toBe(true);
     expect(isSupportedAuthApiPath("/api/auth/refresh")).toBe(true);
     expect(isSupportedAuthApiPath("/api/auth/super-admin/unknown")).toBe(false);
   });
@@ -56,7 +59,7 @@ describe("auth API route handling", () => {
       method: "POST",
       url: "/api/auth/super-admin/login",
     };
-    const { response } = createMockResponse();
+    const { headers, response } = createMockResponse();
 
     await handleAuthApiRequest(req, response, buildEnv({
       REDIS_URL: undefined,
@@ -69,6 +72,9 @@ describe("auth API route handling", () => {
       message: "Session and OTP challenge storage is not configured.",
       success: false,
     });
+    expect(headers.get("x-request-id")).toBeTruthy();
+    expect(headers.get("x-correlation-id")).toBeTruthy();
+    expect(headers.get("x-trace-id")).toBeTruthy();
   });
 
   it("routes /api/auth/super-admin/verify through the OTP verifier instead of returning 404", async () => {

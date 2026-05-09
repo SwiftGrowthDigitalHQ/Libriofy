@@ -1,6 +1,6 @@
 import { normalizeParsedRequestBody } from "../httpRequest.server.js";
-import { sendAdminAlert } from "./alertService.js";
-import { logEvent } from "./eventLogger.js";
+import { sendAdminAlert } from "./alertService.server.js";
+import { logEvent } from "./eventLogger.server.js";
 import type { AdminAlertInput, EventLogInput } from "./types.js";
 
 type ApiHeaders = Record<string, string | string[] | undefined>;

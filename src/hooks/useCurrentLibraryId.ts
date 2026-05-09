@@ -4,9 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import { isSupabaseUnauthorizedError, useUserRole } from "./useUserRole";
 
-export const useCurrentLibraryId = () => {
+type UseCurrentLibraryIdOptions = { enabled?: boolean };
+
+export const useCurrentLibraryId = (options?: UseCurrentLibraryIdOptions) => {
   const { user, signOut } = useAuth();
-  const { data: roles, isLoading: rolesLoading } = useUserRole();
+  const isEnabled = options?.enabled ?? true;
+  const { data: roles, isLoading: rolesLoading } = useUserRole({ enabled: isEnabled });
   const { data: ownedLibraries = [], isLoading: ownedLibrariesLoading } = useQuery({
     queryKey: ["current-user-owned-libraries", user?.id],
     queryFn: async (): Promise<Array<{ id: string }>> => {
@@ -28,7 +31,7 @@ export const useCurrentLibraryId = () => {
 
       return data ?? [];
     },
-    enabled: !!user?.id,
+    enabled: isEnabled && !!user?.id,
     staleTime: 60_000,
     retry: (failureCount, error) => {
       if (isSupabaseUnauthorizedError(error)) return false;

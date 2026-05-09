@@ -1,4 +1,5 @@
-import { getStoredAuthUser } from "@/lib/authSession";
+import { getStoredAuthSession, getStoredAuthUser } from "@/lib/authSession";
+import { auditImpersonationActivity } from "@/lib/authApi";
 import { captureClientError } from "@/lib/observability/clientMonitoring";
 import { getSupabaseRequestDetails, parseSupabaseErrorResponse } from "@/lib/observability/supabaseRequestDetails";
 
@@ -24,6 +25,37 @@ const buildClientQueryFailureMessage = (
   return `Supabase ${queryType} request failed for ${target} with status ${status}.`;
 };
 
+const queueImpersonationAudit = (
+  details: ReturnType<typeof getSupabaseRequestDetails>,
+  {
+    outcome,
+    status,
+  }: {
+    outcome: "failed" | "succeeded";
+    status: number | "network_error";
+  },
+) => {
+  const session = getStoredAuthSession();
+  if (!session?.impersonation || details.skipLogging || details.queryType === "other") {
+    return;
+  }
+
+  void auditImpersonationActivity({
+    action: "supabase_request",
+    metadata: {
+      method: details.method,
+      outcome,
+      path: details.path,
+      queryName: details.queryName,
+      queryType: details.queryType,
+      status,
+      url: details.url,
+    },
+    requestPath: typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/",
+    requestSource: "supabase_browser_client",
+  }).catch(() => undefined);
+};
+
 export const createInstrumentedBrowserSupabaseFetch = (): typeof fetch => {
   const baseFetch = globalThis.fetch.bind(globalThis);
 
@@ -32,6 +64,10 @@ export const createInstrumentedBrowserSupabaseFetch = (): typeof fetch => {
 
     try {
       const response = await baseFetch(input, init);
+      queueImpersonationAudit(details, {
+        outcome: response.ok ? "succeeded" : "failed",
+        status: response.status,
+      });
 
       if (!details.skipLogging && details.queryType !== "other" && !response.ok) {
         const payload = await parseSupabaseErrorResponse(response);
@@ -63,6 +99,11 @@ export const createInstrumentedBrowserSupabaseFetch = (): typeof fetch => {
 
       return response;
     } catch (error) {
+      queueImpersonationAudit(details, {
+        outcome: "failed",
+        status: "network_error",
+      });
+
       if (!details.skipLogging && details.queryType !== "other") {
         const userId = resolveClientUserId();
         const context = {

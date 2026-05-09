@@ -2,8 +2,18 @@ import { ReactNode, useMemo } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { isVerifiedSuperAdminSession } from "@/lib/auth.shared";
-import { SUPER_ADMIN_DASHBOARD_ROUTE, SUPER_ADMIN_LOGIN_ROUTE } from "@/lib/superAdminPaths";
-import { AppRole, getRoleHomeRoute, isUserRolesSchemaError, useUserRole } from "@/hooks/useUserRole";
+import {
+  isSuperAdminDashboardPath,
+  SUPER_ADMIN_DASHBOARD_ROUTE,
+  SUPER_ADMIN_LOGIN_ROUTE,
+} from "@/lib/superAdminPaths";
+import {
+  AppRole,
+  getRoleHomeRoute,
+  getRoleHomeRouteFromRoleNames,
+  isUserRolesSchemaError,
+  useUserRole,
+} from "@/hooks/useUserRole";
 import { evaluateSubscriptionAccess, useLibrarySubscription } from "@/hooks/useLibrarySubscription";
 
 interface ProtectedRouteProps {
@@ -35,17 +45,24 @@ const ProtectedRoute = ({
 }: ProtectedRouteProps) => {
   const location = useLocation();
   const { session, user, loading } = useAuth();
-  const { data: roles, isLoading: rolesLoading, error: rolesError } = useUserRole();
-  const roleHome = useMemo(() => getRoleHomeRoute(roles), [roles]);
   const projectRef = useMemo(() => getProjectRefFromEnv(), []);
-  const { data: subscription, isLoading: subLoading } = useLibrarySubscription();
+  const sessionRoleNames = session?.user.roles ?? [];
   const isLibraryDashboardRoute = allowRoles?.some((role) => role === "library_owner" || role === "staff") ?? false;
-  const isSuperAdminRoute = allowRoles?.includes("super_admin") ?? false;
+  const isSuperAdminRoute = isSuperAdminDashboardPath(location.pathname);
+  const shouldFetchRoleData = !isSuperAdminRoute;
+  const { data: roles, isLoading: rolesLoading, error: rolesError } = useUserRole({ enabled: shouldFetchRoleData });
+  const roleHome = useMemo(
+    () => (shouldFetchRoleData ? getRoleHomeRoute(roles) : getRoleHomeRouteFromRoleNames(sessionRoleNames)),
+    [roles, sessionRoleNames, shouldFetchRoleData],
+  );
+  const currentRoles = shouldFetchRoleData ? roles?.map((role) => role.role) ?? [] : sessionRoleNames;
+  const { data: gatedSubscription, isLoading: gatedSubscriptionLoading } = useLibrarySubscription(undefined, {
+    enabled: isLibraryDashboardRoute && !isSuperAdminRoute,
+  });
   const isBillingRoute = location.pathname === "/dashboard/billing";
-  const subscriptionAccess = evaluateSubscriptionAccess(subscription);
+  const subscriptionAccess = evaluateSubscriptionAccess(gatedSubscription);
   const shouldDebug = debugLabel === "partner" || location.pathname === "/partner" || location.pathname.startsWith("/partner/");
   const currentUser = user ? { email: user.email, id: user.id } : null;
-  const currentRoles = roles?.map((role) => role.role) ?? [];
   const logDebug = (message: string, extra?: Record<string, unknown>) => {
     if (!shouldDebug) return;
 
@@ -58,10 +75,10 @@ const ProtectedRoute = ({
     });
   };
 
-  if (loading || rolesLoading) {
+  if (loading || (shouldFetchRoleData && rolesLoading)) {
     logDebug("waiting for auth state", {
       authLoading: loading,
-      rolesLoading,
+      rolesLoading: shouldFetchRoleData ? rolesLoading : false,
     });
     return null;
   }
@@ -73,7 +90,7 @@ const ProtectedRoute = ({
     return <Navigate to={unauthenticatedRedirectTo} replace state={{ from: location.pathname }} />;
   }
 
-  if (rolesError) {
+  if (shouldFetchRoleData && rolesError) {
     if (isUserRolesSchemaError(rolesError)) {
       logDebug("blocking access because user_roles schema is missing", {
         rolesError: rolesError instanceof Error ? rolesError.message : String(rolesError),
@@ -109,7 +126,9 @@ npx supabase db push`}
     return <Navigate to={unauthenticatedRedirectTo} replace state={{ from: location.pathname }} />;
   }
 
-  const isSuperAdmin = roles?.some((r) => r.role === "super_admin") ?? false;
+  const isSuperAdmin = shouldFetchRoleData
+    ? roles?.some((r) => r.role === "super_admin") ?? false
+    : sessionRoleNames.includes("super_admin");
   const hasVerifiedSuperAdminSession = isVerifiedSuperAdminSession(session);
 
   if (isSuperAdminRoute && !hasVerifiedSuperAdminSession) {
@@ -129,15 +148,17 @@ npx supabase db push`}
     return <Navigate to={SUPER_ADMIN_DASHBOARD_ROUTE} replace />;
   }
 
-  if (isLibraryDashboardRoute && subLoading) {
+  if (isLibraryDashboardRoute && gatedSubscriptionLoading) {
     logDebug("waiting for subscription state", {
-      subLoading,
+      subLoading: gatedSubscriptionLoading,
     });
     return null;
   }
 
   if (allowRoles?.length) {
-    const hasRequiredRole = roles?.some((r) => allowRoles.includes(r.role)) ?? false;
+    const hasRequiredRole = isSuperAdminRoute
+      ? isSuperAdmin && allowRoles.includes("super_admin")
+      : roles?.some((r) => allowRoles.includes(r.role)) ?? false;
     if (!hasRequiredRole) {
       const redirectTo = unauthorizedRedirectTo ?? (roleHome === "/auth" ? "/dashboard" : roleHome);
       logDebug("redirect trigger: user does not have an allowed role", {

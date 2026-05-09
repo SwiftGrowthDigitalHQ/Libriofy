@@ -2,6 +2,13 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { blockIfMaintenanceMode } from "../_shared/maintenance.ts";
 import { logEdgeEvent, sendEdgeAdminAlert } from "../_shared/observability.ts";
+import {
+  buildSubscriptionPaymentIdempotencyKey,
+  findReusableSubscriptionPayment,
+  mergePaymentTraceMetadata,
+  readPaymentTraceHeaders,
+  type ReusableSubscriptionPayment,
+} from "../_shared/payment-runtime.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const corsHeaders = {
@@ -140,8 +147,12 @@ serve(async (req) => {
   let observabilitySupabase: ReturnType<typeof createClient> | null = null;
   let observabilityUser = "anonymous";
   let observabilityEntityId: string | null = null;
+  const trace = readPaymentTraceHeaders(req.headers);
   let observabilityMetadata: Record<string, unknown> = {
+    correlationId: trace.correlationId,
+    requestId: trace.requestId,
     source: "create_payment_edge",
+    traceId: trace.traceId,
   };
 
   try {
@@ -159,12 +170,12 @@ serve(async (req) => {
     const planCodeInput = normalizePlanCode(body?.planName ?? body?.plan);
     const couponCodeInput = normalizeCouponCode(body?.couponCode);
     observabilityEntityId = libraryIdInput || null;
-    observabilityMetadata = {
+    observabilityMetadata = mergePaymentTraceMetadata({
       couponCode: couponCodeInput || null,
       months,
       planCode: planCodeInput || null,
       source: "create_payment_edge",
-    };
+    }, trace);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -371,8 +382,62 @@ serve(async (req) => {
 
     const finalAmount = Math.max(1, Math.floor(subtotal - discountAmount));
     const amountInPaise = Math.max(100, Math.round(finalAmount * 100));
+    const idempotencyKey = buildSubscriptionPaymentIdempotencyKey({
+      couponCode: coupon?.code ?? couponCodeInput,
+      currentPlanCode,
+      libraryId,
+      months,
+      planCode: plan.code,
+    });
+    observabilityMetadata = {
+      ...observabilityMetadata,
+      idempotencyKey,
+    };
+
+    const { data: activeCreatedRows, error: activeCreatedRowsError } = await supabase
+      .from("subscription_payments")
+      .select("id, amount, currency, created_at, idempotency_key, metadata, razorpay_order_id, status")
+      .eq("library_id", libraryId)
+      .eq("status", "created")
+      .order("created_at", { ascending: false })
+      .limit(8);
+    if (activeCreatedRowsError) throw activeCreatedRowsError;
+
+    const reusablePayment = findReusableSubscriptionPayment(
+      (activeCreatedRows ?? []) as ReusableSubscriptionPayment[],
+      idempotencyKey,
+    );
+    if (reusablePayment?.razorpay_order_id) {
+      await logEdgeEvent(supabase, {
+        type: "PAYMENT_INITIATED",
+        status: "SUCCESS",
+        user: observabilityUser,
+        entityId: String(reusablePayment.razorpay_order_id),
+        metadata: {
+          ...observabilityMetadata,
+          amount: safeNumber(reusablePayment.amount, finalAmount),
+          currency: reusablePayment.currency ?? "INR",
+          libraryId,
+          orderId: reusablePayment.razorpay_order_id,
+          requestedPlanCode,
+          reused_order: true,
+          severity: "INFO",
+        },
+        message: "Reused an active Razorpay order for the same billing request.",
+      });
+
+      return json({
+        amount: Math.max(100, Math.round(safeNumber(reusablePayment.amount, finalAmount) * 100)),
+        currency: reusablePayment.currency ?? "INR",
+        keyId: razorpayKeyId,
+        orderId: reusablePayment.razorpay_order_id,
+        reused: true,
+      });
+    }
 
     const basic = btoa(`${razorpayKeyId}:${razorpaySecret}`);
+    const razorpayAbortController = new AbortController();
+    const razorpayTimeout = setTimeout(() => razorpayAbortController.abort("razorpay_order_timeout"), 12_000);
     const razorpayResponse = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST",
       headers: {
@@ -384,13 +449,15 @@ serve(async (req) => {
         currency: "INR",
         receipt: `${libraryId.slice(0, 8)}-${Date.now()}`,
         notes: {
+          idempotency_key: idempotencyKey,
           library_id: libraryId,
           months: String(months),
           plan: plan.code,
           coupon: coupon?.code ?? "",
         },
       }),
-    });
+      signal: razorpayAbortController.signal,
+    }).finally(() => clearTimeout(razorpayTimeout));
 
     if (!razorpayResponse.ok) {
       const errBody = await razorpayResponse.text();
@@ -477,6 +544,7 @@ serve(async (req) => {
         library_id: libraryId,
         subscription_id: sub.id,
         amount: finalAmount,
+        idempotency_key: idempotencyKey,
         currency: "INR",
         razorpay_order_id: order.id,
         status: "created",
@@ -497,9 +565,13 @@ serve(async (req) => {
           coupon_code: coupon?.code ?? null,
           coupon_discount_type: coupon?.discount_type ?? null,
           coupon_discount_value: coupon ? safeNumber(coupon.discount_value, 0) : null,
+          idempotency_key: idempotencyKey,
           referral_referred_by: acquisition?.referred_by ?? null,
           affiliate_id: acquisition?.affiliate_id ?? null,
           created_by: userId,
+          source_correlation_id: trace.correlationId,
+          source_request_id: trace.requestId,
+          source_trace_id: trace.traceId,
         },
       })
       .select("id")
@@ -529,6 +601,7 @@ serve(async (req) => {
         ...observabilityMetadata,
         amount: finalAmount,
         currency: order.currency,
+        idempotencyKey,
         libraryId,
         orderId: order.id,
         requestedPlanCode,

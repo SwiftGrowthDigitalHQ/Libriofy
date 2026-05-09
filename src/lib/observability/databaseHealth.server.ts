@@ -1,6 +1,6 @@
 import { CRITICAL_DB_ENTITIES, type DatabaseHealthPayload, type DatabaseSchemaEntityCheck } from "./databaseHealth.shared.js";
-import { sendAdminAlert } from "./alertService.js";
-import { logEvent } from "./eventLogger.js";
+import { sendAdminAlert } from "./alertService.server.js";
+import { logEvent } from "./eventLogger.server.js";
 import { captureServerError } from "./serverMonitoring.js";
 import { listRecentObservabilitySignals } from "./store.server.js";
 

@@ -62,7 +62,7 @@ const loadAuthApiRouteWithFailingLogger = async (
   vi.resetModules();
 
   const logEvent = vi.fn().mockRejectedValue(new Error("observability unavailable"));
-  vi.doMock("../lib/observability/eventLogger.js", () => ({
+  vi.doMock("../lib/observability/eventLogger.server.js", () => ({
     logEvent,
   }));
 
@@ -142,11 +142,11 @@ describe("email observability safety", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const logEvent = vi.fn().mockRejectedValue(new Error("logger offline"));
-    vi.doMock("../lib/observability/eventLogger.js", () => ({
+    vi.doMock("../lib/observability/eventLogger.server.js", () => ({
       logEvent,
     }));
 
-    const { sendEmail } = await import("../lib/email.ts");
+    const { sendEmail } = await import("../lib/email.server.ts");
 
     await expect(sendEmail({
       env: {

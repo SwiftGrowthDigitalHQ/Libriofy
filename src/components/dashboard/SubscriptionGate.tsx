@@ -18,7 +18,7 @@ import {
   logPaymentSuccess,
   type PaymentObservabilityContext,
   reportPaymentFailure,
-} from "@/lib/observability/paymentObservability";
+} from "@/lib/observability/paymentObservability.client";
 import { getSupportWhatsAppUrl } from "@/lib/supportContact";
 
 type RazorpaySuccessResponse = {

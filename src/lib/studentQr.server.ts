@@ -3,7 +3,8 @@ import {
   createStudentQrClaims,
   signStudentQrToken,
 } from "./studentQr.js";
-import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
+import { recordImpersonationAuditEvent } from "./impersonationRuntime.server.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
 
 type EnvLike = Record<string, string | undefined>;
@@ -240,6 +241,24 @@ export const resolveStudentQrSigningRequest = async (
   const authUser = await resolveRequestAuthUser(env, `Bearer ${authToken}`);
   if (!authUser) {
     return buildError("Unauthorized", 401, "UNAUTHORIZED");
+  }
+
+  if (authUser.impersonation && authUser.realUser) {
+    await recordImpersonationAuditEvent(env, {
+      action: "impersonated_student_qr_request",
+      effectiveUser: authUser.effectiveUser ?? authUser,
+      impersonationId: authUser.impersonation.impersonationId,
+      ipAddress: null,
+      libraryId: requestedLibraryId,
+      metadata: {
+        route: "/api/student-qr",
+        student_count: studentIds.length,
+      },
+      realUser: authUser.realUser,
+      requestPath: "/api/student-qr",
+      requestSource: "student_qr_api",
+      userAgent: null,
+    }).catch(() => undefined);
   }
 
   const { data: roles, error: rolesError } = await serviceClient

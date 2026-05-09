@@ -1,8 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
 
-import type { AuthUser } from "./auth.shared.js";
-import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
+import { loadActiveImpersonationSession } from "./impersonationRuntime.server.js";
+import type { AuthImpersonationContext, AuthSessionScope, AuthUser } from "./auth.shared.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -18,8 +19,22 @@ type UserRoleRow = {
 };
 
 export type AuthenticatedRequestUser = AuthUser & {
+  effectiveUser?: AuthUser;
+  impersonation?: AuthImpersonationContext | null;
+  realUser?: AuthUser | null;
+  sessionScope?: AuthSessionScope;
   token: string;
   tokenSource: "custom" | "supabase";
+  trustedSessionId?: string | null;
+};
+
+type TrustedSessionRow = {
+  auth_level?: number | null;
+  expires_at?: string | null;
+  id?: string | null;
+  revoked_at?: string | null;
+  session_scope?: string | null;
+  user_id?: string | null;
 };
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -108,6 +123,36 @@ const loadAuthUser = async (env: EnvLike, userId: string) => {
   } satisfies AuthUser;
 };
 
+const loadTrustedSession = async (env: EnvLike, sessionId: string) => {
+  const normalizedSessionId = trimText(sessionId);
+  if (!normalizedSessionId) {
+    return null;
+  }
+
+  const serviceClient = buildServiceClient(env);
+  const { data, error } = await serviceClient
+    .from("auth_trusted_devices")
+    .select("id, user_id, expires_at, revoked_at, auth_level, session_scope")
+    .eq("id", normalizedSessionId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  const session = data as TrustedSessionRow | null;
+  if (!session?.id || session.revoked_at) {
+    return null;
+  }
+
+  const expiresAt = Date.parse(trimText(session.expires_at));
+  if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+    return null;
+  }
+
+  return session;
+};
+
 export const parseBearerToken = (authorizationHeader: string | undefined) => {
   const headerValue = trimText(authorizationHeader);
   if (!headerValue) {
@@ -154,11 +199,71 @@ const resolveCustomTokenUser = async (env: EnvLike, token: string) => {
       return null;
     }
 
-    const user = await loadAuthUser(env, userId);
+    const appMetadata =
+      claims && "app_metadata" in claims && claims.app_metadata && typeof claims.app_metadata === "object"
+        ? (claims.app_metadata as Record<string, unknown>)
+        : {};
+    const sessionId = trimText(claims && "session_id" in claims ? claims.session_id : "");
+    const sessionScopeCandidate = trimText(appMetadata.session_scope);
+    const sessionScope: AuthSessionScope =
+      sessionScopeCandidate === "super_admin" || sessionScopeCandidate === "impersonation"
+        ? sessionScopeCandidate
+        : "general";
+    const realUserId = trimText(appMetadata.real_user_id);
+    const impersonationId = trimText(appMetadata.impersonation_id);
+    const effectiveUser = await loadAuthUser(env, userId);
+
+    if (sessionScope === "impersonation") {
+      const trustedSession = await loadTrustedSession(env, sessionId);
+      if (!trustedSession || trimText(trustedSession.user_id) !== realUserId || !impersonationId) {
+        return null;
+      }
+
+      const activeImpersonation = await loadActiveImpersonationSession(env, sessionId);
+      if (
+        !activeImpersonation ||
+        activeImpersonation.id !== impersonationId ||
+        activeImpersonation.targetUserId !== userId ||
+        activeImpersonation.superAdminUserId !== realUserId
+      ) {
+        return null;
+      }
+
+      const realUser = await loadAuthUser(env, realUserId);
+      return {
+        ...effectiveUser,
+        effectiveUser,
+        impersonation: {
+          effectiveUser,
+          expiresAt: activeImpersonation.expiresAt,
+          impersonationId: activeImpersonation.id,
+          realUser,
+          startedAt: activeImpersonation.startedAt,
+        },
+        realUser,
+        sessionScope: "impersonation" as const,
+        token,
+        tokenSource: "custom" as const,
+        trustedSessionId: sessionId,
+      };
+    }
+
+    if (sessionId) {
+      const trustedSession = await loadTrustedSession(env, sessionId);
+      if (trustedSession && trimText(trustedSession.user_id) !== userId) {
+        return null;
+      }
+    }
+
     return {
-      ...user,
+      ...effectiveUser,
+      effectiveUser,
+      impersonation: null,
+      realUser: null,
+      sessionScope: sessionScope || "general",
       token,
       tokenSource: "custom" as const,
+      trustedSessionId: sessionId || null,
     };
   } catch {
     return null;

@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
 import { parseStudentQrPayload } from "./studentQr.js";
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
-import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 

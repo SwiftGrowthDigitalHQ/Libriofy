@@ -1,11 +1,20 @@
 import { normalizeParsedRequestBody } from "./httpRequest.server.js";
-import { logEvent } from "./observability/eventLogger.js";
+import { logEvent } from "./observability/eventLogger.server.js";
 import {
+  applyTraceResponseHeaders,
+  createRequestTraceContext,
+  runWithRequestTraceContext,
+} from "./observability/requestContext.server.js";
+import { incrementRuntimeMetric, recordRuntimeLatency } from "./observability/runtimeMetrics.server.js";
+import {
+  resolveImpersonationAuditRequest,
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
   resolveLogoutRequest,
   resolveRefreshSessionRequest,
   resolveSendOtpRequest,
+  resolveStartImpersonationRequest,
+  resolveStopImpersonationRequest,
   resolveSuperAdminLoginRequest,
   resolveSuperAdminVerifyOtpRequest,
   resolveTwilioStatusCallbackRequest,
@@ -36,12 +45,15 @@ type ResolverResult = {
 type AuthContext = {
   authorization?: string;
   cookieHeader?: string;
+  correlationId?: string;
   deviceFingerprint?: string;
   deviceLabel?: string;
   host?: string;
   ip?: string;
   origin?: string;
+  requestId?: string;
   referer?: string;
+  traceId?: string;
   userAgent?: string;
 };
 
@@ -54,6 +66,9 @@ export const AUTH_API_ROUTE_PATHS = [
   "/api/auth/super-admin/login",
   "/api/auth/super-admin/verify",
   "/api/auth/super-admin/verify-otp",
+  "/api/auth/impersonation/start",
+  "/api/auth/impersonation/stop",
+  "/api/auth/impersonation/audit",
   "/api/auth/refresh",
   "/api/auth/logout",
   "/api/auth/logout-all",
@@ -138,6 +153,61 @@ const sendAuthResponse = (res: ApiResponse, result: ResolverResult) => {
   );
 };
 
+const recordAuthRouteMetrics = ({
+  durationMs,
+  method,
+  pathname,
+  statusCode,
+}: {
+  durationMs: number;
+  method: string;
+  pathname: string;
+  statusCode: number;
+}) => {
+  const outcome = statusCode >= 400 ? "error" : "success";
+
+  incrementRuntimeMetric("http_requests_total", 1, {
+    area: "auth",
+    method,
+    outcome,
+    route: pathname,
+  });
+  incrementRuntimeMetric("auth_requests_total", 1, {
+    method,
+    outcome,
+    route: pathname,
+    status_code: statusCode,
+  });
+  recordRuntimeLatency("http_request_latency_ms", durationMs, {
+    area: "auth",
+    method,
+    outcome,
+    route: pathname,
+  });
+
+  if (durationMs >= 1000) {
+    runObservabilitySafely(() =>
+      logEvent({
+        type: "AUTH_ROUTE_SLOW",
+        status: "FAILED",
+        classification: "PERFORMANCE_EVENT",
+        entityId: pathname,
+        metadata: {
+          area: "auth",
+          duration_ms: durationMs,
+          method,
+          route: pathname,
+          severity: durationMs >= 2500 ? "ERROR" : "WARNING",
+          status_code: statusCode,
+        },
+        message: `Auth route ${pathname} completed in ${durationMs}ms.`,
+      }, {
+        skipConsole: true,
+      }),
+    );
+  }
+};
+
 const runObservabilitySafely = (operation: () => Promise<unknown> | unknown) => {
   try {
     void Promise.resolve(operation()).catch(() => undefined);
@@ -173,6 +243,9 @@ const createRouteResolverMap = (env: Record<string, string | undefined>): Record
   "/api/auth/super-admin/login": (body, context) => resolveSuperAdminLoginRequest(env, body, context),
   "/api/auth/super-admin/verify": (body, context) => resolveSuperAdminVerifyOtpRequest(env, body, context),
   "/api/auth/super-admin/verify-otp": (body, context) => resolveSuperAdminVerifyOtpRequest(env, body, context),
+  "/api/auth/impersonation/start": (body, context) => resolveStartImpersonationRequest(env, body, context),
+  "/api/auth/impersonation/stop": (body, context) => resolveStopImpersonationRequest(env, body, context),
+  "/api/auth/impersonation/audit": (body, context) => resolveImpersonationAuditRequest(env, body, context),
   "/api/auth/refresh": (body, context) => resolveRefreshSessionRequest(env, body, context),
   "/api/auth/logout": (body, context) => resolveLogoutRequest(env, body, context),
   "/api/auth/logout-all": (body, context) => resolveLogoutAllRequest(env, body, context),
@@ -190,49 +263,78 @@ export const handleAuthApiRequest = async (
 ) => {
   const pathname = forcedPathname ?? readAuthApiRequestPath(req);
   const method = (req.method || "").toUpperCase();
+  const baseContext = readRequestContext(req);
+  const traceContext = createRequestTraceContext({
+    correlationId: readHeaderValue(req.headers, "x-correlation-id") || readHeaderValue(req.headers, "x-request-id"),
+    ipAddress: baseContext.ip,
+    method,
+    requestId: readHeaderValue(req.headers, "x-request-id"),
+    route: pathname,
+    source: "auth_api",
+    traceId: readHeaderValue(req.headers, "x-trace-id"),
+    userAgent: baseContext.userAgent,
+  });
 
-  if (method === "OPTIONS") {
-    res.statusCode = 204;
-    res.setHeader("Cache-Control", "no-store");
-    res.end();
-    return;
-  }
+  applyTraceResponseHeaders(res, traceContext);
 
-  if (method !== "POST") {
-    sendMethodNotAllowed(res, "POST");
-    return;
-  }
+  return runWithRequestTraceContext(traceContext, async () => {
+    const startedAt = Date.now();
 
-  if (!isSupportedAuthApiPath(pathname)) {
-    sendJson(res, 404, buildErrorBody("API route not found.", "ROUTE_NOT_FOUND", { path: pathname }));
-    return;
-  }
+    if (method === "OPTIONS") {
+      res.statusCode = 204;
+      res.setHeader("Cache-Control", "no-store");
+      res.end();
+      return;
+    }
 
-  let body: Record<string, unknown>;
-  try {
-    body = readParsedBody(req);
-  } catch {
-    sendJson(res, 400, buildErrorBody("Invalid request body.", "INVALID_REQUEST"));
-    return;
-  }
+    if (method !== "POST") {
+      sendMethodNotAllowed(res, "POST");
+      return;
+    }
 
-  try {
-    const resolver = createRouteResolverMap(env)[pathname];
-    const result = await resolver(body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    logUnexpectedAuthFailure(pathname, error);
-    sendJson(
-      res,
-      503,
-      buildErrorBody(
-        pathname === "/api/auth/refresh"
-          ? "Unable to refresh the session right now. Please sign in again."
-          : "Authentication service is temporarily unavailable.",
-        pathname === "/api/auth/refresh" ? "AUTH_REFRESH_ERROR" : "AUTH_ERROR",
-      ),
-    );
-  }
+    if (!isSupportedAuthApiPath(pathname)) {
+      sendJson(res, 404, buildErrorBody("API route not found.", "ROUTE_NOT_FOUND", { path: pathname }));
+      return;
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = readParsedBody(req);
+    } catch {
+      sendJson(res, 400, buildErrorBody("Invalid request body.", "INVALID_REQUEST"));
+      return;
+    }
+
+    try {
+      const resolver = createRouteResolverMap(env)[pathname];
+      const result = await resolver(body, {
+        ...baseContext,
+        correlationId: traceContext.correlationId,
+        requestId: traceContext.requestId,
+        traceId: traceContext.traceId,
+      });
+      sendAuthResponse(res, result);
+    } catch (error) {
+      logUnexpectedAuthFailure(pathname, error);
+      sendJson(
+        res,
+        503,
+        buildErrorBody(
+          pathname === "/api/auth/refresh"
+            ? "Unable to refresh the session right now. Please sign in again."
+            : "Authentication service is temporarily unavailable.",
+          pathname === "/api/auth/refresh" ? "AUTH_REFRESH_ERROR" : "AUTH_ERROR",
+        ),
+      );
+    } finally {
+      recordAuthRouteMetrics({
+        durationMs: Date.now() - startedAt,
+        method: traceContext.method,
+        pathname,
+        statusCode: res.statusCode || 200,
+      });
+    }
+  });
 };
 
 export const createAuthApiHandler = (

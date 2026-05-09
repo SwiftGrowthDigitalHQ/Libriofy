@@ -1,13 +1,24 @@
 import { createClient } from "@supabase/supabase-js";
 
+import { handleAuthApiRequest, isSupportedAuthApiPath, type AuthApiRoutePath } from "../src/lib/authApiRoute.server.js";
 import { logAttendanceFailure } from "../src/lib/attendanceFailureLogger.js";
 import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server.js";
 import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
 import { extractClientIp, extractUserAgent, normalizeParsedRequestBody } from "../src/lib/httpRequest.server.js";
+import { buildMaintenanceApiError, evaluateMaintenanceRequest, readMaintenanceContextFromHeaders } from "../src/lib/maintenanceGuard.server.js";
 import { parseBooleanSetting } from "../src/lib/maintenance.js";
 import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
-import { createInstrumentedServerSupabaseFetch } from "../src/lib/observability/serverSupabaseFetch.js";
+import {
+  applyTraceResponseHeaders,
+  createRequestTraceContext,
+  runWithRequestTraceContext,
+} from "../src/lib/observability/requestContext.server.js";
+import {
+  buildRuntimeLivenessReport,
+  buildRuntimeReadinessReport,
+} from "../src/lib/observability/serverHealth.server.js";
+import { createInstrumentedServerSupabaseFetch } from "../src/lib/observability/serverSupabaseFetch.server.js";
 import {
   resolveEmailLoginRequest,
   resolveLogoutAllRequest,
@@ -22,6 +33,7 @@ import {
 } from "../src/lib/otpAuth.server.js";
 import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
 import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
+import { handleAdminApiRequest, isSupportedAdminApiPath } from "../src/lib/superAdmin/apiRoute.server.js";
 
 type ApiHeaders = Record<string, string | string[] | undefined>;
 
@@ -125,6 +137,11 @@ const readHeaderValue = (headers: ApiHeaders, headerName: string) => {
 const readRequestPath = (req: ApiRequest) => {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
   return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+};
+
+const normalizeLegacyAuthApiPath = (pathname: string): AuthApiRoutePath | null => {
+  const candidate = pathname.startsWith("/auth/") ? `/api${pathname}` : pathname;
+  return isSupportedAuthApiPath(candidate) ? candidate : null;
 };
 
 const readRequestContext = (req: ApiRequest): AuthContext => {
@@ -360,28 +377,26 @@ const handleHealthRoute = async (req: ApiRequest, res: ApiResponse, pathname: st
   }
 
   if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-    const maintenance = await readSafeMaintenanceStatus();
-    sendJson(res, 200, {
-      appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
-      maintenanceMode: maintenance.maintenanceMode,
-      nodeVersion: process.version,
-      release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
+    const readiness = await buildRuntimeReadinessReport(process.env, {
+      phase: pathname === "/api/health/ops" ? "vercel_health_ops" : "vercel_health_ready",
+      requestId: readHeaderValue(req.headers ?? {}, "x-request-id") || null,
       service: SERVERLESS_SERVICE_NAME,
-      status: "ok",
-      timestamp: new Date().toISOString(),
-      uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
+      startedAt: SERVER_STARTED_AT,
+      target: "serverless",
     });
+    sendJson(res, readiness.ok ? 200 : 503, readiness);
     return;
   }
 
-  sendJson(res, 200, {
-    appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
-    release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
-    service: SERVERLESS_SERVICE_NAME,
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
-  });
+  sendJson(
+    res,
+    200,
+    buildRuntimeLivenessReport(process.env, {
+      service: SERVERLESS_SERVICE_NAME,
+      startedAt: SERVER_STARTED_AT,
+      target: "serverless",
+    }),
+  );
 };
 
 const handleAdminSettingsRoute = async (req: ApiRequest, res: ApiResponse) => {
@@ -434,6 +449,27 @@ const handleAdminSettingsRoute = async (req: ApiRequest, res: ApiResponse) => {
 };
 
 const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string) => {
+  if (pathname === "/api/admin/settings") {
+    sendJson(res, 410, {
+      success: false,
+      code: "ROUTE_DEPRECATED",
+      error: "Use /api/admin/platform for control-plane settings.",
+      message: "Use /api/admin/platform for control-plane settings.",
+    });
+    return;
+  }
+
+  const canonicalAuthPath = normalizeLegacyAuthApiPath(pathname);
+  if (canonicalAuthPath) {
+    await handleAuthApiRequest(req, res, process.env, canonicalAuthPath);
+    return;
+  }
+
+  if (isSupportedAdminApiPath(pathname)) {
+    await handleAdminApiRequest(req, res, process.env, pathname);
+    return;
+  }
+
   switch (pathname) {
     case "/api/settings": {
       if (req.method === "OPTIONS") {
@@ -604,13 +640,47 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
 };
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
-  try {
-    const pathname = readRequestPath(req);
-    await routeRequest(req, res, pathname);
-  } catch (error) {
-    sendJson(res, 500, {
-      success: false,
-      message: error instanceof Error ? error.message : "Unexpected serverless API failure",
-    });
-  }
+  const pathname = readRequestPath(req);
+  const method = (req.method || "GET").toUpperCase();
+  const baseContext = readRequestContext(req);
+  const traceContext = createRequestTraceContext({
+    correlationId: readHeaderValue(req.headers ?? {}, "x-correlation-id") || readHeaderValue(req.headers ?? {}, "x-request-id"),
+    ipAddress: baseContext.ip,
+    method,
+    requestId: readHeaderValue(req.headers ?? {}, "x-request-id"),
+    route: pathname,
+    source: "vercel_serverless",
+    traceId: readHeaderValue(req.headers ?? {}, "x-trace-id"),
+    userAgent: baseContext.userAgent,
+  });
+
+  applyTraceResponseHeaders(res, traceContext);
+
+  return runWithRequestTraceContext(traceContext, async () => {
+    try {
+
+      if (method !== "OPTIONS") {
+        const maintenanceDecision = await evaluateMaintenanceRequest(
+          process.env,
+          readMaintenanceContextFromHeaders({
+            authorization: readHeaderValue(req.headers ?? {}, "authorization"),
+            headers: req.headers ?? {},
+            pathname,
+          }),
+        );
+
+        if (!maintenanceDecision.allow) {
+          sendJson(res, 503, buildMaintenanceApiError(traceContext.requestId));
+          return;
+        }
+      }
+
+      await routeRequest(req, res, pathname);
+    } catch (error) {
+      sendJson(res, 500, {
+        success: false,
+        message: error instanceof Error ? error.message : "Unexpected serverless API failure",
+      });
+    }
+  });
 }

@@ -2,28 +2,42 @@ import { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { isVerifiedSuperAdminSession } from "@/lib/auth.shared";
-import { SUPER_ADMIN_LOGIN_ROUTE, sanitizeSuperAdminRedirectPath } from "@/lib/superAdminPaths";
-import { getRoleHomeRoute, isSupabaseUnauthorizedError, useUserRole } from "@/hooks/useUserRole";
+import {
+  SUPER_ADMIN_LOGIN_ROUTE,
+  sanitizeSuperAdminRedirectPath,
+} from "@/lib/superAdminPaths";
+import {
+  getRoleHomeRoute,
+  getRoleHomeRouteFromRoleNames,
+  isSupabaseUnauthorizedError,
+  useUserRole,
+} from "@/hooks/useUserRole";
 
 const AuthRoute = ({ children }: { children: ReactNode }) => {
   const location = useLocation();
   const { session, user, loading } = useAuth();
-  const { data: roles, error: rolesError, isLoading: rolesLoading } = useUserRole();
+  const isSuperAdminLoginRoute = location.pathname === SUPER_ADMIN_LOGIN_ROUTE;
+  const sessionRoleNames = session?.user.roles ?? [];
+  const shouldFetchRoles = !isSuperAdminLoginRoute;
+  const { data: roles, error: rolesError, isLoading: rolesLoading } = useUserRole({ enabled: shouldFetchRoles });
 
-  if (loading || (user && rolesLoading)) return null;
+  if (loading || (user && shouldFetchRoles && rolesLoading)) return null;
 
-  if (user && rolesError && isSupabaseUnauthorizedError(rolesError)) {
+  if (user && shouldFetchRoles && rolesError && isSupabaseUnauthorizedError(rolesError)) {
     return null;
   }
 
   if (user) {
-    const isSuperAdminLoginRoute = location.pathname === SUPER_ADMIN_LOGIN_ROUTE;
-    const hasSuperAdminRole = roles?.some((role) => role.role === "super_admin") ?? false;
+    const hasSuperAdminRole = shouldFetchRoles
+      ? roles?.some((role) => role.role === "super_admin") ?? false
+      : sessionRoleNames.includes("super_admin");
     if (isSuperAdminLoginRoute && hasSuperAdminRole && !isVerifiedSuperAdminSession(session)) {
       return <>{children}</>;
     }
 
-    const destination = getRoleHomeRoute(roles);
+    const destination = shouldFetchRoles
+      ? getRoleHomeRoute(roles)
+      : getRoleHomeRouteFromRoleNames(sessionRoleNames);
     const requestedRedirect = hasSuperAdminRole
       ? sanitizeSuperAdminRedirectPath(new URLSearchParams(location.search).get("redirect"))
       : null;

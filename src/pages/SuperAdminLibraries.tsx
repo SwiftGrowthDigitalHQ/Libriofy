@@ -1,290 +1,462 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
+import { Building2, KeyRound, Shield, UserCog } from "lucide-react";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ControlPlaneCard, ControlPlanePageHeader, PaginationControls } from "@/components/superAdmin/ControlPlanePrimitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Search, Plus, ExternalLink, Trash2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Link } from "react-router-dom";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import { useLibraries } from "@/hooks/superAdmin";
+import { formatDateTime, formatInr, formatNumber, toBadgeVariant } from "@/lib/superAdmin/presentation";
 
-type LibrarySummary = {
-  active_students?: number | null;
-  address?: string | null;
-  city?: string | null;
-  enabled?: boolean | null;
-  id: string;
-  monthly_revenue?: number | null;
-  name: string;
-  slug?: string | null;
-  total_seats?: number | null;
-};
-
-type LibrarySubscriptionSummary = {
-  library_id: string;
-  plan_name?: string | null;
-  status?: string | null;
-};
+type LibraryActionDialogState =
+  | {
+      kind: "library";
+      libraryId: string;
+      name: string;
+    }
+  | {
+      kind: "user";
+      name: string;
+      userId: string;
+    }
+  | null;
 
 const SuperAdminLibraries = () => {
-  const { user } = useAuth();
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [newLib, setNewLib] = useState({ name: "", address: "", city: "", district: "", state: "", country: "India" });
-  const [dialogOpen, setDialogOpen] = useState(false);
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const { startImpersonation } = useAuth();
+  const [libraryPage, setLibraryPage] = useState(1);
+  const [userPage, setUserPage] = useState(1);
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+  const [actionDialog, setActionDialog] = useState<LibraryActionDialogState>(null);
+  const [actionType, setActionType] = useState("suspend");
+  const [actionNote, setActionNote] = useState("");
+  const [impersonationReason, setImpersonationReason] = useState("");
 
-  const { data: libraries = [], isLoading } = useQuery({
-    queryKey: ["admin-libraries"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("libraries").select("*").order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+  const {
+    libraries,
+    librariesPagination,
+    librariesQuery,
+    libraryAction,
+    recentActivity,
+    userAction,
+    users,
+    usersPagination,
+    usersQuery,
+  } = useLibraries({
+    query: {
+      page: libraryPage,
+      pageSize: 10,
+      search: librarySearch,
+    },
+    userQuery: {
+      page: userPage,
+      pageSize: 10,
+      search: userSearch,
     },
   });
 
-  const { data: subs = [] } = useQuery({
-    queryKey: ["admin-subs-for-libs"],
-    queryFn: async (): Promise<LibrarySubscriptionSummary[]> => {
-      const { data, error } = await supabase.from("library_subscriptions" as never).select("*");
-      if (error) throw error;
-      return (data as LibrarySubscriptionSummary[] | null) ?? [];
-    },
-  });
+  const activeLibraryCount = libraries.filter((library) => library.enabled).length;
+  const controlledLibraryCount = libraries.filter((library) => library.controlStatus !== "active").length;
+  const controlledUserCount = users.filter((user) => user.controlStatus !== "active").length;
 
-  const subMap = Object.fromEntries(subs.map((subscription) => [subscription.library_id, subscription]));
-
-  const toggleMutation = useMutation({
-    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      const { error } = await supabase.from("libraries").update({ enabled }).eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-libraries"] });
-      toast({ title: "Library updated" });
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("libraries").delete().eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-libraries"] });
-      toast({ title: "Library deleted" });
-    },
-    onError: (err) =>
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Unable to delete library.",
-        variant: "destructive",
-      }),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      if (!user) throw new Error("Not authenticated");
-      const slug = newLib.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const { error } = await supabase.from("libraries").insert({
-        name: newLib.name,
-        address: newLib.address,
-        city: newLib.city,
-        district: newLib.district.trim() || null,
-        state: newLib.state.trim() || null,
-        country: newLib.country.trim() || "India",
-        owner_id: user.id,
-        slug,
-      });
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-libraries"] });
-      setNewLib({ name: "", address: "", city: "", district: "", state: "", country: "India" });
-      setDialogOpen(false);
-      toast({ title: "Library created" });
-    },
-    onError: (err) =>
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Unable to create library.",
-        variant: "destructive",
-      }),
-  });
-
-  const filtered = (libraries as LibrarySummary[]).filter((library) => {
-    const matchesSearch =
-      library.name.toLowerCase().includes(search.toLowerCase()) ||
-      (library.city || "").toLowerCase().includes(search.toLowerCase());
-    if (filter === "all") return matchesSearch;
-    if (filter === "active") return matchesSearch && Boolean(library.enabled);
-    if (filter === "disabled") return matchesSearch && !library.enabled;
-    if (filter === "expired") {
-      const sub = subMap[library.id];
-      return matchesSearch && sub?.status === "expired";
+  const handleLibraryAction = async () => {
+    if (!actionDialog || actionDialog.kind !== "library") {
+      return;
     }
-    return matchesSearch;
-  });
+
+    try {
+      await libraryAction.mutateAsync({
+        action: actionType as "ban" | "clear_control" | "disable" | "enable" | "suspend",
+        libraryId: actionDialog.libraryId,
+        note: actionNote || undefined,
+      });
+      toast({ title: "Library control updated" });
+      setActionDialog(null);
+      setActionNote("");
+    } catch (error) {
+      toast({
+        description: error instanceof Error ? error.message : "Unable to update library controls.",
+        title: "Action failed",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleUserAction = async () => {
+    if (!actionDialog || actionDialog.kind !== "user") {
+      return;
+    }
+
+    try {
+      await userAction.mutateAsync({
+        action: actionType as "ban" | "clear_control" | "clear_sessions" | "reset_password" | "suspend",
+        note: actionNote || undefined,
+        userId: actionDialog.userId,
+      });
+      toast({ title: "User control updated" });
+      setActionDialog(null);
+      setActionNote("");
+    } catch (error) {
+      toast({
+        description: error instanceof Error ? error.message : "Unable to update user controls.",
+        title: "Action failed",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImpersonation = async (targetUserId: string, libraryId?: string | null) => {
+    try {
+      await startImpersonation({
+        libraryId,
+        reason: impersonationReason || null,
+        targetUserId,
+      });
+
+      toast({ title: "Impersonation started" });
+      setImpersonationReason("");
+    } catch (error) {
+      toast({
+        description: error instanceof Error ? error.message : "Unable to start impersonation.",
+        title: "Impersonation failed",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <SuperAdminLayout>
       <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold font-display text-foreground">Libraries</h2>
-            <p className="text-sm text-muted-foreground mt-1">Manage all libraries on the platform</p>
-          </div>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="w-4 h-4 mr-2" /> Add Library</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="font-display">Create New Library</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 pt-2">
-                <div className="space-y-2">
-                  <Label>Library Name</Label>
-                  <Input value={newLib.name} onChange={(e) => setNewLib({ ...newLib, name: e.target.value })} placeholder="City Study Hub" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Address</Label>
-                  <Input value={newLib.address} onChange={(e) => setNewLib({ ...newLib, address: e.target.value })} placeholder="123 Main St" />
-                </div>
-                <div className="space-y-2">
-                  <Label>City</Label>
-                  <Input value={newLib.city} onChange={(e) => setNewLib({ ...newLib, city: e.target.value })} placeholder="Mumbai" />
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>District</Label>
-                    <Input value={newLib.district} onChange={(e) => setNewLib({ ...newLib, district: e.target.value })} placeholder="e.g. Mumbai Suburban" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>State</Label>
-                    <Input value={newLib.state} onChange={(e) => setNewLib({ ...newLib, state: e.target.value })} placeholder="e.g. Maharashtra" />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Country</Label>
-                  <Input value={newLib.country} onChange={(e) => setNewLib({ ...newLib, country: e.target.value })} placeholder="India" />
-                </div>
-                <Button onClick={() => createMutation.mutate()} disabled={!newLib.name || createMutation.isPending} className="w-full">
-                  {createMutation.isPending ? "Creating..." : "Create Library"}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+        <ControlPlanePageHeader
+          description="Operate the library fleet and its users through centralized RBAC, audit, and impersonation workflows."
+          title="Libraries"
+        />
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <CardTitle className="text-lg font-display">All Libraries</CardTitle>
-              <div className="flex gap-2">
-                <Select value={filter} onValueChange={setFilter}>
-                  <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="disabled">Disabled</SelectItem>
-                    <SelectItem value="expired">Expired</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="relative w-full sm:w-48">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input className="pl-9" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
-                </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <ControlPlaneCard title="Enabled libraries">
+            <div className="flex items-center gap-3">
+              <Building2 className="h-5 w-5 text-primary" />
+              <div>
+                <p className="text-2xl font-bold font-display text-foreground">{formatNumber(activeLibraryCount)}</p>
+                <p className="text-xs text-muted-foreground">of {formatNumber(librariesPagination?.totalCount ?? 0)} currently visible</p>
               </div>
             </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>
-            ) : filtered.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">No libraries found.</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Library</TableHead>
-                    <TableHead className="hidden sm:table-cell">City</TableHead>
-                    <TableHead className="hidden md:table-cell">Plan</TableHead>
-                    <TableHead className="hidden md:table-cell">Seats</TableHead>
-                    <TableHead className="hidden lg:table-cell">Revenue</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden sm:table-cell">Public</TableHead>
-                    <TableHead>Enabled</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map((lib) => {
-                    const sub = subMap[lib.id];
-                    return (
-                      <TableRow key={lib.id}>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium text-foreground">{lib.name}</p>
-                            <p className="text-xs text-muted-foreground">{lib.address || "—"}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell text-muted-foreground">{lib.city || "—"}</TableCell>
-                        <TableCell className="hidden md:table-cell capitalize">{sub?.plan_name || "—"}</TableCell>
-                        <TableCell className="hidden md:table-cell">{lib.active_students}/{lib.total_seats}</TableCell>
-                        <TableCell className="hidden lg:table-cell font-medium">₹{Number(lib.monthly_revenue || 0).toLocaleString()}</TableCell>
-                        <TableCell>
-                          <Badge variant={lib.enabled ? (sub?.status === "expired" ? "outline" : "default") : "secondary"}>
-                            {!lib.enabled ? "Disabled" : sub?.status || "Active"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell">
-                          {lib.slug && (
-                            <Link to={`/library/${lib.slug}`} className="text-primary hover:underline text-xs flex items-center gap-1">
-                              <ExternalLink className="w-3 h-3" /> View
-                            </Link>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Switch checked={lib.enabled} onCheckedChange={(enabled) => toggleMutation.mutate({ id: lib.id, enabled })} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button size="icon" variant="ghost" className="text-destructive hover:text-destructive">
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Delete {lib.name}?</AlertDialogTitle>
-                                <AlertDialogDescription>This will permanently delete this library and all associated data. This action cannot be undone.</AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => deleteMutation.mutate(lib.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+          </ControlPlaneCard>
+          <ControlPlaneCard title="Controlled libraries">
+            <div className="flex items-center gap-3">
+              <Shield className="h-5 w-5 text-primary" />
+              <div>
+                <p className="text-2xl font-bold font-display text-foreground">{formatNumber(controlledLibraryCount)}</p>
+                <p className="text-xs text-muted-foreground">Suspended or banned libraries in this result set.</p>
+              </div>
+            </div>
+          </ControlPlaneCard>
+          <ControlPlaneCard title="Controlled users">
+            <div className="flex items-center gap-3">
+              <UserCog className="h-5 w-5 text-primary" />
+              <div>
+                <p className="text-2xl font-bold font-display text-foreground">{formatNumber(controlledUserCount)}</p>
+                <p className="text-xs text-muted-foreground">Users with active controls or session resets pending.</p>
+              </div>
+            </div>
+          </ControlPlaneCard>
+        </div>
+
+        <Tabs defaultValue="libraries" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="libraries">Libraries</TabsTrigger>
+            <TabsTrigger value="users">Users</TabsTrigger>
+            <TabsTrigger value="activity">Recent Activity</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="libraries">
+            <ControlPlaneCard title="Library controls">
+              <div className="space-y-4">
+                <Input
+                  onChange={(event) => {
+                    setLibraryPage(1);
+                    setLibrarySearch(event.target.value);
+                  }}
+                  placeholder="Search by library, city, owner, or state"
+                  value={librarySearch}
+                />
+
+                {librariesQuery.isLoading ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">Loading libraries...</p>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto rounded-lg border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Library</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Seats</TableHead>
+                            <TableHead>Revenue</TableHead>
+                            <TableHead>Last Activity</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {libraries.map((library) => (
+                            <TableRow key={library.id}>
+                              <TableCell>
+                                <div>
+                                  <p className="font-medium text-foreground">{library.name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {library.city || "Unknown city"} • {library.ownerEmail || "No owner email"}
+                                  </p>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant={library.enabled ? "default" : "outline"}>
+                                    {library.enabled ? "Enabled" : "Disabled"}
+                                  </Badge>
+                                  <Badge variant={toBadgeVariant(library.controlStatus)}>{library.controlStatus}</Badge>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                {formatNumber(library.activeStudents)} / {formatNumber(library.totalSeats)}
+                              </TableCell>
+                              <TableCell>{formatInr(library.monthlyRevenue)}</TableCell>
+                              <TableCell>{formatDateTime(library.lastActivityAt)}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex flex-wrap justify-end gap-2">
+                                  <Button
+                                    onClick={() =>
+                                      libraryAction.mutate({
+                                        action: library.enabled ? "disable" : "enable",
+                                        libraryId: library.id,
+                                      })
+                                    }
+                                    size="sm"
+                                    variant="outline"
+                                  >
+                                    {library.enabled ? "Disable" : "Enable"}
+                                  </Button>
+                                  <Button
+                                    onClick={() => {
+                                      setActionDialog({ kind: "library", libraryId: library.id, name: library.name });
+                                      setActionType(library.controlStatus === "active" ? "suspend" : "clear_control");
+                                      setActionNote(library.controlReason || "");
+                                    }}
+                                    size="sm"
+                                    variant="outline"
+                                  >
+                                    {library.controlStatus === "active" ? "Control" : "Clear"}
+                                  </Button>
+                                  <Button
+                                    onClick={() => handleImpersonation(library.ownerId, library.id)}
+                                    size="sm"
+                                  >
+                                    <KeyRound className="mr-2 h-4 w-4" />
+                                    Impersonate
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    <PaginationControls
+                      onNext={() => setLibraryPage((current) => Math.min(librariesPagination?.pageCount ?? current, current + 1))}
+                      onPrevious={() => setLibraryPage((current) => Math.max(1, current - 1))}
+                      page={librariesPagination?.page ?? 1}
+                      pageCount={librariesPagination?.pageCount ?? 1}
+                    />
+                  </>
+                )}
+              </div>
+            </ControlPlaneCard>
+          </TabsContent>
+
+          <TabsContent value="users">
+            <ControlPlaneCard title="User controls">
+              <div className="space-y-4">
+                <Input
+                  onChange={(event) => {
+                    setUserPage(1);
+                    setUserSearch(event.target.value);
+                  }}
+                  placeholder="Search by name, email, phone, or library"
+                  value={userSearch}
+                />
+
+                {usersQuery.isLoading ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">Loading users...</p>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto rounded-lg border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>User</TableHead>
+                            <TableHead>Role</TableHead>
+                            <TableHead>Library</TableHead>
+                            <TableHead>Last Login</TableHead>
+                            <TableHead>Failures</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {users.map((user) => (
+                            <TableRow key={user.userId}>
+                              <TableCell>
+                                <div>
+                                  <p className="font-medium text-foreground">{user.fullName || "Unknown user"}</p>
+                                  <p className="text-xs text-muted-foreground">{user.email || "No email"}</p>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant="outline">{user.primaryRole || "unknown"}</Badge>
+                                  <Badge variant={toBadgeVariant(user.controlStatus)}>{user.controlStatus}</Badge>
+                                </div>
+                              </TableCell>
+                              <TableCell>{user.libraryName || "—"}</TableCell>
+                              <TableCell>{formatDateTime(user.lastLoginAt)}</TableCell>
+                              <TableCell>{formatNumber(user.loginFailures24h)}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex flex-wrap justify-end gap-2">
+                                  <Button
+                                    onClick={() => {
+                                      setActionDialog({
+                                        kind: "user",
+                                        name: user.fullName || user.email || user.userId,
+                                        userId: user.userId,
+                                      });
+                                      setActionType(user.controlStatus === "active" ? "suspend" : "clear_control");
+                                      setActionNote(user.controlReason || "");
+                                    }}
+                                    size="sm"
+                                    variant="outline"
+                                  >
+                                    Control
+                                  </Button>
+                                  <Button
+                                    onClick={() =>
+                                      userAction.mutate({
+                                        action: "clear_sessions",
+                                        userId: user.userId,
+                                      })
+                                    }
+                                    size="sm"
+                                    variant="outline"
+                                  >
+                                    Clear Sessions
+                                  </Button>
+                                  <Button
+                                    onClick={() => handleImpersonation(user.userId, user.libraryId)}
+                                    size="sm"
+                                  >
+                                    Impersonate
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    <PaginationControls
+                      onNext={() => setUserPage((current) => Math.min(usersPagination?.pageCount ?? current, current + 1))}
+                      onPrevious={() => setUserPage((current) => Math.max(1, current - 1))}
+                      page={usersPagination?.page ?? 1}
+                      pageCount={usersPagination?.pageCount ?? 1}
+                    />
+                  </>
+                )}
+              </div>
+            </ControlPlaneCard>
+          </TabsContent>
+
+          <TabsContent value="activity">
+            <ControlPlaneCard title="Recent platform activity">
+              <div className="space-y-3">
+                {recentActivity.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No recent platform activity is available for this slice yet.</p>
+                ) : (
+                  recentActivity.map((activity) => (
+                    <div key={activity.id} className="rounded-lg border border-border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">{activity.activityType}</p>
+                        <p className="text-xs text-muted-foreground">{formatDateTime(activity.createdAt)}</p>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">{activity.message}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </ControlPlaneCard>
+          </TabsContent>
+        </Tabs>
+
+        <Dialog open={!!actionDialog} onOpenChange={(open) => !open && setActionDialog(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="font-display">
+                {actionDialog?.kind === "library" ? "Update library control" : "Update user control"}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 pt-2">
+              <div>
+                <p className="text-sm text-muted-foreground">Target</p>
+                <p className="text-sm font-medium text-foreground">{actionDialog?.name}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="admin-action-type">Action</Label>
+                <Input
+                  id="admin-action-type"
+                  onChange={(event) => setActionType(event.target.value)}
+                  placeholder="suspend, clear_control, ban, reset_password, clear_sessions"
+                  value={actionType}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="admin-action-note">Reason / audit note</Label>
+                <Textarea
+                  id="admin-action-note"
+                  onChange={(event) => setActionNote(event.target.value)}
+                  rows={3}
+                  value={actionNote}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="admin-impersonation-reason">Impersonation note</Label>
+                <Textarea
+                  id="admin-impersonation-reason"
+                  onChange={(event) => setImpersonationReason(event.target.value)}
+                  rows={2}
+                  value={impersonationReason}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button onClick={() => setActionDialog(null)} variant="outline">
+                  Cancel
+                </Button>
+                <Button
+                  disabled={libraryAction.isPending || userAction.isPending}
+                  onClick={actionDialog?.kind === "library" ? handleLibraryAction : handleUserAction}
+                >
+                  Save control
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </SuperAdminLayout>
   );

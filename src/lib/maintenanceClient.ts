@@ -1,5 +1,6 @@
 import { normalizeMaintenanceStatusPayload, parseBooleanSetting, type MaintenanceStatus } from "@/lib/maintenance";
 const DEFAULT_TIMEOUT_MS = 3500;
+const MAINTENANCE_SETTINGS_KEY = "maintenance_mode";
 
 const readApiErrorMessage = (payload: unknown, fallbackMessage: string) => {
   if (!payload || typeof payload !== "object") {
@@ -81,14 +82,17 @@ export const loadMaintenanceStatus = async ({
 };
 
 export const setMaintenanceMode = async (enabled: boolean): Promise<MaintenanceStatus> => {
-  const response = await fetch("/api/admin/settings", {
+  const response = await fetch("/api/admin/platform", {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
     body: JSON.stringify({
-      maintenanceMode: enabled,
+      settings: {
+        [MAINTENANCE_SETTINGS_KEY]: enabled,
+      },
     }),
   });
 
@@ -98,13 +102,31 @@ export const setMaintenanceMode = async (enabled: boolean): Promise<MaintenanceS
     throw new Error(readApiErrorMessage(payload, "Unable to update maintenance mode."));
   }
 
-  const normalized = normalizeMaintenanceStatusPayload(payload, "database");
+  const updatedSetting =
+    ((payload as {
+      data?: {
+        settings?: Array<{
+          key?: unknown;
+          updatedAt?: unknown;
+          value?: unknown;
+        }>;
+      };
+    } | null)?.data?.settings ?? []).find((setting) => setting?.key === MAINTENANCE_SETTINGS_KEY) ?? null;
+
+  const normalized = normalizeMaintenanceStatusPayload({
+    maintenanceMode: updatedSetting?.value ?? enabled,
+    source: "database",
+    updatedAt: typeof updatedSetting?.updatedAt === "string" ? updatedSetting.updatedAt : null,
+  }, "database");
   if (normalized) {
     return normalized;
   }
 
   return {
-    maintenanceMode: parseBooleanSetting((payload as { maintenanceMode?: unknown } | null)?.maintenanceMode) ?? enabled,
+    maintenanceMode:
+      parseBooleanSetting(updatedSetting?.value) ??
+      parseBooleanSetting((payload as { maintenanceMode?: unknown } | null)?.maintenanceMode) ??
+      enabled,
     source: "database",
     updatedAt: null,
   };

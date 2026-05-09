@@ -14,7 +14,7 @@ const navItems = [
 
 const PartnerLayout = ({ children }: { children: ReactNode }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const { user, signOut, logoutAllDevices } = useAuth();
+  const { session, user, signOut, logoutAllDevices } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -66,7 +66,7 @@ const PartnerLayout = ({ children }: { children: ReactNode }) => {
                 <LogOut className="w-4 h-4 flex-shrink-0" />
                 {!collapsed ? <span>Sign Out</span> : null}
               </button>
-              {!collapsed ? (
+              {!collapsed && !session?.impersonation ? (
                 <button
                   onClick={async () => {
                     await logoutAllDevices();

@@ -2,7 +2,16 @@ export type EventLogStatus = "START" | "SUCCESS" | "FAILED";
 
 export type AlertSeverity = "INFO" | "WARNING" | "ERROR" | "CRITICAL";
 
-export type EventClassification = "AUTH_ERROR" | "EMAIL_ERROR" | "RATE_LIMIT" | "SECURITY_EVENT";
+export type EventClassification =
+  | "AUTH_ERROR"
+  | "BILLING_ERROR"
+  | "EMAIL_ERROR"
+  | "IMPERSONATION_EVENT"
+  | "OBSERVABILITY_ERROR"
+  | "PERFORMANCE_EVENT"
+  | "QUEUE_ERROR"
+  | "RATE_LIMIT"
+  | "SECURITY_EVENT";
 
 export type ObservabilityMetadata = Record<string, unknown>;
 
@@ -10,8 +19,11 @@ export type EventLogInput = {
   type: string;
   status: EventLogStatus;
   classification?: EventClassification | null;
+  fingerprint?: string | null;
+  groupKey?: string | null;
   metricKey?: string | null;
   occurredAt?: string | null;
+  severity?: AlertSeverity | null;
   user?: string | null;
   entityId?: string | null;
   metadata?: ObservabilityMetadata;

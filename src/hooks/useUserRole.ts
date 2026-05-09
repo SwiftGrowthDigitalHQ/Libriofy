@@ -5,6 +5,11 @@ import { useAuth } from "./useAuth";
 
 export type AppRole = "super_admin" | "library_owner" | "staff" | "partner" | "student";
 export type UserRoleRecord = { role: AppRole; library_id: string | null };
+type UseUserRoleOptions = { enabled?: boolean };
+
+const APP_ROLES: AppRole[] = ["super_admin", "library_owner", "staff", "partner", "student"];
+
+const isAppRole = (value: string): value is AppRole => APP_ROLES.includes(value as AppRole);
 
 export const isSupabaseUnauthorizedError = (error: unknown): boolean => {
   if (!error || typeof error !== "object") return false;
@@ -22,8 +27,12 @@ export const isUserRolesSchemaError = (error: unknown): boolean => {
   return (maybeError.message ?? "").toLowerCase().includes("user_roles");
 };
 
-export const useUserRole = () => {
+export const toUserRoleRecords = (roles: readonly string[] | null | undefined): UserRoleRecord[] =>
+  (roles ?? []).filter(isAppRole).map((role) => ({ library_id: null, role }));
+
+export const useUserRole = (options?: UseUserRoleOptions) => {
   const { user, signOut } = useAuth();
+  const isEnabled = options?.enabled ?? true;
 
   return useQuery({
     queryKey: ["user-roles", user?.id],
@@ -63,7 +72,7 @@ export const useUserRole = () => {
 
       return roles;
     },
-    enabled: !!user,
+    enabled: !!user && isEnabled,
     retry: (failureCount, error) => {
       if (isSupabaseUnauthorizedError(error)) return false;
       if (isUserRolesSchemaError(error)) return false;
@@ -72,8 +81,8 @@ export const useUserRole = () => {
   });
 };
 
-export const useIsSuperAdmin = () => {
-  const { data: roles, isLoading } = useUserRole();
+export const useIsSuperAdmin = (options?: UseUserRoleOptions) => {
+  const { data: roles, isLoading } = useUserRole(options);
   return {
     isSuperAdmin: roles?.some((r) => r.role === "super_admin") ?? false,
     isLoading,
@@ -97,3 +106,6 @@ export const getRoleHomeRoute = (roles: UserRoleRecord[] | null | undefined): st
   if (primary === "partner") return "/partner/dashboard";
   return "/auth";
 };
+
+export const getRoleHomeRouteFromRoleNames = (roles: readonly string[] | null | undefined) =>
+  getRoleHomeRoute(toUserRoleRecords(roles));

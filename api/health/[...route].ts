@@ -1,5 +1,8 @@
-import { readSafeMaintenanceStatus } from "../../src/lib/maintenanceRuntime.server.js";
 import { getCriticalDatabaseHealth, warmCriticalDatabaseHealth } from "../../src/lib/observability/databaseHealth.server.js";
+import {
+  buildRuntimeLivenessReport,
+  buildRuntimeReadinessReport,
+} from "../../src/lib/observability/serverHealth.server.js";
 
 type ApiRequest = {
   method?: string;
@@ -12,17 +15,8 @@ type ApiResponse = {
   statusCode: number;
 };
 
-type MaintenanceStatus = {
-  maintenance: boolean;
-  maintenanceMode: boolean;
-  source: string;
-  updatedAt: string | null;
-};
-
 const SERVERLESS_SERVICE_NAME = "libriofy-vercel-api";
 const SERVER_STARTED_AT = Date.now();
-
-const getMaintenanceSafe = (): Promise<MaintenanceStatus> => readSafeMaintenanceStatus();
 warmCriticalDatabaseHealth(process.env);
 
 const sendJson = (res: ApiResponse, statusCode: number, body: unknown, extraHeaders?: Record<string, string | string[]>) => {
@@ -59,22 +53,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
 
     if (pathname === "/api/health/ready" || pathname === "/api/health/ops") {
-      const maintenance = await getMaintenanceSafe();
-      const databaseHealth = await getCriticalDatabaseHealth(process.env, {
+      const readiness = await buildRuntimeReadinessReport(process.env, {
         phase: pathname === "/api/health/ops" ? "api_health_ops" : "api_health_ready",
-      });
-
-      sendJson(res, databaseHealth.status === "ok" ? 200 : 503, {
-        appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
-        database: databaseHealth,
-        maintenanceMode: maintenance.maintenanceMode,
-        nodeVersion: process.version,
-        release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
+        requestId: null,
         service: SERVERLESS_SERVICE_NAME,
-        status: databaseHealth.status,
-        timestamp: new Date().toISOString(),
-        uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
+        startedAt: SERVER_STARTED_AT,
+        target: "serverless",
       });
+      sendJson(res, readiness.ok ? 200 : 503, readiness);
       return;
     }
 
@@ -89,14 +75,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
 
     if (pathname === "/api/health" || pathname === "/api/health/live") {
-      sendJson(res, 200, {
-        appEnv: process.env.APP_ENV || process.env.NODE_ENV || "production",
-        release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
-        service: SERVERLESS_SERVICE_NAME,
-        status: "ok",
-        timestamp: new Date().toISOString(),
-        uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
-      });
+      sendJson(
+        res,
+        200,
+        buildRuntimeLivenessReport(process.env, {
+          service: SERVERLESS_SERVICE_NAME,
+          startedAt: SERVER_STARTED_AT,
+          target: "serverless",
+        }),
+      );
       return;
     }
 

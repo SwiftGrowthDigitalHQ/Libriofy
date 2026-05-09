@@ -8,7 +8,12 @@ export type ObservabilityThresholdPolicy = {
 
 const EVENT_CLASSIFICATIONS = new Set<EventClassification>([
   "AUTH_ERROR",
+  "BILLING_ERROR",
   "EMAIL_ERROR",
+  "IMPERSONATION_EVENT",
+  "OBSERVABILITY_ERROR",
+  "PERFORMANCE_EVENT",
+  "QUEUE_ERROR",
   "RATE_LIMIT",
   "SECURITY_EVENT",
 ]);
@@ -19,10 +24,35 @@ const THRESHOLD_POLICIES: Record<EventClassification, ObservabilityThresholdPoli
     severity: "ERROR",
     windowSeconds: 60,
   },
+  BILLING_ERROR: {
+    failureThreshold: 1,
+    severity: "CRITICAL",
+    windowSeconds: 15 * 60,
+  },
   EMAIL_ERROR: {
     failureThreshold: 5,
     severity: "ERROR",
     windowSeconds: 60,
+  },
+  IMPERSONATION_EVENT: {
+    failureThreshold: 3,
+    severity: "WARNING",
+    windowSeconds: 15 * 60,
+  },
+  OBSERVABILITY_ERROR: {
+    failureThreshold: 5,
+    severity: "WARNING",
+    windowSeconds: 15 * 60,
+  },
+  PERFORMANCE_EVENT: {
+    failureThreshold: 3,
+    severity: "WARNING",
+    windowSeconds: 5 * 60,
+  },
+  QUEUE_ERROR: {
+    failureThreshold: 3,
+    severity: "ERROR",
+    windowSeconds: 15 * 60,
   },
   RATE_LIMIT: {
     failureThreshold: 2,
@@ -58,6 +88,18 @@ const readMetadataText = (metadata: ObservabilityMetadata | undefined, ...keys: 
   return "";
 };
 
+const readMetadataNumber = (metadata: ObservabilityMetadata | undefined, ...keys: string[]) => {
+  for (const key of keys) {
+    const value = metadata?.[key];
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
 export const normalizeEventClassification = (value: unknown): EventClassification | null => {
   const normalized = normalizeText(value).toUpperCase();
   return EVENT_CLASSIFICATIONS.has(normalized as EventClassification) ? (normalized as EventClassification) : null;
@@ -81,8 +123,39 @@ export const resolveEventClassification = (
     return null;
   }
 
+  const looksLikeFailure =
+    input.status === "FAILED" ||
+    FAILURE_KEYWORDS.some((keyword) => eventType.includes(keyword)) ||
+    input.metadata?.counts_as_failure === true ||
+    input.metadata?.countsAsFailure === true;
+
   if (eventType.includes("RATE_LIMIT")) {
     return "RATE_LIMIT";
+  }
+
+  if (eventType.includes("QUEUE") || eventType.includes("JOB")) {
+    return looksLikeFailure ? "QUEUE_ERROR" : null;
+  }
+
+  if (eventType.includes("BILLING") || eventType.includes("INVOICE") || eventType.includes("REFUND")) {
+    return looksLikeFailure ? "BILLING_ERROR" : null;
+  }
+
+  if (eventType.includes("IMPERSONATION")) {
+    return "IMPERSONATION_EVENT";
+  }
+
+  if (eventType.includes("OBSERVABILITY")) {
+    return looksLikeFailure ? "OBSERVABILITY_ERROR" : null;
+  }
+
+  if (
+    eventType.includes("SLOW_QUERY") ||
+    eventType.includes("LATENCY") ||
+    eventType.includes("TIMEOUT") ||
+    readMetadataNumber(input.metadata, "latency_ms", "latencyMs", "duration_ms", "durationMs")
+  ) {
+    return looksLikeFailure ? "PERFORMANCE_EVENT" : null;
   }
 
   if (
@@ -92,12 +165,6 @@ export const resolveEventClassification = (
   ) {
     return "SECURITY_EVENT";
   }
-
-  const looksLikeFailure =
-    input.status === "FAILED" ||
-    FAILURE_KEYWORDS.some((keyword) => eventType.includes(keyword)) ||
-    input.metadata?.counts_as_failure === true ||
-    input.metadata?.countsAsFailure === true;
 
   if (!looksLikeFailure) {
     return null;
@@ -135,6 +202,96 @@ export const resolveMetricKey = (
   }
 
   return `${classification.toLowerCase()}:${eventType}`;
+};
+
+export const resolveSeverity = (
+  input: Pick<EventLogInput, "classification" | "metadata" | "severity" | "status" | "type">,
+): AlertSeverity => {
+  const explicitSeverity = normalizeText(input.severity).toUpperCase();
+  if (
+    explicitSeverity === "INFO" ||
+    explicitSeverity === "WARNING" ||
+    explicitSeverity === "ERROR" ||
+    explicitSeverity === "CRITICAL"
+  ) {
+    return explicitSeverity;
+  }
+
+  const metadataSeverity = normalizeText(input.metadata?.severity ?? input.metadata?.alert_severity).toUpperCase();
+  if (
+    metadataSeverity === "INFO" ||
+    metadataSeverity === "WARNING" ||
+    metadataSeverity === "ERROR" ||
+    metadataSeverity === "CRITICAL"
+  ) {
+    return metadataSeverity;
+  }
+
+  const classification = resolveEventClassification(input);
+  const thresholdPolicy = getThresholdPolicy(classification);
+  if (thresholdPolicy) {
+    return input.status === "FAILED" ? thresholdPolicy.severity : "INFO";
+  }
+
+  return input.status === "FAILED" ? "ERROR" : "INFO";
+};
+
+export const resolveGroupKey = (
+  input: Pick<EventLogInput, "classification" | "groupKey" | "metadata" | "metricKey" | "status" | "type">,
+) => {
+  const explicitGroupKey = normalizeMetricSegment(normalizeText(input.groupKey));
+  if (explicitGroupKey) {
+    return explicitGroupKey;
+  }
+
+  const metadataGroupKey = normalizeMetricSegment(readMetadataText(input.metadata, "group_key", "groupKey"));
+  if (metadataGroupKey) {
+    return metadataGroupKey;
+  }
+
+  const classification = resolveEventClassification(input);
+  const metricKey = resolveMetricKey(input);
+  const source = normalizeMetricSegment(readMetadataText(
+    input.metadata,
+    "request_source",
+    "requestSource",
+    "source",
+    "provider",
+    "job_type",
+    "jobType",
+    "queryName",
+  ));
+  const route = normalizeMetricSegment(readMetadataText(input.metadata, "route", "path", "request_path", "requestPath"));
+
+  return [classification?.toLowerCase() ?? null, metricKey, source || null, route || null].filter(Boolean).join(":") || null;
+};
+
+export const resolveFingerprint = (
+  input: Pick<EventLogInput, "classification" | "fingerprint" | "groupKey" | "metadata" | "metricKey" | "status" | "type">,
+) => {
+  const explicitFingerprint = normalizeMetricSegment(normalizeText(input.fingerprint));
+  if (explicitFingerprint) {
+    return explicitFingerprint;
+  }
+
+  const metadataFingerprint = normalizeMetricSegment(readMetadataText(input.metadata, "fingerprint"));
+  if (metadataFingerprint) {
+    return metadataFingerprint;
+  }
+
+  const groupKey = resolveGroupKey(input);
+  const errorCode = normalizeMetricSegment(readMetadataText(
+    input.metadata,
+    "error_code",
+    "errorCode",
+    "code",
+    "reason",
+    "status_code",
+    "statusCode",
+  ));
+  const entityHint = normalizeMetricSegment(readMetadataText(input.metadata, "job_id", "jobId", "queryName", "provider"));
+
+  return [groupKey, errorCode || null, entityHint || null].filter(Boolean).join(":") || null;
 };
 
 export const resolveOccurredAt = (value: unknown) => {

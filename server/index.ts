@@ -2,38 +2,32 @@ import compression from "compression";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { handleAuthApiRequest, isSupportedAuthApiPath, type AuthApiRoutePath } from "../src/lib/authApiRoute.server.js";
 import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server.js";
 import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
+import { buildMaintenanceApiError, evaluateMaintenanceRequest, readMaintenanceContextFromHeaders } from "../src/lib/maintenanceGuard.server.js";
 import { parseBooleanSetting } from "../src/lib/maintenance.js";
-import { updateMaintenanceSettings } from "../src/lib/maintenance.server.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
-import { sendAdminAlert } from "../src/lib/observability/alertService.js";
+import { sendAdminAlert } from "../src/lib/observability/alertService.server.js";
 import { getCriticalDatabaseHealth, warmCriticalDatabaseHealth } from "../src/lib/observability/databaseHealth.server.js";
-import { logEvent } from "../src/lib/observability/eventLogger.js";
-import { buildServerReadiness } from "../src/lib/observability/serverHealth.js";
+import { logEvent } from "../src/lib/observability/eventLogger.server.js";
+import {
+  applyTraceResponseHeaders,
+  createRequestTraceContext,
+  runWithRequestTraceContext,
+} from "../src/lib/observability/requestContext.server.js";
+import { buildRuntimeLivenessReport, buildServerReadiness } from "../src/lib/observability/serverHealth.server.js";
 import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring.js";
 import { isDatabaseCriticalError } from "../src/lib/observability/store.server.js";
 import { assertServerStartupEnv } from "../src/lib/observability/startupValidation.js";
-import {
-  ensureOtpAuthWorkerStarted,
-  resolveEmailLoginRequest,
-  resolveLogoutAllRequest,
-  resolveLogoutRequest,
-  resolveRefreshSessionRequest,
-  resolveSendOtpRequest,
-  resolveSuperAdminLoginRequest,
-  resolveSuperAdminSessionRequest,
-  resolveSuperAdminVerifyOtpRequest,
-  resolveTwilioStatusCallbackRequest,
-  resolveVerifyOtpRequest,
-} from "../src/lib/otpAuth.server.js";
+import { ensureOtpAuthWorkerStarted, resolveSuperAdminSessionRequest } from "../src/lib/otpAuth.server.js";
 import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
 import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
+import { handleAdminApiRequest, isSupportedAdminApiPath } from "../src/lib/superAdmin/apiRoute.server.js";
 import {
   SUPER_ADMIN_DASHBOARD_ROUTE,
   SUPER_ADMIN_LOGIN_ROUTE,
@@ -66,10 +60,27 @@ app.use(
 app.use(cors({ credentials: true, origin: true }));
 app.use(compression());
 app.use((req, res, next) => {
-  const requestId = randomUUID();
-  res.setHeader("x-request-id", requestId);
-  res.locals.requestId = requestId;
-  next();
+  const traceContext = createRequestTraceContext({
+    correlationId:
+      (typeof req.headers["x-correlation-id"] === "string" ? req.headers["x-correlation-id"] : undefined) ||
+      (typeof req.headers["x-request-id"] === "string" ? req.headers["x-request-id"] : undefined),
+    ipAddress: req.ip,
+    method: req.method,
+    requestId: typeof req.headers["x-request-id"] === "string" ? req.headers["x-request-id"] : undefined,
+    route: req.originalUrl || req.path,
+    source: "express_server",
+    traceId: typeof req.headers["x-trace-id"] === "string" ? req.headers["x-trace-id"] : undefined,
+    userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+  });
+
+  applyTraceResponseHeaders(res, traceContext);
+  res.locals.requestId = traceContext.requestId;
+  res.locals.correlationId = traceContext.correlationId;
+  res.locals.traceId = traceContext.traceId;
+
+  void runWithRequestTraceContext(traceContext, async () => {
+    next();
+  });
 });
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
@@ -149,7 +160,12 @@ const isHtmlNavigationRequest = (req: Request) => {
   }
 
   const acceptHeader = req.headers.accept ?? "";
-  return typeof acceptHeader === "string" && (acceptHeader.includes("text/html") || acceptHeader.includes("*/*"));
+  const fetchDestination = typeof req.headers["sec-fetch-dest"] === "string" ? req.headers["sec-fetch-dest"] : "";
+  const requestsDocument = fetchDestination === "document";
+  const acceptsHtml = typeof acceptHeader === "string" && acceptHeader.includes("text/html");
+  const looksLikeAssetRequest = /\.[a-z0-9]+$/i.test(req.path);
+
+  return !looksLikeAssetRequest && (requestsDocument || acceptsHtml);
 };
 
 const buildSuperAdminLoginRedirect = (requestedPath: string) =>
@@ -259,6 +275,14 @@ const buildMaintenancePayload = (status: {
   };
 };
 
+const normalizeLegacyAuthApiPath = (pathname: string): AuthApiRoutePath | null => {
+  const candidate = pathname.startsWith("/auth/") ? `/api${pathname}` : pathname;
+  return isSupportedAuthApiPath(candidate) ? candidate : null;
+};
+
+const isMaintenanceGuardedRequest = (req: Request) =>
+  req.path.startsWith("/api/") || req.path.startsWith("/auth/") || isHtmlNavigationRequest(req);
+
 const handleAttendanceScan: Parameters<typeof app.post>[1] = async (req, res) => {
   try {
     const result = await resolveScanAttendanceRequest(process.env, req.body, {
@@ -298,36 +322,38 @@ app.get("/health", (_req, res) => {
 
 app.get("/health/live", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.status(200).json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    uptimeSeconds: Math.round((Date.now() - serverStartedAt) / 1000),
-  });
+  res.status(200).json(
+    buildRuntimeLivenessReport(process.env, {
+      service: "libriofy-auth-attendance-api",
+      startedAt: serverStartedAt,
+      target: "express",
+    }),
+  );
 });
 
 app.get("/health/ready", async (_req, res) => {
-  const readiness = await buildServerReadiness(process.env, { hasDist: existsSync(distDirectory) });
-  res.setHeader("Cache-Control", "no-store");
-  res.status(readiness.ok ? 200 : 503).json({
-    ...readiness,
-    appEnv: process.env.APP_ENV || process.env.NODE_ENV || "development",
+  const readiness = await buildServerReadiness(process.env, {
+    hasDist: existsSync(distDirectory),
+    phase: "express_health_ready",
     service: "libriofy-auth-attendance-api",
-    timestamp: new Date().toISOString(),
+    startedAt: serverStartedAt,
+    target: "express",
   });
+  res.setHeader("Cache-Control", "no-store");
+  res.status(readiness.ok ? 200 : 503).json(readiness);
 });
 
 app.get("/health/ops", async (_req, res) => {
-  const readiness = await buildServerReadiness(process.env, { hasDist: existsSync(distDirectory) });
-  res.setHeader("Cache-Control", "no-store");
-  res.status(readiness.ok ? 200 : 503).json({
-    appEnv: process.env.APP_ENV || process.env.NODE_ENV || "development",
-    nodeVersion: process.version,
-    readiness,
-    release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || null,
-    requestId: res.locals.requestId,
-    timestamp: new Date().toISOString(),
-    uptimeSeconds: Math.round((Date.now() - serverStartedAt) / 1000),
+  const readiness = await buildServerReadiness(process.env, {
+    hasDist: existsSync(distDirectory),
+    phase: "express_health_ops",
+    requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : null,
+    service: "libriofy-auth-attendance-api",
+    startedAt: serverStartedAt,
+    target: "express",
   });
+  res.setHeader("Cache-Control", "no-store");
+  res.status(readiness.ok ? 200 : 503).json(readiness);
 });
 
 const handleDatabaseHealthRoute: Parameters<typeof app.get>[1] = async (_req, res) => {
@@ -360,16 +386,6 @@ const handleDatabaseHealthRoute: Parameters<typeof app.get>[1] = async (_req, re
 
 app.get("/health/db", handleDatabaseHealthRoute);
 app.get("/api/health/db", handleDatabaseHealthRoute);
-
-app.get("/api/settings", async (_req, res) => {
-  try {
-    const status = await readSafeMaintenanceStatus();
-    res.setHeader("Cache-Control", "no-store");
-    res.status(200).json(buildMaintenancePayload(status));
-  } catch (error) {
-    sendServerError(_req, res, error, "Unexpected settings lookup failure", { source: "api_settings" });
-  }
-});
 
 app.options("/api/observability/events", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -416,237 +432,96 @@ app.post("/api/observability/alerts", async (req, res) => {
   }
 });
 
-app.get("/api/admin/settings", async (req, res) => {
+app.use(async (req, res, next) => {
+  if (req.method === "OPTIONS" || !isMaintenanceGuardedRequest(req)) {
+    next();
+    return;
+  }
+
   try {
-    const activeSession = await resolveSuperAdminSessionRequest(process.env, readRequestContext(req));
-    if (!activeSession) {
-      res.status(401).json({
-        success: false,
-        message: "Super admin verification is required.",
-      });
+    const maintenanceDecision = await evaluateMaintenanceRequest(
+      process.env,
+      readMaintenanceContextFromHeaders({
+        authorization: req.headers.authorization,
+        headers: req.headers,
+        pathname: req.path,
+      }),
+    );
+
+    if (maintenanceDecision.allow) {
+      next();
       return;
     }
 
+    if (req.path.startsWith("/api/") || req.path.startsWith("/auth/")) {
+      res.setHeader("Cache-Control", "no-store");
+      res.status(503).json(buildMaintenanceApiError(res.locals.requestId));
+      return;
+    }
+
+    res.redirect(302, "/maintenance");
+  } catch (error) {
+    sendServerError(req, res, error, "Unable to validate maintenance access right now.", {
+      source: "maintenance_guard",
+    });
+  }
+});
+
+app.get("/api/settings", async (_req, res) => {
+  try {
     const status = await readSafeMaintenanceStatus();
     res.setHeader("Cache-Control", "no-store");
     res.status(200).json(buildMaintenancePayload(status));
   } catch (error) {
-    sendServerError(req, res, error, "Unexpected admin settings lookup failure", { source: "api_admin_settings" });
+    sendServerError(_req, res, error, "Unexpected settings lookup failure", { source: "api_settings" });
   }
 });
 
-app.post("/api/admin/settings", async (req, res) => {
-  try {
-    const activeSession = await resolveSuperAdminSessionRequest(process.env, readRequestContext(req));
-    if (!activeSession) {
-      res.status(401).json({
-        success: false,
-        message: "Super admin verification is required.",
-      });
-      return;
-    }
-
-    const nextMaintenanceMode = parseBooleanSetting(
-      req.body?.maintenanceMode ?? req.body?.maintenance ?? req.body?.enabled ?? req.body?.value,
-    );
-
-    if (nextMaintenanceMode === null) {
-      res.status(400).json({
-        success: false,
-        message: "maintenanceMode must be provided as a boolean-compatible value.",
-      });
-      return;
-    }
-
-    const updatedStatus = await updateMaintenanceSettings(nextMaintenanceMode, process.env, activeSession.user.id);
+app.use(async (req, res, next) => {
+  if (req.path === "/api/admin/settings") {
     res.setHeader("Cache-Control", "no-store");
-    res.status(200).json({
-      success: true,
-      ...buildMaintenancePayload(updatedStatus),
+    res.status(410).json({
+      success: false,
+      code: "ROUTE_DEPRECATED",
+      error: "Use /api/admin/platform for control-plane settings.",
+      message: "Use /api/admin/platform for control-plane settings.",
+      requestId: res.locals.requestId,
     });
-  } catch (error) {
-    sendServerError(req, res, error, "Unexpected admin settings update failure", { source: "api_admin_settings" });
+    return;
   }
-});
 
-app.post("/auth/send-otp", async (req, res) => {
-  try {
-    const result = await resolveSendOtpRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to send OTP right now.", { source: "auth_send_otp" });
+  const canonicalAuthPath = normalizeLegacyAuthApiPath(req.path);
+  if (canonicalAuthPath) {
+    await handleAuthApiRequest(
+      {
+        body: req.body,
+        headers: req.headers,
+        method: req.method,
+        url: req.originalUrl,
+      },
+      res,
+      process.env,
+      canonicalAuthPath,
+    );
+    return;
   }
-});
 
-app.post("/auth/verify-otp", async (req, res) => {
-  try {
-    const result = await resolveVerifyOtpRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to verify OTP right now.", { source: "auth_verify_otp" });
+  if (isSupportedAdminApiPath(req.path)) {
+    await handleAdminApiRequest(
+      {
+        body: req.body,
+        headers: req.headers,
+        method: req.method,
+        url: req.originalUrl,
+      },
+      res,
+      process.env,
+      req.path,
+    );
+    return;
   }
-});
 
-app.post("/auth/login-email", async (req, res) => {
-  try {
-    const result = await resolveEmailLoginRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to sign in right now.", { source: "auth_login_email" });
-  }
-});
-
-app.post("/auth/super-admin/login", async (req, res) => {
-  try {
-    const result = await resolveSuperAdminLoginRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to start Super Admin login right now.", { source: "super_admin_login" });
-  }
-});
-
-app.post(["/auth/super-admin/verify", "/auth/super-admin/verify-otp"], async (req, res) => {
-  try {
-    const result = await resolveSuperAdminVerifyOtpRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to verify the Super Admin OTP right now.", {
-      source: "super_admin_verify_otp",
-    });
-  }
-});
-
-app.post("/auth/refresh", async (req, res) => {
-  try {
-    const result = await resolveRefreshSessionRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to refresh the session right now. Please sign in again.", {
-      source: "auth_refresh",
-    }, "AUTH_REFRESH_ERROR");
-  }
-});
-
-app.post("/auth/logout", async (req, res) => {
-  try {
-    const result = await resolveLogoutRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to log out right now.", { source: "auth_logout" });
-  }
-});
-
-app.post("/auth/logout-all", async (req, res) => {
-  try {
-    const result = await resolveLogoutAllRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to log out of all devices right now.", {
-      source: "auth_logout_all",
-    });
-  }
-});
-
-app.post("/auth/twilio-status", async (req, res) => {
-  try {
-    const result = await resolveTwilioStatusCallbackRequest(process.env, req.body);
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to process the OTP status callback right now.", {
-      source: "twilio_status",
-    });
-  }
-});
-
-app.post("/api/auth/send-otp", async (req, res) => {
-  try {
-    const result = await resolveSendOtpRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to send OTP right now.", { source: "api_auth_send_otp" });
-  }
-});
-
-app.post("/api/auth/verify-otp", async (req, res) => {
-  try {
-    const result = await resolveVerifyOtpRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to verify OTP right now.", { source: "api_auth_verify_otp" });
-  }
-});
-
-app.post("/api/auth/login-email", async (req, res) => {
-  try {
-    const result = await resolveEmailLoginRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to sign in right now.", { source: "api_auth_login_email" });
-  }
-});
-
-app.post("/api/auth/super-admin/login", async (req, res) => {
-  try {
-    const result = await resolveSuperAdminLoginRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to start Super Admin login right now.", {
-      source: "api_super_admin_login",
-    });
-  }
-});
-
-app.post(["/api/auth/super-admin/verify", "/api/auth/super-admin/verify-otp"], async (req, res) => {
-  try {
-    const result = await resolveSuperAdminVerifyOtpRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to verify the Super Admin OTP right now.", {
-      source: "api_super_admin_verify_otp",
-    });
-  }
-});
-
-app.post("/api/auth/refresh", async (req, res) => {
-  try {
-    const result = await resolveRefreshSessionRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to refresh the session right now. Please sign in again.", {
-      source: "api_auth_refresh",
-    }, "AUTH_REFRESH_ERROR");
-  }
-});
-
-app.post("/api/auth/logout", async (req, res) => {
-  try {
-    const result = await resolveLogoutRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to log out right now.", { source: "api_auth_logout" });
-  }
-});
-
-app.post("/api/auth/logout-all", async (req, res) => {
-  try {
-    const result = await resolveLogoutAllRequest(process.env, req.body, readRequestContext(req));
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to log out of all devices right now.", {
-      source: "api_auth_logout_all",
-    });
-  }
-});
-
-app.post("/api/auth/twilio-status", async (req, res) => {
-  try {
-    const result = await resolveTwilioStatusCallbackRequest(process.env, req.body);
-    sendAuthResponse(res, result);
-  } catch (error) {
-    sendAuthServerError(req, res, error, "Unable to process the OTP status callback right now.", {
-      source: "api_twilio_status",
-    });
-  }
+  next();
 });
 
 app.post("/api/attendance/scan", handleAttendanceScan);

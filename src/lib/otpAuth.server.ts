@@ -8,6 +8,8 @@ import { createHash, randomBytes, randomInt } from "node:crypto";
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   AUTH_REFRESH_COOKIE_NAME,
+  IMPERSONATION_ACCESS_TOKEN_TTL_SECONDS,
+  IMPERSONATION_SESSION_TTL_SECONDS,
   OTP_COOLDOWN_SECONDS,
   OTP_MAX_ATTEMPTS,
   OTP_TTL_SECONDS,
@@ -23,11 +25,15 @@ import {
   type AuthDeliveryChannel,
   type AuthLoginMethod,
   type AuthSessionScope,
+  type AuthImpersonationContext,
   type AuthUser,
   type ClientAuthSession,
+  type ImpersonationAuditResponse,
   type LoginEmailResponse,
   type RefreshSessionResponse,
   type SendOtpResponse,
+  type StartImpersonationResponse,
+  type StopImpersonationResponse,
   type SuperAdminLoginResponse,
   type SuperAdminOtpChannel,
   type SuperAdminVerifyOtpResponse,
@@ -39,29 +45,41 @@ import {
   getSuperAdminVerifyRuntimeIssues,
   type AuthConfigIssue,
 } from "./authRuntimeConfig.js";
-import { sendEmail } from "./email.js";
+import { sendEmail } from "./email.server.js";
 import {
   isAllowedLibriofyRequestHost,
   isAllowedLibriofyRequestOrigin,
   resolveLibriofyAppUrl,
   resolveLibriofyEmailFrom,
 } from "./libriofyConfig.js";
-import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.js";
-import { logEvent } from "./observability/eventLogger.js";
-import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.js";
+import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.server.js";
+import { logEvent } from "./observability/eventLogger.server.js";
+import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
+import {
+  createImpersonationSessionState,
+  endImpersonationSession,
+  loadActiveImpersonationSession,
+  recordImpersonationAuditEvent,
+  touchImpersonationSession,
+} from "./impersonationRuntime.server.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
+import { canPerformOperatorAction, getActionConfirmationLabel } from "./superAdmin/governance.js";
+import { resolveSuperAdminOperatorAccessData } from "./superAdmin/service.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
 type RequestContext = {
   authorization?: string;
+  correlationId?: string;
   cookieHeader?: string;
   deviceFingerprint?: string;
   deviceLabel?: string;
   host?: string;
   ip?: string;
   origin?: string;
+  requestId?: string;
   referer?: string;
+  traceId?: string;
   userAgent?: string;
 };
 
@@ -151,9 +169,28 @@ type SuperAdminOtpRecord = {
 
 type ActiveSessionContext = {
   authLevel: number;
+  effectiveUser: AuthUser;
+  impersonation: AuthImpersonationContext | null;
   refreshToken: string;
+  realUser: AuthUser;
   sessionScope: AuthSessionScope;
+  trustedSession: TrustedDeviceRow;
   user: AuthUser;
+};
+
+type StartImpersonationRequestBody = {
+  confirmationText?: string | null;
+  dryRun?: boolean;
+  libraryId?: string | null;
+  reason?: string | null;
+  targetUserId?: string | null;
+};
+
+type AuditImpersonationRequestBody = {
+  action?: string | null;
+  metadata?: Record<string, unknown> | null;
+  requestPath?: string | null;
+  requestSource?: string | null;
 };
 
 type FallbackJobData = {
@@ -185,6 +222,10 @@ const startedWorkerKeys = new Set<string>();
 const authWarningLogCache = new Map<string, number>();
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+const normalizeNullableText = (value: unknown) => {
+  const normalized = trimText(value);
+  return normalized || null;
+};
 
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {
@@ -1067,30 +1108,58 @@ const getJwtSecret = (env: EnvLike) => {
   return secret;
 };
 
+const buildImpersonationContext = ({
+  effectiveUser,
+  expiresAt,
+  impersonationId,
+  realUser,
+  startedAt,
+}: {
+  effectiveUser: AuthUser;
+  expiresAt: string;
+  impersonationId: string;
+  realUser: AuthUser;
+  startedAt: string;
+}): AuthImpersonationContext => ({
+  effectiveUser,
+  expiresAt,
+  impersonationId,
+  realUser,
+  startedAt,
+});
+
 const mintAccessToken = ({
+  accessTokenTtlSeconds = ACCESS_TOKEN_TTL_SECONDS,
   authLevel,
+  effectiveUser,
   env,
+  impersonation = null,
   loginMethod,
+  realUser = null,
   sessionId,
   sessionScope,
-  user,
 }: {
+  accessTokenTtlSeconds?: number;
   authLevel: number;
+  effectiveUser: AuthUser;
   env: EnvLike;
+  impersonation?: AuthImpersonationContext | null;
   loginMethod: AuthLoginMethod;
+  realUser?: AuthUser | null;
   sessionId: string;
   sessionScope: AuthSessionScope;
-  user: AuthUser;
 }) => {
   const now = Math.floor(Date.now() / 1000);
   const provider =
     sessionScope === "super_admin"
       ? "super_admin_email_otp"
-      : loginMethod === "otp"
+      : sessionScope === "impersonation"
+        ? "super_admin_impersonation"
+        : loginMethod === "otp"
         ? "phone_otp"
         : "email_password";
   const authMethods =
-    sessionScope === "super_admin"
+    sessionScope === "super_admin" || sessionScope === "impersonation"
       ? [
           { method: "email", timestamp: now },
           { method: "otp", timestamp: now },
@@ -1103,57 +1172,79 @@ const mintAccessToken = ({
       amr: authMethods,
       app_metadata: {
         auth_level: authLevel,
+        effective_user_id: effectiveUser.id,
+        impersonation_id: impersonation?.impersonationId ?? null,
         provider,
-        roles: user.roles,
+        real_user_id: realUser?.id ?? effectiveUser.id,
+        roles: effectiveUser.roles,
         session_scope: sessionScope,
       },
       aud: "authenticated",
-      email: user.email ?? undefined,
-      phone: user.phone ?? undefined,
+      email: effectiveUser.email ?? undefined,
+      impersonation:
+        impersonation
+          ? {
+              effective_user_id: impersonation.effectiveUser.id,
+              expires_at: impersonation.expiresAt,
+              id: impersonation.impersonationId,
+              real_user_id: impersonation.realUser.id,
+              started_at: impersonation.startedAt,
+            }
+          : undefined,
+      phone: effectiveUser.phone ?? undefined,
       role: "authenticated",
       session_id: sessionId,
-      sub: user.id,
+      sub: effectiveUser.id,
       user_metadata: {
-        full_name: user.fullName ?? undefined,
-        phone_number: user.phone ?? undefined,
+        full_name: effectiveUser.fullName ?? undefined,
+        phone_number: effectiveUser.phone ?? undefined,
       },
     },
     getJwtSecret(env),
     {
       algorithm: "HS256",
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+      expiresIn: accessTokenTtlSeconds,
     },
   );
 };
 
 const createClientSession = ({
   accessToken,
+  accessTokenTtlSeconds = ACCESS_TOKEN_TTL_SECONDS,
   authLevel,
+  effectiveUser,
   loginMethod,
   idleTimeoutSeconds,
+  impersonation = null,
   provider,
+  realUser = null,
   sessionScope,
   trustedDevice,
-  user,
 }: {
   accessToken: string;
+  accessTokenTtlSeconds?: number;
   authLevel: number;
+  effectiveUser: AuthUser;
   loginMethod: AuthLoginMethod;
   idleTimeoutSeconds: number | null;
+  impersonation?: AuthImpersonationContext | null;
   provider: ClientAuthSession["provider"];
+  realUser?: AuthUser | null;
   sessionScope: AuthSessionScope;
   trustedDevice: boolean;
-  user: AuthUser;
 }): ClientAuthSession => ({
   accessToken,
   authLevel,
-  expiresAt: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS,
+  effectiveUser,
+  expiresAt: Math.floor(Date.now() / 1000) + accessTokenTtlSeconds,
   idleTimeoutSeconds,
+  impersonation,
   loginMethod,
   provider,
+  realUser,
   sessionScope,
   trustedDevice,
-  user,
+  user: effectiveUser,
 });
 
 const insertTrustedDeviceSession = async ({
@@ -1187,52 +1278,65 @@ const insertTrustedDeviceSession = async ({
   const refreshToken = createRefreshToken();
   const expiresAt = new Date(Date.now() + sessionTtlSeconds * 1000).toISOString();
 
-  const { error } = await serviceClient.from("auth_trusted_devices").insert({
-    auth_level: authLevel,
-    delivery_channel: deliveryChannel ?? null,
-    device_fingerprint_hash: trimText(deviceFingerprint) ? sha256(trimText(deviceFingerprint)) : null,
-    device_label: trimText(deviceLabel) || null,
-    expires_at: expiresAt,
-    idle_timeout_seconds: idleTimeoutSeconds ?? null,
-    last_ip: trimText(ip) || null,
-    last_used_at: new Date().toISOString(),
-    login_method: loginMethod,
-    phone_number: user.phone,
-    refresh_token_hash: sha256(refreshToken),
-    revoked_at: null,
-    session_scope: sessionScope,
-    user_agent: trimText(userAgent) || null,
-    user_id: user.id,
-  });
+  const { data, error } = await serviceClient
+    .from("auth_trusted_devices")
+    .insert({
+      auth_level: authLevel,
+      delivery_channel: deliveryChannel ?? null,
+      device_fingerprint_hash: trimText(deviceFingerprint) ? sha256(trimText(deviceFingerprint)) : null,
+      device_label: trimText(deviceLabel) || null,
+      expires_at: expiresAt,
+      idle_timeout_seconds: idleTimeoutSeconds ?? null,
+      last_ip: trimText(ip) || null,
+      last_used_at: new Date().toISOString(),
+      login_method: loginMethod,
+      phone_number: user.phone,
+      refresh_token_hash: sha256(refreshToken),
+      revoked_at: null,
+      session_scope: sessionScope === "impersonation" ? "super_admin" : sessionScope,
+      user_agent: trimText(userAgent) || null,
+      user_id: user.id,
+    })
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     throw error;
   }
 
-  return refreshToken;
+  return {
+    refreshToken,
+    sessionId: normalizeText((data as { id?: string | null } | null)?.id) || createRequestId(),
+  };
 };
 
 const createAuthenticatedResponse = async ({
+  accessTokenTtlSeconds = ACCESS_TOKEN_TTL_SECONDS,
   authLevel = 1,
   deliveryChannel,
+  effectiveUser,
   env,
   idleTimeoutSeconds = null,
+  impersonation = null,
   loginMethod,
+  realUser = null,
   sessionScope = "general",
   sessionTtlSeconds = TRUSTED_DEVICE_TTL_SECONDS,
-  user,
   ...context
 }: {
+  accessTokenTtlSeconds?: number;
   authLevel?: number;
   deliveryChannel?: string;
+  effectiveUser: AuthUser;
   env: EnvLike;
   idleTimeoutSeconds?: number | null;
+  impersonation?: AuthImpersonationContext | null;
   loginMethod: AuthLoginMethod;
+  realUser?: AuthUser | null;
   sessionScope?: AuthSessionScope;
   sessionTtlSeconds?: number;
-  user: AuthUser;
 } & RequestContext) => {
-  const refreshToken = await insertTrustedDeviceSession({
+  const issuedSession = await insertTrustedDeviceSession({
     authLevel,
     deliveryChannel,
     deviceFingerprint: context.deviceFingerprint,
@@ -1243,30 +1347,36 @@ const createAuthenticatedResponse = async ({
     loginMethod,
     sessionScope,
     sessionTtlSeconds,
-    user,
+    user: realUser ?? effectiveUser,
     userAgent: context.userAgent,
   });
 
   const accessToken = mintAccessToken({
+    accessTokenTtlSeconds,
     authLevel,
+    effectiveUser,
     env,
+    impersonation,
     loginMethod,
-    sessionId: createRequestId(),
+    realUser,
+    sessionId: issuedSession.sessionId,
     sessionScope,
-    user,
   });
 
   return {
-    cookies: [buildSessionCookie(env, refreshToken, sessionTtlSeconds)],
+    cookies: [buildSessionCookie(env, issuedSession.refreshToken, sessionTtlSeconds)],
     session: createClientSession({
       accessToken,
+      accessTokenTtlSeconds,
       authLevel,
+      effectiveUser,
       idleTimeoutSeconds,
+      impersonation,
       loginMethod,
       provider: "custom",
+      realUser,
       sessionScope,
       trustedDevice: true,
-      user,
     }),
   };
 };
@@ -1339,6 +1449,49 @@ const rotateTrustedDeviceSession = async ({
   return refreshToken;
 };
 
+const getTrustedSessionTtlSeconds = (trustedSession: TrustedDeviceRow) =>
+  trustedSession.session_scope === "super_admin"
+    ? trustedSession.idle_timeout_seconds ?? SUPER_ADMIN_IDLE_TIMEOUT_SECONDS
+    : TRUSTED_DEVICE_TTL_SECONDS;
+
+const buildSessionFromActiveContext = ({
+  activeSession,
+  env,
+  trustedSession,
+}: {
+  activeSession: ActiveSessionContext;
+  env: EnvLike;
+  trustedSession: TrustedDeviceRow;
+}) => {
+  const accessTokenTtlSeconds =
+    activeSession.impersonation ? IMPERSONATION_ACCESS_TOKEN_TTL_SECONDS : ACCESS_TOKEN_TTL_SECONDS;
+  const accessToken = mintAccessToken({
+    accessTokenTtlSeconds,
+    authLevel: trustedSession.auth_level,
+    effectiveUser: activeSession.effectiveUser,
+    env,
+    impersonation: activeSession.impersonation,
+    loginMethod: trustedSession.login_method,
+    realUser: activeSession.impersonation ? activeSession.realUser : null,
+    sessionId: trustedSession.id,
+    sessionScope: activeSession.sessionScope,
+  });
+
+  return createClientSession({
+    accessToken,
+    accessTokenTtlSeconds,
+    authLevel: trustedSession.auth_level,
+    effectiveUser: activeSession.effectiveUser,
+    idleTimeoutSeconds: trustedSession.idle_timeout_seconds,
+    impersonation: activeSession.impersonation,
+    loginMethod: trustedSession.login_method,
+    provider: "custom",
+    realUser: activeSession.impersonation ? activeSession.realUser : null,
+    sessionScope: activeSession.sessionScope,
+    trustedDevice: true,
+  });
+};
+
 const revokeRefreshToken = async (env: EnvLike, refreshToken: string, reason = "logout") => {
   if (!refreshToken) {
     return;
@@ -1352,6 +1505,47 @@ const revokeRefreshToken = async (env: EnvLike, refreshToken: string, reason = "
       revocation_reason: reason,
     })
     .eq("refresh_token_hash", sha256(refreshToken));
+};
+
+const resolveActiveImpersonationForTrustedSession = async (
+  env: EnvLike,
+  trustedSession: TrustedDeviceRow,
+  realUser: AuthUser,
+) => {
+  if (trustedSession.auth_level < 2 || !realUser.roles.includes("super_admin")) {
+    return null;
+  }
+
+  const activeImpersonation = await loadActiveImpersonationSession(env, trustedSession.id);
+  if (!activeImpersonation) {
+    return null;
+  }
+
+  try {
+    const effectiveUser = await loadAuthUserById(env, activeImpersonation.targetUserId);
+    if (effectiveUser.roles.includes("super_admin")) {
+      await endImpersonationSession(env, trustedSession.id, {
+        reason: "target_super_admin_not_allowed",
+      }).catch(() => undefined);
+      return null;
+    }
+
+    return {
+      effectiveUser,
+      impersonation: buildImpersonationContext({
+        effectiveUser,
+        expiresAt: activeImpersonation.expiresAt,
+        impersonationId: activeImpersonation.id,
+        realUser,
+        startedAt: activeImpersonation.startedAt,
+      }),
+    };
+  } catch {
+    await endImpersonationSession(env, trustedSession.id, {
+      reason: "target_user_unavailable",
+    }).catch(() => undefined);
+    return null;
+  }
 };
 
 const resolveActiveSessionFromRefreshToken = async (
@@ -1386,11 +1580,19 @@ const resolveActiveSessionFromRefreshToken = async (
     return null;
   }
 
+  const activeImpersonation = await resolveActiveImpersonationForTrustedSession(env, trustedSession, user);
+  const effectiveUser = activeImpersonation?.effectiveUser ?? user;
+  const impersonation = activeImpersonation?.impersonation ?? null;
+
   return {
     authLevel: trustedSession.auth_level,
+    effectiveUser,
+    impersonation,
     refreshToken,
-    sessionScope: trustedSession.session_scope,
-    user,
+    realUser: user,
+    sessionScope: impersonation ? "impersonation" : trustedSession.session_scope,
+    trustedSession,
+    user: effectiveUser,
   };
 };
 
@@ -1404,9 +1606,9 @@ export const resolveSuperAdminSessionRequest = async (
   }
 
   if (
-    activeSession.sessionScope !== "super_admin" ||
+    (activeSession.sessionScope !== "super_admin" && activeSession.sessionScope !== "impersonation") ||
     activeSession.authLevel < 2 ||
-    !activeSession.user.roles.includes("super_admin")
+    !activeSession.realUser.roles.includes("super_admin")
   ) {
     return null;
   }
@@ -2146,12 +2348,12 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     ...context,
     authLevel: 2,
     deliveryChannel: otpRecord.deliveryChannel,
+    effectiveUser: user,
     env,
     idleTimeoutSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
     loginMethod: "email",
     sessionScope: "super_admin",
     sessionTtlSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
-    user,
   });
   logSuperAdminDebug("super admin session issued", {
     authLevel: 2,
@@ -2392,9 +2594,9 @@ export const resolveVerifyOtpRequest = async (
   const authenticated = await createAuthenticatedResponse({
     ...context,
     deliveryChannel: otpRecord.deliveryChannel,
+    effectiveUser: user,
     env,
     loginMethod: "otp",
-    user,
   });
 
   return {
@@ -2481,9 +2683,9 @@ export const resolveEmailLoginRequest = async (
 
   const authenticated = await createAuthenticatedResponse({
     ...context,
+    effectiveUser: user,
     env,
     loginMethod: "email",
-    user,
   });
 
   return {
@@ -2494,6 +2696,250 @@ export const resolveEmailLoginRequest = async (
       session: authenticated.session,
     },
     cookies: authenticated.cookies,
+  };
+};
+
+export const resolveStartImpersonationRequest = async (
+  env: EnvLike,
+  requestBody: unknown,
+  context: RequestContext = {},
+): Promise<ServiceResponse<StartImpersonationResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "start-impersonation");
+  if (originError) {
+    return originError;
+  }
+
+  const activeSession = await resolveSuperAdminSessionRequest(env, context);
+  if (!activeSession) {
+    return buildError(401, "Super admin verification is required.", "UNAUTHORIZED");
+  }
+
+  if (activeSession.impersonation) {
+    return buildError(
+      409,
+      "Nested impersonation is not allowed. Stop the current impersonation first.",
+      "IMPERSONATION_ALREADY_ACTIVE",
+    );
+  }
+
+  const body =
+    requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
+      ? (requestBody as StartImpersonationRequestBody)
+      : {};
+
+  const targetUserId = normalizeText(body.targetUserId);
+  if (!targetUserId) {
+    return buildError(400, "Target user ID is required.", "INVALID_REQUEST");
+  }
+
+  if (targetUserId === activeSession.realUser.id) {
+    return buildError(400, "Use your control-plane session directly instead of impersonating yourself.", "INVALID_REQUEST");
+  }
+
+  const targetUser = await loadAuthUserById(env, targetUserId);
+  if (targetUser.roles.includes("super_admin")) {
+    return buildError(403, "Impersonating another super admin is not allowed.", "ACCESS_DENIED");
+  }
+
+  const trustedSessionExpiry = Date.parse(activeSession.trustedSession.expires_at);
+  const defaultExpiry = Date.now() + IMPERSONATION_SESSION_TTL_SECONDS * 1000;
+  const boundedExpiry =
+    Number.isFinite(trustedSessionExpiry) ? Math.min(defaultExpiry, trustedSessionExpiry) : defaultExpiry;
+
+  const impersonationState = await createImpersonationSessionState(env, {
+    expiresAt: new Date(boundedExpiry).toISOString(),
+    metadata: {
+      request_path: context.referer || null,
+      request_source: context.origin || null,
+      started_ip: trimText(context.ip) || null,
+      user_agent: trimText(context.userAgent) || null,
+    },
+    reason: normalizeNullableText(body.reason),
+    superAdminUserId: activeSession.realUser.id,
+    targetLibraryId: normalizeNullableText(body.libraryId),
+    targetUserId,
+    trustedSessionId: activeSession.trustedSession.id,
+  });
+  const nextRefreshToken = await rotateTrustedDeviceSession({
+    deviceFingerprint: context.deviceFingerprint,
+    deviceSession: activeSession.trustedSession,
+    env,
+    ip: context.ip,
+    userAgent: context.userAgent,
+  });
+  const impersonation = buildImpersonationContext({
+    effectiveUser: targetUser,
+    expiresAt: impersonationState.expiresAt,
+    impersonationId: impersonationState.id,
+    realUser: activeSession.realUser,
+    startedAt: impersonationState.startedAt,
+  });
+  const impersonatedSession = buildSessionFromActiveContext({
+    activeSession: {
+      ...activeSession,
+      effectiveUser: targetUser,
+      impersonation,
+      sessionScope: "impersonation",
+      user: targetUser,
+    },
+    env,
+    trustedSession: activeSession.trustedSession,
+  });
+
+  await recordImpersonationAuditEvent(env, {
+    action: "impersonation_started",
+    effectiveUser: targetUser,
+    impersonationId: impersonation.impersonationId,
+    ipAddress: trimText(context.ip) || null,
+    libraryId: normalizeNullableText(body.libraryId),
+    metadata: {
+      reason: normalizeNullableText(body.reason),
+      started_at: impersonation.startedAt,
+    },
+    realUser: activeSession.realUser,
+    requestPath: context.referer || null,
+    requestSource: context.origin || "auth_runtime",
+    userAgent: trimText(context.userAgent) || null,
+  }).catch(() => undefined);
+
+  return {
+    statusCode: 200,
+    body: {
+      success: true,
+      message: "Impersonation started.",
+      session: impersonatedSession,
+    },
+    cookies: [buildSessionCookie(env, nextRefreshToken, getTrustedSessionTtlSeconds(activeSession.trustedSession))],
+  };
+};
+
+export const resolveStopImpersonationRequest = async (
+  env: EnvLike,
+  _requestBody: unknown,
+  context: RequestContext = {},
+): Promise<ServiceResponse<StopImpersonationResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "stop-impersonation");
+  if (originError) {
+    return originError;
+  }
+
+  const activeSession = await resolveSuperAdminSessionRequest(env, context);
+  if (!activeSession?.impersonation) {
+    return buildError(409, "No impersonation session is active.", "IMPERSONATION_INACTIVE");
+  }
+
+  await endImpersonationSession(env, activeSession.trustedSession.id, {
+    metadata: {
+      stopped_ip: trimText(context.ip) || null,
+      user_agent: trimText(context.userAgent) || null,
+    },
+    reason: "stopped_by_super_admin",
+  });
+
+  const nextRefreshToken = await rotateTrustedDeviceSession({
+    deviceFingerprint: context.deviceFingerprint,
+    deviceSession: activeSession.trustedSession,
+    env,
+    ip: context.ip,
+    userAgent: context.userAgent,
+  });
+  const restoredSession = buildSessionFromActiveContext({
+    activeSession: {
+      ...activeSession,
+      effectiveUser: activeSession.realUser,
+      impersonation: null,
+      sessionScope: "super_admin",
+      user: activeSession.realUser,
+    },
+    env,
+    trustedSession: activeSession.trustedSession,
+  });
+
+  await recordImpersonationAuditEvent(env, {
+    action: "impersonation_stopped",
+    effectiveUser: activeSession.effectiveUser,
+    impersonationId: activeSession.impersonation.impersonationId,
+    ipAddress: trimText(context.ip) || null,
+    libraryId: null,
+    metadata: {
+      stopped_at: nowIso(),
+    },
+    realUser: activeSession.realUser,
+    requestPath: context.referer || null,
+    requestSource: context.origin || "auth_runtime",
+    userAgent: trimText(context.userAgent) || null,
+  }).catch(() => undefined);
+
+  return {
+    statusCode: 200,
+    body: {
+      success: true,
+      message: "Impersonation stopped.",
+      session: restoredSession,
+    },
+    cookies: [buildSessionCookie(env, nextRefreshToken, getTrustedSessionTtlSeconds(activeSession.trustedSession))],
+  };
+};
+
+export const resolveImpersonationAuditRequest = async (
+  env: EnvLike,
+  requestBody: unknown,
+  context: RequestContext = {},
+): Promise<ServiceResponse<ImpersonationAuditResponse>> => {
+  const originError = ensureApprovedAuthOrigin(env, context, "impersonation-audit");
+  if (originError) {
+    return originError;
+  }
+
+  const activeSession = await resolveSuperAdminSessionRequest(env, context);
+  if (!activeSession?.impersonation) {
+    return {
+      statusCode: 200,
+      body: {
+        success: true,
+        message: "No active impersonation session.",
+      },
+    };
+  }
+
+  const body =
+    requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
+      ? (requestBody as AuditImpersonationRequestBody)
+      : {};
+  const action = normalizeText(body.action).replace(/[^\w.-]+/g, "_").slice(0, 80);
+  if (!action) {
+    return buildError(400, "Audit action is required.", "INVALID_REQUEST");
+  }
+
+  await touchImpersonationSession(env, activeSession.impersonation.impersonationId, {
+    audit_action: action,
+    last_ip: trimText(context.ip) || null,
+    request_path: normalizeNullableText(body.requestPath),
+    request_source: normalizeNullableText(body.requestSource),
+  }).catch(() => undefined);
+  await recordImpersonationAuditEvent(env, {
+    action: `impersonated_${action}`,
+    effectiveUser: activeSession.effectiveUser,
+    impersonationId: activeSession.impersonation.impersonationId,
+    ipAddress: trimText(context.ip) || null,
+    metadata: {
+      route: normalizeNullableText(body.requestPath),
+      ...((body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata))
+        ? body.metadata
+        : {}),
+    },
+    realUser: activeSession.realUser,
+    requestPath: normalizeNullableText(body.requestPath),
+    requestSource: normalizeNullableText(body.requestSource) || "browser_audit",
+    userAgent: trimText(context.userAgent) || null,
+  });
+
+  return {
+    statusCode: 200,
+    body: {
+      success: true,
+      message: "Impersonation activity recorded.",
+    },
   };
 };
 
@@ -2591,33 +3037,34 @@ export const resolveRefreshSessionRequest = async (
       ip: context.ip,
       userAgent: context.userAgent,
     });
-    const accessToken = mintAccessToken({
+    const activeImpersonation = await resolveActiveImpersonationForTrustedSession(env, trustedSession, user);
+    if (activeImpersonation) {
+      await touchImpersonationSession(env, activeImpersonation.impersonation.impersonationId, {
+        last_ip: trimText(context.ip) || null,
+        last_user_agent: trimText(context.userAgent) || null,
+      }).catch(() => undefined);
+    }
+    const activeSession: ActiveSessionContext = {
       authLevel: trustedSession.auth_level,
-      env,
-      loginMethod: trustedSession.login_method,
-      sessionId: trustedSession.id,
-      sessionScope: trustedSession.session_scope,
-      user,
-    });
-    const sessionTtlSeconds =
-      trustedSession.session_scope === "super_admin"
-        ? trustedSession.idle_timeout_seconds ?? SUPER_ADMIN_IDLE_TIMEOUT_SECONDS
-        : TRUSTED_DEVICE_TTL_SECONDS;
+      effectiveUser: activeImpersonation?.effectiveUser ?? user,
+      impersonation: activeImpersonation?.impersonation ?? null,
+      realUser: user,
+      refreshToken,
+      sessionScope: activeImpersonation ? "impersonation" : trustedSession.session_scope,
+      trustedSession,
+      user: activeImpersonation?.effectiveUser ?? user,
+    };
+    const sessionTtlSeconds = getTrustedSessionTtlSeconds(trustedSession);
 
     return {
       statusCode: 200,
       body: {
         success: true,
         message: "Session restored.",
-        session: createClientSession({
-          accessToken,
-          authLevel: trustedSession.auth_level,
-          idleTimeoutSeconds: trustedSession.idle_timeout_seconds,
-          loginMethod: trustedSession.login_method,
-          provider: "custom",
-          sessionScope: trustedSession.session_scope,
-          trustedDevice: true,
-          user,
+        session: buildSessionFromActiveContext({
+          activeSession,
+          env,
+          trustedSession,
         }),
       },
       cookies: [buildSessionCookie(env, nextRefreshToken, sessionTtlSeconds)],
@@ -2662,6 +3109,16 @@ export const resolveLogoutRequest = async (
     return originError;
   }
 
+  const activeSession = await resolveSuperAdminSessionRequest(env, context).catch(() => null);
+  if (activeSession?.impersonation) {
+    await endImpersonationSession(env, activeSession.trustedSession.id, {
+      metadata: {
+        ended_by: "logout",
+      },
+      reason: "logout",
+    }).catch(() => undefined);
+  }
+
   await revokeRefreshToken(env, readRefreshTokenFromCookies(context.cookieHeader), "logout");
 
   return {
@@ -2685,6 +3142,23 @@ export const resolveLogoutAllRequest = async (
   }
 
   const authUser = await resolveRequestAuthUser(env, context.authorization);
+  if (authUser?.impersonation) {
+    return buildError(
+      403,
+      "Sign out all devices is unavailable while impersonating. Stop impersonation first.",
+      "IMPERSONATION_BOUNDARY",
+    );
+  }
+
+  const activeSession = await resolveSuperAdminSessionRequest(env, context).catch(() => null);
+  if (activeSession?.impersonation) {
+    return buildError(
+      403,
+      "Sign out all devices is unavailable while impersonating. Stop impersonation first.",
+      "IMPERSONATION_BOUNDARY",
+    );
+  }
+
   const refreshToken = readRefreshTokenFromCookies(context.cookieHeader);
   const trustedSession = !authUser ? await getTrustedDeviceSession(env, refreshToken) : null;
   const userId = authUser?.id ?? trustedSession?.user_id ?? "";

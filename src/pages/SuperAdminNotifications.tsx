@@ -1,12 +1,5 @@
-import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
-import NotificationCenter from "@/components/notifications/NotificationCenter";
+import { Navigate } from "react-router-dom";
 
-const SuperAdminNotifications = () => {
-  return (
-    <SuperAdminLayout>
-      <NotificationCenter mode="admin" />
-    </SuperAdminLayout>
-  );
-};
+const SuperAdminNotifications = () => <Navigate replace to="/admin/broadcasts" />;
 
 export default SuperAdminNotifications;
