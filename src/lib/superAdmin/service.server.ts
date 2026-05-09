@@ -7431,6 +7431,13 @@ export const getControlCenterData = async (
   const libraryControls = new Map(
     core.libraryControls.map((row) => [normalizeText(row.library_id), row] as const),
   );
+  const libraryRows = buildLibraryControlRows({
+    controls: libraryControls,
+    lastActivityByLibraryId: core.lastActivityByLibraryId,
+    libraries: core.libraries,
+    ownerProfilesByUserId,
+    subscriptionsByLibraryId,
+  });
   const series = buildTimeSeries(core.dailyMetrics.reverse());
   const latestPoint = series.at(-1);
   const currentMonth = monthKey(new Date());
@@ -7477,6 +7484,7 @@ export const getControlCenterData = async (
     env,
     featureFlags: core.featureFlags,
     incidents: operational.incidentGroups,
+    libraries: libraryRows,
     runtimeGovernance: operational.runtimeGovernance,
     runtimeVisibility: operational.runtimeVisibility,
     settingsMap,
@@ -7529,13 +7537,7 @@ export const getControlCenterData = async (
     },
     statusSignals: statusData.signals,
     incidents: operational.incidentGroups.slice(0, 12),
-    libraries: buildLibraryControlRows({
-      controls: libraryControls,
-      lastActivityByLibraryId: core.lastActivityByLibraryId,
-      libraries: core.libraries,
-      ownerProfilesByUserId,
-      subscriptionsByLibraryId,
-    }).slice(0, 12),
+    libraries: libraryRows.slice(0, 12),
     security: {
       ipWhitelistEnabled,
       whitelist,

@@ -42,6 +42,13 @@ console.log(`- phase: ${snapshot.lineage.phase}`);
 console.log(`- health: ${snapshot.health.score} (${snapshot.health.status})`);
 console.log(`- schema: ${snapshot.schema.readiness}`);
 console.log(`- rollback: ${snapshot.rollback.ready ? "ready" : "blocked"}`);
+console.log(`- active releases: ${snapshot.evolution.activeReleases.length}`);
+console.log(`- stale runtimes: ${snapshot.evolution.staleRuntimeCount}`);
+console.log(`- tenant rollout: ${snapshot.evolution.tenants.activeTenants} active / ${snapshot.evolution.tenants.blockedTenants} blocked`);
+console.log(`- tenant scores: compatibility ${snapshot.evolution.tenants.averageCompatibilityScore} / readiness ${snapshot.evolution.tenants.averageReadinessScore}`);
+console.log(`- canary: ${snapshot.evolution.canary.lifecycle} (${snapshot.evolution.canary.healthScore})`);
+console.log(`- guardrails: ${snapshot.evolution.guardrails.blockedRules} blocked / ${snapshot.evolution.guardrails.warningRules} warning`);
+console.log(`- simulations: ${snapshot.simulations.map((simulation) => `${simulation.kind}:${simulation.readiness}`).join(", ") || "none"}`);
 
 if (snapshot.warnings.length > 0) {
   console.log("- warnings:");

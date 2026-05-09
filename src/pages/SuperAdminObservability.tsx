@@ -96,6 +96,8 @@ const SuperAdminObservability = () => {
   const runtime = analyticsQuery.data?.runtimeVisibility;
   const queueSummary = jobsQuery.data?.data.summary;
   const releaseGovernance = platformQuery.data?.releaseGovernance;
+  const evolution = releaseGovernance?.evolution;
+  const releaseSimulations = releaseGovernance?.simulations ?? [];
 
   const handleRefresh = async () => {
     await Promise.all([
@@ -444,7 +446,7 @@ const SuperAdminObservability = () => {
           </ControlPlaneCard>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_1.95fr]">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_1.05fr_1.9fr]">
           <ControlPlaneCard title="Release compatibility">
             <div className="space-y-3">
               {(releaseGovernance?.compatibility ?? []).map((entry) => (
@@ -458,6 +460,55 @@ const SuperAdminObservability = () => {
                   <p className="mt-2 text-xs text-muted-foreground">{entry.detail}</p>
                 </div>
               ))}
+            </div>
+          </ControlPlaneCard>
+
+          <ControlPlaneCard title="Evolution oversight">
+            <div className="space-y-3">
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-foreground">Canary</p>
+                  <Badge variant={toBadgeVariant(evolution?.canary.healthStatus ?? "warning")}>
+                    {evolution?.canary.lifecycle ?? "idle"}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Health {formatNumber(evolution?.canary.healthScore ?? 0)} • anomalies {formatNumber(evolution?.canary.anomalyCount ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-foreground">Stale runtimes</p>
+                  <Badge variant={(evolution?.staleRuntimeCount ?? 0) > 0 ? "destructive" : "outline"}>
+                    {formatNumber(evolution?.staleRuntimeCount ?? 0)}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Guardrails: {formatNumber(evolution?.guardrails.blockedRules ?? 0)} blocked • {formatNumber(evolution?.guardrails.warningRules ?? 0)} warning
+                </p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-foreground">Tenants</p>
+                  <Badge variant={toBadgeVariant(evolution?.tenants.healthStatus ?? "warning")}>
+                    {evolution?.tenants.healthStatus ?? "unknown"}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {formatNumber(evolution?.tenants.promotionReadyTenants ?? 0)} ready | compatibility {formatNumber(evolution?.tenants.averageCompatibilityScore ?? 0)} | readiness {formatNumber(evolution?.tenants.averageReadinessScore ?? 0)}
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {formatNumber(evolution?.tenants.activeTenants ?? 0)} active • {formatNumber(evolution?.tenants.blockedTenants ?? 0)} blocked • {formatNumber(evolution?.tenants.canaryTenants ?? 0)} canary
+                </p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">Forecasts</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {(evolution?.forecasting.forecasts ?? []).length === 0
+                    ? "No active evolution forecasts."
+                    : `${evolution?.forecasting.forecasts.length ?? 0} active forecasted risk signals.`}
+                </p>
+              </div>
             </div>
           </ControlPlaneCard>
 
@@ -483,6 +534,123 @@ const SuperAdminObservability = () => {
                   </div>
                 ))
               )}
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">Rollout chain</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {(releaseGovernance?.forensics.rolloutChain ?? []).join(" -> ") || "No rollout chain recorded."}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">Rollback chain</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {(releaseGovernance?.forensics.rollbackChain ?? []).join(" -> ") || "No rollback chain recorded."}
+                </p>
+              </div>
+            </div>
+          </ControlPlaneCard>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_1.2fr_1.75fr]">
+          <ControlPlaneCard title="Active releases">
+            <div className="space-y-3">
+              {(evolution?.activeReleases ?? []).slice(0, 6).map((track) => (
+                <div key={`${track.role}-${track.releaseId ?? "unknown"}`} className="rounded-lg border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{track.role.replaceAll("_", " ")}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {track.releaseId ?? "untracked"} • runtime {track.runtimeVersion ?? "n/a"} • schema {track.schemaVersion ?? "n/a"}
+                      </p>
+                    </div>
+                    <Badge variant={track.status === "incompatible" ? "destructive" : track.status === "warning" ? "secondary" : "outline"}>
+                      {track.status}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ControlPlaneCard>
+
+          <ControlPlaneCard title="Tenant rollout">
+            <div className="space-y-3">
+              {(evolution?.tenants.records ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No tenant rollout records are active.</p>
+              ) : (
+                (evolution?.tenants.records ?? []).slice(0, 6).map((tenant) => (
+                  <div key={tenant.tenantId} className="rounded-lg border border-border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{tenant.tenantLabel}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {tenant.stage.replaceAll("_", " ")} • {formatPercent(tenant.rolloutPercentage, 2)} • {tenant.releaseId ?? "pending"}
+                        </p>
+                      </div>
+                      <Badge variant={toBadgeVariant(tenant.healthStatus)}>{tenant.healthStatus}</Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {tenant.progressionStatus.replaceAll("_", " ")} | compatibility {formatNumber(tenant.compatibilityScore)} | readiness {formatNumber(tenant.readinessScore)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Migration {tenant.migrationReadiness} | rollback {tenant.rollbackIsolated ? "isolated" : "shared"}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </ControlPlaneCard>
+
+          <ControlPlaneCard title="Forecasts and conflicts">
+            <div className="space-y-3">
+              {(evolution?.forecasting.forecasts ?? []).slice(0, 4).map((forecast) => (
+                <div key={forecast.id} className="rounded-lg border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{forecast.title}</p>
+                      <p className="text-xs text-muted-foreground">{forecast.summary}</p>
+                    </div>
+                    <Badge variant={forecast.severity === "critical" ? "destructive" : forecast.severity === "high" ? "secondary" : "outline"}>
+                      {forecast.severity}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+              {releaseSimulations.slice(0, 3).map((simulation) => (
+                <div key={simulation.id} className="rounded-lg border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{simulation.title}</p>
+                      <p className="text-xs text-muted-foreground">{simulation.summary}</p>
+                    </div>
+                    <Badge
+                      variant={toBadgeVariant(
+                        simulation.readiness === "blocked"
+                          ? "critical"
+                          : simulation.readiness === "caution"
+                            ? "warning"
+                            : "healthy",
+                      )}
+                    >
+                      {simulation.readiness}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Safety {formatNumber(simulation.safetyScore)} | rollback {formatNumber(simulation.rollbackViabilityScore)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{simulation.blastRadius.summary}</p>
+                </div>
+              ))}
+              {(releaseGovernance?.forensics.migrationConflicts ?? []).slice(0, 2).map((conflict) => (
+                <div key={conflict} className="rounded-lg border border-border p-3">
+                  <p className="text-sm font-medium text-foreground">Migration conflict</p>
+                  <p className="mt-2 text-xs text-muted-foreground">{conflict}</p>
+                </div>
+              ))}
+              {(releaseGovernance?.forensics.staleRuntimeConflicts ?? []).slice(0, 2).map((conflict) => (
+                <div key={conflict} className="rounded-lg border border-border p-3">
+                  <p className="text-sm font-medium text-foreground">Stale runtime conflict</p>
+                  <p className="mt-2 text-xs text-muted-foreground">{conflict}</p>
+                </div>
+              ))}
             </div>
           </ControlPlaneCard>
         </div>

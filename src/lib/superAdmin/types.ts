@@ -833,6 +833,59 @@ export type AdminReleasePhase =
 
 export type AdminReleaseChannel = "development" | "staging" | "production";
 
+export type AdminReleaseEvolutionRole =
+  | "current"
+  | "canary"
+  | "rollback"
+  | "migration_in_progress"
+  | "stale_runtime";
+
+export type AdminTenantEvolutionStage =
+  | "pending"
+  | "canary"
+  | "phased"
+  | "stable"
+  | "rolling_back"
+  | "blocked";
+
+export type AdminTenantEvolutionReadiness = "blocked" | "caution" | "ready";
+
+export type AdminTenantEvolutionProgressStatus =
+  | "blocked"
+  | "holding"
+  | "progressing"
+  | "ready_for_promotion";
+
+export type AdminReleaseCanaryLifecycle =
+  | "idle"
+  | "warming"
+  | "observing"
+  | "progressing"
+  | "holding"
+  | "rollback_recommended"
+  | "rolled_back";
+
+export type AdminReleaseForecastType =
+  | "compatibility_drift"
+  | "migration_risk"
+  | "rollout_bottleneck"
+  | "dependency_mismatch"
+  | "stale_runtime_risk"
+  | "queue_runtime_incompatibility";
+
+export type AdminReleaseSimulationKind =
+  | "deployment"
+  | "rollback"
+  | "migration"
+  | "tenant_rollout";
+
+export type AdminReleaseSafetyRuleKey =
+  | "unsafe_rollout_progression"
+  | "incompatible_migration"
+  | "stale_runtime_activation"
+  | "unsafe_rollback"
+  | "schema_runtime_mismatch";
+
 export type AdminFeatureFlagRolloutGovernance = {
   canaryPercentage: number;
   emergencyRollbackReady: boolean;
@@ -1051,6 +1104,19 @@ export type AdminReleaseHealthScore = {
   summary: string;
 };
 
+export type AdminReleaseVersionRange = {
+  maximumVersion: string | null;
+  minimumVersion: string | null;
+  targetVersion: string | null;
+};
+
+export type AdminReleaseCompatibilityWindow = {
+  maximumRuntimeVersion: string | null;
+  maximumSchemaVersion: string | null;
+  minimumRuntimeVersion: string | null;
+  minimumSchemaVersion: string | null;
+};
+
 export type AdminReleaseLineage = {
   channel: AdminReleaseChannel;
   commitSha: string | null;
@@ -1101,13 +1167,17 @@ export type AdminReleaseRollbackSafety = {
 };
 
 export type AdminReleaseDeploymentOrchestration = {
+  capabilityNegotiationWarnings: string[];
   degradedModeActive: boolean;
+  dependencySequencing: string[];
   maintenanceReady: boolean;
   maintenanceRequired: boolean;
+  migrationAwareRolloutReady: boolean;
   partialRollbackActive: boolean;
   phase: AdminReleasePhase;
   queueDrainReady: boolean;
   queueDrainRequired: boolean;
+  runtimeActivationOrder: string[];
   rolloutPaused: boolean;
   steps: string[];
 };
@@ -1123,6 +1193,11 @@ export type AdminReleaseForensicsEvent = {
 
 export type AdminReleaseGovernancePolicy = {
   appliedSchemaVersion?: string | null;
+  canary?: {
+    anomalyThreshold?: number | null;
+    longLived?: boolean | null;
+    progressiveThresholds?: number[] | null;
+  } | null;
   channel?: AdminReleaseChannel | null;
   compatibility?: Partial<
     Record<
@@ -1142,6 +1217,14 @@ export type AdminReleaseGovernancePolicy = {
     >
   >;
   completedAt?: string | null;
+  dependencies?: Array<{
+    currentVersion?: string | null;
+    maximumVersion?: string | null;
+    minimumVersion?: string | null;
+    name: string;
+    requiredCapabilities?: string[] | null;
+    targetVersion?: string | null;
+  }> | null;
   migration?: {
     maintenanceRequired?: boolean | null;
     queueDrainRequired?: boolean | null;
@@ -1152,22 +1235,205 @@ export type AdminReleaseGovernancePolicy = {
   phase?: AdminReleasePhase | null;
   previousReleaseId?: string | null;
   releaseId?: string | null;
+  releases?: Array<{
+    compatibilityWindow?: {
+      maximumRuntimeVersion?: string | null;
+      maximumSchemaVersion?: string | null;
+      minimumRuntimeVersion?: string | null;
+      minimumSchemaVersion?: string | null;
+    } | null;
+    healthStatus?: AdminReleaseHealthStatus | null;
+    interoperableWith?: string[] | null;
+    phase?: AdminReleasePhase | null;
+    releaseId?: string | null;
+    role?: AdminReleaseEvolutionRole | null;
+    runtimeTargets?: string[] | null;
+    runtimeVersion?: string | null;
+    schemaVersion?: string | null;
+    startedAt?: string | null;
+    supportedRange?: {
+      maximumVersion?: string | null;
+      minimumVersion?: string | null;
+      targetVersion?: string | null;
+    } | null;
+  }> | null;
   rollback?: {
     safeDegradationRequired?: boolean | null;
     targetReleaseId?: string | null;
   } | null;
   rollout?: {
+    regionalSequence?: string[] | null;
     paused?: boolean | null;
   } | null;
+  runtime?: {
+    activationOrder?: string[] | null;
+    capabilities?: Record<string, string[] | null> | null;
+    requirements?: Record<string, string[] | null> | null;
+    staleRuntimeReleaseIds?: string[] | null;
+  } | null;
   startedAt?: string | null;
+  tenants?: Array<{
+    canary?: boolean | null;
+    canaryGroup?: string | null;
+    healthStatus?: AdminReleaseHealthStatus | null;
+    issues?: string[] | null;
+    region?: string | null;
+    releaseId?: string | null;
+    rollbackIsolated?: boolean | null;
+    rollbackReleaseId?: string | null;
+    rolloutPercentage?: number | null;
+    stage?: AdminTenantEvolutionStage | null;
+    tenantId?: string | null;
+    tenantLabel?: string | null;
+  }> | null;
+};
+
+export type AdminReleaseEvolutionTrack = {
+  compatibilityWindow: AdminReleaseCompatibilityWindow;
+  healthStatus: AdminReleaseHealthStatus;
+  interoperabilityReleaseIds: string[];
+  issues: string[];
+  phase: AdminReleasePhase;
+  releaseId: string | null;
+  rollbackReady: boolean;
+  role: AdminReleaseEvolutionRole;
+  runtimeTargets: string[];
+  runtimeVersion: string | null;
+  schemaVersion: string | null;
+  stableRuntime: boolean;
+  startedAt: string | null;
+  status: AdminReleaseCompatibilityStatus;
+  summary: string;
+  supportedRange: AdminReleaseVersionRange;
+};
+
+export type AdminTenantEvolutionRecord = {
+  auditLineage: string[];
+  compatibilityScore: number;
+  canary: boolean;
+  canaryGroup: string | null;
+  compatibilityStatus: AdminReleaseCompatibilityStatus;
+  healthStatus: AdminReleaseHealthStatus;
+  issues: string[];
+  lastActivityAt: string | null;
+  migrationReadiness: AdminTenantEvolutionReadiness;
+  migrationReadinessReasons: string[];
+  progressionStatus: AdminTenantEvolutionProgressStatus;
+  region: string | null;
+  readinessScore: number;
+  releaseId: string | null;
+  rollbackIsolated: boolean;
+  rollbackReleaseId: string | null;
+  rolloutPercentage: number;
+  stage: AdminTenantEvolutionStage;
+  summary: string;
+  tenantId: string;
+  tenantLabel: string;
+};
+
+export type AdminTenantEvolutionGovernance = {
+  activeTenants: number;
+  averageCompatibilityScore: number;
+  averageReadinessScore: number;
+  blockedTenants: number;
+  canaryTenants: number;
+  healthStatus: AdminReleaseHealthStatus;
+  issues: string[];
+  phasedTenants: number;
+  promotionReadyTenants: number;
+  records: AdminTenantEvolutionRecord[];
+  regionalSequence: string[];
+};
+
+export type AdminReleaseEvolutionForecast = {
+  confidencePercent: number;
+  evidence: string[];
+  id: string;
+  recommendedActions: string[];
+  severity: "critical" | "high" | "low" | "medium";
+  summary: string;
+  title: string;
+  type: AdminReleaseForecastType;
+};
+
+export type AdminReleaseEvolutionForecasting = {
+  forecasts: AdminReleaseEvolutionForecast[];
+  healthStatus: AdminReleaseHealthStatus;
+};
+
+export type AdminReleaseCanaryGovernance = {
+  active: boolean;
+  anomalyCount: number;
+  canaryFlags: number;
+  canaryTenants: number;
+  healthScore: number;
+  healthStatus: AdminReleaseHealthStatus;
+  issues: string[];
+  lifecycle: AdminReleaseCanaryLifecycle;
+  progressiveThresholds: number[];
+  releaseId: string | null;
+  rollbackRecommended: boolean;
+  summary: string;
+};
+
+export type AdminReleaseSafetyRule = {
+  detail: string;
+  key: AdminReleaseSafetyRuleKey;
+  severity: "critical" | "warning";
+  status: "block" | "pass" | "warn";
+  summary: string;
+};
+
+export type AdminReleaseSafetyGuardrails = {
+  blockedRules: number;
+  rules: AdminReleaseSafetyRule[];
+  warningRules: number;
+};
+
+export type AdminReleaseBlastRadiusEstimate = {
+  impactedReleases: number;
+  impactedRuntimes: number;
+  impactedTenants: number;
+  scope: "platform" | "regional" | "runtime" | "tenant";
+  summary: string;
+};
+
+export type AdminReleaseSimulation = {
+  blastRadius: AdminReleaseBlastRadiusEstimate;
+  dryRunSupported: boolean;
+  guardrails: string[];
+  id: string;
+  kind: AdminReleaseSimulationKind;
+  readiness: "blocked" | "caution" | "ready";
+  recommendedActions: string[];
+  rollbackViabilityScore: number;
+  safetyScore: number;
+  summary: string;
+  title: string;
+};
+
+export type AdminReleaseEvolutionGovernance = {
+  activeReleases: AdminReleaseEvolutionTrack[];
+  canary: AdminReleaseCanaryGovernance;
+  forecasting: AdminReleaseEvolutionForecasting;
+  guardrails: AdminReleaseSafetyGuardrails;
+  healthStatus: AdminReleaseHealthStatus;
+  staleRuntimeCount: number;
+  tenants: AdminTenantEvolutionGovernance;
 };
 
 export type AdminReleaseGovernanceSnapshot = {
   compatibility: AdminReleaseCompatibilityMatrixEntry[];
+  evolution: AdminReleaseEvolutionGovernance;
   forensics: {
+    compatibilityRegressions: string[];
     events: AdminReleaseForensicsEvent[];
     incidentCount: number;
+    migrationConflicts: string[];
+    releaseIncidentKeys: string[];
     rollbackChain: string[];
+    rolloutChain: string[];
+    staleRuntimeConflicts: string[];
   };
   health: AdminReleaseHealthScore;
   lineage: AdminReleaseLineage;
@@ -1176,6 +1442,7 @@ export type AdminReleaseGovernanceSnapshot = {
   rollback: AdminReleaseRollbackSafety;
   rollouts: AdminReleaseRolloutGovernance;
   schema: AdminReleaseSchemaGovernance;
+  simulations: AdminReleaseSimulation[];
   warnings: string[];
 };
 

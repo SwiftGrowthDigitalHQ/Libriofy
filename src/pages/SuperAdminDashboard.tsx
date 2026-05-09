@@ -69,6 +69,8 @@ const SuperAdminDashboard = () => {
   const platform = platformQuery.data;
   const analytics = analyticsQuery.data;
   const releaseGovernance = platform?.releaseGovernance;
+  const evolution = releaseGovernance?.evolution;
+  const releaseSimulations = releaseGovernance?.simulations ?? [];
 
   const monthlyRevenueData = useMemo(
     () => buildMonthlyChartData(platform?.analytics.series ?? []),
@@ -206,6 +208,48 @@ const SuperAdminDashboard = () => {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Active releases</p>
+                <p className="mt-2 text-lg font-semibold text-foreground">
+                  {formatNumber(evolution?.activeReleases.length ?? 0)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Stale runtimes: {formatNumber(evolution?.staleRuntimeCount ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Tenant evolution</p>
+                <p className="mt-2 text-lg font-semibold text-foreground">
+                  {evolution?.tenants.healthStatus ?? "unknown"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatNumber(evolution?.tenants.promotionReadyTenants ?? 0)} ready for promotion | readiness {formatNumber(evolution?.tenants.averageReadinessScore ?? 0)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatNumber(evolution?.tenants.activeTenants ?? 0)} active • {formatNumber(evolution?.tenants.blockedTenants ?? 0)} blocked
+                </p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Canary lifecycle</p>
+                <p className="mt-2 text-lg font-semibold text-foreground">
+                  {evolution?.canary.lifecycle ?? "idle"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Health {formatNumber(evolution?.canary.healthScore ?? 0)} • anomalies {formatNumber(evolution?.canary.anomalyCount ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Guardrails</p>
+                <p className="mt-2 text-lg font-semibold text-foreground">
+                  {formatNumber(evolution?.guardrails.blockedRules ?? 0)} blocked
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatNumber(evolution?.guardrails.warningRules ?? 0)} warning rules
+                </p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_1.9fr]">
               <div className="rounded-lg border border-border p-3">
                 <p className="text-sm font-medium text-foreground">Compatibility matrix</p>
@@ -236,6 +280,112 @@ const SuperAdminDashboard = () => {
                       </div>
                     ))
                   )}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.05fr_1.2fr_1.75fr]">
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">Active release tracks</p>
+                <div className="mt-3 space-y-2">
+                  {(evolution?.activeReleases ?? []).slice(0, 5).map((track) => (
+                    <div key={`${track.role}-${track.releaseId ?? "unknown"}`} className="rounded-lg border border-border bg-muted/20 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">{track.role.replaceAll("_", " ")}</p>
+                        <Badge variant={track.status === "incompatible" ? "destructive" : track.status === "warning" ? "secondary" : "outline"}>
+                          {track.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {track.releaseId ?? "untracked"} • runtime {track.runtimeVersion ?? "n/a"} • schema {track.schemaVersion ?? "n/a"}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">{track.summary}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">Tenant rollout</p>
+                <div className="mt-3 space-y-2">
+                  {(evolution?.tenants.records ?? []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No tenant-scoped evolution is active.</p>
+                  ) : (
+                    (evolution?.tenants.records ?? []).slice(0, 5).map((tenant) => (
+                      <div key={tenant.tenantId} className="rounded-lg border border-border bg-muted/20 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground">{tenant.tenantLabel}</p>
+                          <Badge variant={toBadgeVariant(tenant.healthStatus)}>{tenant.healthStatus}</Badge>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {tenant.stage.replaceAll("_", " ")} • {formatPercent(tenant.rolloutPercentage, 2)} • {tenant.releaseId ?? "pending"}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {tenant.region ?? "No region"} • rollback {tenant.rollbackIsolated ? "isolated" : "shared"}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {tenant.progressionStatus.replaceAll("_", " ")} | compatibility {formatNumber(tenant.compatibilityScore)} | readiness {formatNumber(tenant.readinessScore)}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Migration {tenant.migrationReadiness} | {tenant.auditLineage.join(" -> ")}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">Forecasts and guardrails</p>
+                <div className="mt-3 space-y-2">
+                  {(evolution?.forecasting.forecasts ?? []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No forecasted evolution risks are active.</p>
+                  ) : (
+                    (evolution?.forecasting.forecasts ?? []).slice(0, 4).map((forecast) => (
+                      <div key={forecast.id} className="rounded-lg border border-border bg-muted/20 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground">{forecast.title}</p>
+                          <Badge variant={forecast.severity === "critical" ? "destructive" : forecast.severity === "high" ? "secondary" : "outline"}>
+                            {forecast.severity}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">{forecast.summary}</p>
+                      </div>
+                    ))
+                  )}
+                  {(evolution?.guardrails.rules ?? []).slice(0, 3).map((rule) => (
+                    <div key={rule.key} className="rounded-lg border border-border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">{rule.summary}</p>
+                        <Badge variant={rule.status === "block" ? "destructive" : rule.status === "warn" ? "secondary" : "outline"}>
+                          {rule.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">{rule.detail}</p>
+                    </div>
+                  ))}
+                  {releaseSimulations.slice(0, 3).map((simulation) => (
+                    <div key={simulation.id} className="rounded-lg border border-border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">{simulation.title}</p>
+                        <Badge
+                          variant={toBadgeVariant(
+                            simulation.readiness === "blocked"
+                              ? "critical"
+                              : simulation.readiness === "caution"
+                                ? "warning"
+                                : "healthy",
+                          )}
+                        >
+                          {simulation.readiness}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Safety {formatNumber(simulation.safetyScore)} | rollback {formatNumber(simulation.rollbackViabilityScore)}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">{simulation.blastRadius.summary}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

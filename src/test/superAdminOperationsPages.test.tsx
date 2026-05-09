@@ -759,7 +759,127 @@ describe("super admin operations pages", () => {
               status: "compatible",
             },
           ],
+          evolution: {
+            activeReleases: [
+              {
+                compatibilityWindow: {
+                  maximumRuntimeVersion: null,
+                  maximumSchemaVersion: null,
+                  minimumRuntimeVersion: "release-2026-05-09",
+                  minimumSchemaVersion: "20260507143000",
+                },
+                healthStatus: "healthy",
+                interoperabilityReleaseIds: ["release-2026-05-08"],
+                issues: [],
+                phase: "rolling",
+                releaseId: "release-2026-05-09",
+                rollbackReady: true,
+                role: "current",
+                runtimeTargets: ["api", "queue_worker"],
+                runtimeVersion: "release-2026-05-09",
+                schemaVersion: "20260508120000",
+                stableRuntime: true,
+                startedAt: "2026-05-07T10:00:00.000Z",
+                status: "compatible",
+                summary: "current track is operating inside the declared compatibility window.",
+                supportedRange: {
+                  maximumVersion: "release-2026-05-09",
+                  minimumVersion: "release-2026-05-08",
+                  targetVersion: "release-2026-05-09",
+                },
+              },
+            ],
+            canary: {
+              active: true,
+              anomalyCount: 0,
+              canaryFlags: 1,
+              canaryTenants: 1,
+              healthScore: 92,
+              healthStatus: "healthy",
+              issues: [],
+              lifecycle: "progressing",
+              progressiveThresholds: [10, 25, 50, 100],
+              releaseId: "release-2026-05-09",
+              rollbackRecommended: false,
+              summary: "Canary is operating inside the configured progression thresholds.",
+            },
+            forecasting: {
+              forecasts: [
+                {
+                  confidencePercent: 71,
+                  evidence: ["queue_lag_ms=2600"],
+                  id: "rollout-bottleneck",
+                  recommendedActions: ["Resolve queue pressure before advancing rollout."],
+                  severity: "medium",
+                  summary: "Rollout progression is likely to bottleneck on queue pressure or paused stages.",
+                  title: "Rollout bottleneck",
+                  type: "rollout_bottleneck",
+                },
+              ],
+              healthStatus: "warning",
+            },
+            guardrails: {
+              blockedRules: 0,
+              rules: [
+                {
+                  detail: "Rollout progression prerequisites are satisfied.",
+                  key: "unsafe_rollout_progression",
+                  severity: "critical",
+                  status: "pass",
+                  summary: "Block unsafe rollout progression",
+                },
+                {
+                  detail: "Schema/runtime compatibility is aligned for active contracts.",
+                  key: "schema_runtime_mismatch",
+                  severity: "critical",
+                  status: "warn",
+                  summary: "Block schema/runtime mismatch",
+                },
+              ],
+              warningRules: 1,
+            },
+            healthStatus: "warning",
+            staleRuntimeCount: 0,
+            tenants: {
+              activeTenants: 1,
+              averageCompatibilityScore: 96,
+              averageReadinessScore: 94,
+              blockedTenants: 0,
+              canaryTenants: 1,
+              healthStatus: "warning",
+              issues: ["Tenant sequencing is still being monitored."],
+              phasedTenants: 1,
+              promotionReadyTenants: 1,
+              records: [
+                {
+                  auditLineage: ["tenant:tenant-1", "release:release-2026-05-09", "progression:ready_for_promotion"],
+                  canary: true,
+                  canaryGroup: "north",
+                  compatibilityScore: 96,
+                  compatibilityStatus: "compatible",
+                  healthStatus: "healthy",
+                  issues: [],
+                  lastActivityAt: "2026-05-07T09:55:00.000Z",
+                  migrationReadiness: "ready",
+                  migrationReadinessReasons: [],
+                  progressionStatus: "ready_for_promotion",
+                  region: "Bihar",
+                  readinessScore: 94,
+                  releaseId: "release-2026-05-09",
+                  rollbackIsolated: true,
+                  rollbackReleaseId: "release-2026-05-08",
+                  rolloutPercentage: 25,
+                  stage: "canary",
+                  summary: "Tenant One is ready for promotion in canary evolution for release-2026-05-09.",
+                  tenantId: "tenant-1",
+                  tenantLabel: "Tenant One",
+                },
+              ],
+              regionalSequence: ["Bihar"],
+            },
+          },
           forensics: {
+            compatibilityRegressions: [],
             events: [
               {
                 detail: "Fingerprint rel-1.",
@@ -771,7 +891,11 @@ describe("super admin operations pages", () => {
               },
             ],
             incidentCount: 0,
+            migrationConflicts: [],
+            releaseIncidentKeys: [],
             rollbackChain: ["release-2026-05-09", "release-2026-05-08"],
+            rolloutChain: ["release-2026-05-08", "release-2026-05-09"],
+            staleRuntimeConflicts: [],
           },
           health: {
             drivers: [],
@@ -841,6 +965,46 @@ describe("super admin operations pages", () => {
             strategy: "expand_contract",
             targetVersion: "20260508120000",
           },
+          simulations: [
+            {
+              blastRadius: {
+                impactedReleases: 1,
+                impactedRuntimes: 2,
+                impactedTenants: 1,
+                scope: "tenant",
+                summary: "1 tenant(s) | 2 runtime(s) | 1 release track(s)",
+              },
+              dryRunSupported: true,
+              guardrails: ["Monitor rollout thresholds."],
+              id: "simulation:deployment",
+              kind: "deployment",
+              readiness: "ready",
+              recommendedActions: ["Promote the next canary wave."],
+              rollbackViabilityScore: 90,
+              safetyScore: 92,
+              summary: "Deployment dry-run is inside the current compatibility and rollout windows.",
+              title: "Deployment simulation",
+            },
+            {
+              blastRadius: {
+                impactedReleases: 1,
+                impactedRuntimes: 2,
+                impactedTenants: 1,
+                scope: "tenant",
+                summary: "1 tenant(s) | 2 runtime(s) | 1 release track(s)",
+              },
+              dryRunSupported: true,
+              guardrails: ["Tenant rollout sequencing is active."],
+              id: "simulation:tenant_rollout",
+              kind: "tenant_rollout",
+              readiness: "caution",
+              recommendedActions: ["Promote the next tenant-scoped rollout."],
+              rollbackViabilityScore: 88,
+              safetyScore: 86,
+              summary: "Tenant rollout dry-run can promote the next wave without crossing declared safety gates.",
+              title: "Tenant rollout simulation",
+            },
+          ],
           warnings: [],
         },
         security: {
@@ -908,6 +1072,7 @@ describe("super admin operations pages", () => {
 
     expect(screen.getByText("Queue lag")).toBeInTheDocument();
     expect(screen.getByText("2,600 ms")).toBeInTheDocument();
+    expect(screen.getByText("Tenant rollout simulation")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Drill down" }));
 
@@ -925,6 +1090,8 @@ describe("super admin operations pages", () => {
     expect(screen.getByText("release-2026-05-09")).toBeInTheDocument();
     expect(screen.getByText("Schema readiness")).toBeInTheDocument();
     expect(screen.getByText("Rollback")).toBeInTheDocument();
+    expect(screen.getByText("Deployment simulation")).toBeInTheDocument();
+    expect(screen.getAllByText(/ready for promotion/i).length).toBeGreaterThan(0);
   });
 
   it("renders operational intelligence, routing, and simulation guidance in analytics", () => {
