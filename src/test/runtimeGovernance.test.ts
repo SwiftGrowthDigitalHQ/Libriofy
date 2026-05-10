@@ -10,6 +10,11 @@ vi.mock("@/lib/observability/databaseHealth.server", () => ({
   getCriticalDatabaseHealth: vi.fn(),
 }));
 
+vi.mock("@/lib/authRuntimeIntegrity.server", () => ({
+  getAuthRuntimeIntegrity: vi.fn(),
+}));
+
+import { getAuthRuntimeIntegrity } from "@/lib/authRuntimeIntegrity.server";
 import { readSafeMaintenanceStatus } from "@/lib/maintenanceRuntime.server";
 import { getCriticalDatabaseHealth } from "@/lib/observability/databaseHealth.server";
 import {
@@ -19,6 +24,7 @@ import {
 
 const mockedReadSafeMaintenanceStatus = vi.mocked(readSafeMaintenanceStatus);
 const mockedGetCriticalDatabaseHealth = vi.mocked(getCriticalDatabaseHealth);
+const mockedGetAuthRuntimeIntegrity = vi.mocked(getAuthRuntimeIntegrity);
 
 const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
   APP_ENV: "production",
@@ -62,6 +68,19 @@ describe("runtime governance", () => {
       updatedAt: "2026-05-09T00:00:00.000Z",
     });
     mockedGetCriticalDatabaseHealth.mockResolvedValue(healthyDatabase);
+    mockedGetAuthRuntimeIntegrity.mockResolvedValue({
+      checkedAt: "2026-05-09T00:00:00.000Z",
+      checks: [],
+      deploymentId: "deployment-1",
+      deploymentVersion: "release-2026-05-09",
+      detail: "Auth runtime integrity verified.",
+      durationMs: 10,
+      environmentSource: "vercel:production",
+      failedCodes: [],
+      flow: "startup",
+      primaryCode: null,
+      status: "ok",
+    });
   });
 
   it("keeps core runtime requirements consistent between express and serverless targets", () => {

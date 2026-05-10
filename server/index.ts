@@ -24,6 +24,7 @@ import { buildRuntimeLivenessReport, buildServerReadiness } from "../src/lib/obs
 import { captureServerError, initializeServerMonitoring } from "../src/lib/observability/serverMonitoring.js";
 import { isDatabaseCriticalError } from "../src/lib/observability/store.server.js";
 import { assertServerStartupEnv } from "../src/lib/observability/startupValidation.js";
+import { assertAuthSchemaIntegrity } from "../src/lib/authRuntimeIntegrity.server.js";
 import { ensureOtpAuthWorkerStarted, resolveSuperAdminSessionRequest } from "../src/lib/otpAuth.server.js";
 import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
 import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
@@ -44,6 +45,9 @@ const port = Number(process.env.PORT || 3001);
 const serverStartedAt = Date.now();
 
 assertServerStartupEnv(process.env);
+await assertAuthSchemaIntegrity(process.env, {
+  flow: "startup",
+});
 
 const app = express();
 initializeServerMonitoring(process.env);

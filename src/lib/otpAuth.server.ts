@@ -52,7 +52,11 @@ import {
   resolveLibriofyAppUrl,
   resolveLibriofyEmailFrom,
 } from "./libriofyConfig.js";
-import { getAuthRuntimeHealth } from "./observability/databaseHealth.server.js";
+import {
+  buildAuthIntegrityFailureResponse,
+  getAuthRuntimeIntegrity,
+  type AuthIntegrityFlow,
+} from "./authRuntimeIntegrity.server.js";
 import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.server.js";
 import { logEvent } from "./observability/eventLogger.server.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
@@ -87,7 +91,9 @@ type RequestContext = {
 
 type ErrorResponseBody = {
   code?: string;
+  detail?: string;
   error: string;
+  failureCategory?: string | null;
   message: string;
   remainingAttempts?: number;
   requestId?: string;
@@ -365,6 +371,15 @@ const isNonProductionAuthEnv = (env: EnvLike) => {
 const toSafeErrorMessage = (error: unknown) =>
   trimText(error instanceof Error ? error.message : String(error)) || "Unexpected error";
 
+const toSafeErrorStack = (error: unknown) => {
+  const stack = trimText(error instanceof Error ? error.stack : "");
+  if (!stack) {
+    return null;
+  }
+
+  return stack.split("\n").slice(0, 12).join("\n");
+};
+
 const normalizeOriginForLog = (value: string) => {
   const normalized = trimText(value);
   if (!normalized) {
@@ -398,6 +413,23 @@ const runAuthObservabilitySafely = (operation: () => Promise<unknown> | unknown)
   }
 };
 
+const buildAuthRuntimeMetadata = () => {
+  const traceContext = getRequestTraceContext();
+
+  return {
+    app_env: readEnv(process.env, "APP_ENV", "NODE_ENV") || null,
+    correlation_id: traceContext?.correlationId ?? null,
+    deployment_id: readEnv(process.env, "VERCEL_DEPLOYMENT_ID", "RAILWAY_DEPLOYMENT_ID", "RENDER_GIT_COMMIT") || null,
+    deployment_version: readEnv(process.env, "SENTRY_RELEASE", "RELEASE_SHA", "VERCEL_GIT_COMMIT_SHA") || null,
+    environment_source: readEnv(process.env, "VERCEL_ENV")
+      ? `vercel:${readEnv(process.env, "VERCEL_ENV")}`
+      : `process_env:${readEnv(process.env, "APP_ENV", "NODE_ENV") || "unknown"}`,
+    request_id: traceContext?.requestId ?? null,
+    route: traceContext?.route ?? null,
+    trace_id: traceContext?.traceId ?? null,
+  };
+};
+
 const logAuthWarning = (
   type: string,
   message: string,
@@ -426,6 +458,7 @@ const logAuthWarning = (
       message,
       metadata: {
         area: "auth",
+        ...buildAuthRuntimeMetadata(),
         ...metadata,
       },
     }),
@@ -460,6 +493,7 @@ const logAuthError = (
       message,
       metadata: {
         area: "auth",
+        ...buildAuthRuntimeMetadata(),
         ...metadata,
       },
     }),
@@ -477,6 +511,7 @@ const logAuthInfo = (type: string, message: string, metadata: Record<string, unk
       message,
       metadata: {
         area: "auth",
+        ...buildAuthRuntimeMetadata(),
         ...metadata,
       },
     }),
@@ -509,6 +544,7 @@ const logAuthLifecycleEvent = ({
       user: email ? maskEmailAddress(email) : null,
       metadata: {
         area: "auth",
+        ...buildAuthRuntimeMetadata(),
         device: buildLoginDeviceLabel(context),
         flow: "super_admin",
         ip: trimText(context.ip) || null,
@@ -618,10 +654,11 @@ const getRedisConnection = (env: EnvLike) => {
 
   client.on("error", (error) => {
     logAuthWarning(
-      "AUTH_REDIS_CONNECTION_ERROR",
+      "AUTH_REDIS_CONNECTION_FAILURE",
       "Redis connection reported an auth infrastructure error.",
       {
         error_message: toSafeErrorMessage(error),
+        error_stack: toSafeErrorStack(error),
       },
       {
         dedupeKey: `auth-redis:${redisUrl}`,
@@ -748,7 +785,7 @@ const logSuperAdminRuntimeIssues = (
   email?: string | null,
 ) => {
   logAuthError(
-    "SUPER_ADMIN_RUNTIME_CONFIG_INCOMPLETE",
+    "AUTH_RUNTIME_CONFIG_FAILURE",
     "Super admin auth runtime configuration is incomplete.",
     {
       device: buildLoginDeviceLabel(context),
@@ -774,6 +811,48 @@ const buildRuntimeIssueResponse = (issues: AuthConfigIssue[]): ServiceResponse<n
   }
 
   return buildError(503, primaryIssue.message, primaryIssue.code);
+};
+
+const buildAuthIntegrityFlowResponse = async <T>(
+  env: EnvLike,
+  flow: AuthIntegrityFlow,
+  context: RequestContext,
+  email?: string | null,
+): Promise<ServiceResponse<T> | null> => {
+  const report = await getAuthRuntimeIntegrity(env, {
+    flow,
+  });
+
+  if (report.status === "ok") {
+    return null;
+  }
+
+  logAuthError(
+    report.primaryCode ?? "AUTH_RUNTIME_CONFIG_FAILURE",
+    "Auth runtime integrity validation blocked the request.",
+    {
+      detail: report.detail,
+      device: buildLoginDeviceLabel(context),
+      duration_ms: report.durationMs,
+      email: email ? maskEmailAddress(email) : null,
+      failed_codes: report.failedCodes,
+      flow,
+      integrity_checks: report.checks.map((check) => ({
+        code: check.code,
+        detail: check.detail,
+        name: check.name,
+        requirement: check.requirement,
+        status: check.status,
+      })),
+      ip: trimText(context.ip) || null,
+    },
+    {
+      dedupeKey: `auth-integrity:${flow}:${report.primaryCode ?? "unknown"}`,
+      user: email ? maskEmailAddress(email) : null,
+    },
+  );
+
+  return buildAuthIntegrityFailureResponse(report, flow) as ServiceResponse<T>;
 };
 
 const buildSuperAdminAuthRuntimePreflightResponse = <T>({
@@ -886,9 +965,17 @@ const buildAuthSessionStoreFailureResponse = <T>({
   const failure = classifyAuthSessionStoreFailure(error);
   const isRefreshFlow = stage.startsWith("refresh_");
   const user = email ? maskEmailAddress(email) : null;
+  const failureType =
+    stage === "verify_issue_session"
+      ? "AUTH_TRUSTED_DEVICE_FAILURE"
+      : isRefreshFlow
+        ? "AUTH_REFRESH_FAILURE"
+        : failure.kind === "schema_drift"
+          ? "AUTH_SCHEMA_INTEGRITY_FAILURE"
+          : "AUTH_SESSION_STORE_FAILURE";
 
   logAuthError(
-    failure.kind === "schema_drift" ? "AUTH_SESSION_STORE_SCHEMA_MISMATCH" : "AUTH_SESSION_STORE_FAILURE",
+    failureType,
     "Authentication session storage failed.",
     {
       device: buildLoginDeviceLabel(context),
@@ -896,6 +983,8 @@ const buildAuthSessionStoreFailureResponse = <T>({
       error_code: failure.serviceCode,
       error_kind: failure.kind,
       error_message: toSafeErrorMessage(error),
+      error_stack: toSafeErrorStack(error),
+      failure_category: failureType,
       ip: trimText(context.ip) || null,
       remediation:
         failure.kind === "schema_drift"
@@ -2079,14 +2168,14 @@ export const resolveSuperAdminLoginRequest = async (
     return buildError(400, "Enter your approved Super Admin email to continue.", "INVALID_REQUEST");
   }
 
-  const authRuntimeHealth = await getAuthRuntimeHealth(env);
-  if (authRuntimeHealth.status !== "ok") {
-    return buildSuperAdminAuthRuntimePreflightResponse({
-      context,
-      detail: authRuntimeHealth.detail,
-      email,
-      missingContracts: authRuntimeHealth.missing_contracts,
-    });
+  const integrityResponse = await buildAuthIntegrityFlowResponse<SuperAdminLoginResponse>(
+    env,
+    "super_admin_login",
+    context,
+    email,
+  );
+  if (integrityResponse) {
+    return integrityResponse;
   }
 
   const redis = getRedisConnection(env);
@@ -2178,7 +2267,37 @@ export const resolveSuperAdminLoginRequest = async (
       : buildError(403, "This email is not authorized for Super Admin access.", "ACCESS_DENIED");
   }
 
-  const user = await resolveSuperAdminEmailUser(env, email);
+  let user: Awaited<ReturnType<typeof resolveSuperAdminEmailUser>>;
+  try {
+    user = await resolveSuperAdminEmailUser(env, email);
+  } catch (error) {
+    logAuthError(
+      "AUTH_SUPABASE_INIT_FAILURE",
+      "Super admin email lookup failed.",
+      {
+        device: buildLoginDeviceLabel(context),
+        email: maskEmailAddress(email),
+        error_message: toSafeErrorMessage(error),
+        error_stack: toSafeErrorStack(error),
+        failure_category: "AUTH_SUPABASE_INIT_FAILURE",
+        ip: ip || null,
+        stage: "super_admin_email_lookup",
+      },
+      {
+        dedupeKey: "super-admin-email-lookup",
+        user: maskEmailAddress(email),
+      },
+    );
+    return buildError(
+      503,
+      "Super admin sign-in is temporarily unavailable. Please try again shortly.",
+      "AUTH_SESSION_STORE_UNAVAILABLE",
+      {
+        detail: toSafeErrorMessage(error),
+        failureCategory: "AUTH_SUPABASE_INIT_FAILURE",
+      },
+    );
+  }
   logSuperAdminDebug("super admin email lookup completed", {
     email: maskEmailAddress(email),
     matched: Boolean(user),
@@ -2245,11 +2364,12 @@ export const resolveSuperAdminLoginRequest = async (
   } catch (error) {
     await clearSuperAdminOtpRecord(redis, normalizedAccountEmail);
     logAuthError(
-      "SUPER_ADMIN_OTP_DELIVERY_FAILED",
+      "AUTH_RESEND_FAILURE",
       "Super admin email OTP delivery failed.",
       {
         email: maskEmailAddress(normalizedAccountEmail),
         error_message: toSafeErrorMessage(error),
+        error_stack: toSafeErrorStack(error),
         user_id: user.id,
       },
       {
@@ -2316,6 +2436,16 @@ export const resolveSuperAdminVerifyOtpRequest = async (
   if (runtimeIssues.length) {
     logSuperAdminRuntimeIssues("verify", runtimeIssues, context, email);
     return buildRuntimeIssueResponse(runtimeIssues);
+  }
+
+  const integrityResponse = await buildAuthIntegrityFlowResponse<SuperAdminVerifyOtpResponse>(
+    env,
+    "super_admin_verify",
+    context,
+    email,
+  );
+  if (integrityResponse) {
+    return integrityResponse;
   }
 
   logSuperAdminDebug("OTP verification request received", {
@@ -2501,7 +2631,38 @@ export const resolveSuperAdminVerifyOtpRequest = async (
   await clearSuperAdminOtpRecord(redis, otpRecord.email);
   await clearSuperAdminFailures(redis, otpRecord.email, ip);
 
-  const user = await loadAuthUserById(env, otpRecord.userId);
+  let user: Awaited<ReturnType<typeof loadAuthUserById>>;
+  try {
+    user = await loadAuthUserById(env, otpRecord.userId);
+  } catch (error) {
+    logAuthError(
+      "AUTH_SUPABASE_INIT_FAILURE",
+      "Super admin identity reload failed after OTP verification.",
+      {
+        device: buildLoginDeviceLabel(context),
+        email: maskEmailAddress(otpRecord.email),
+        error_message: toSafeErrorMessage(error),
+        error_stack: toSafeErrorStack(error),
+        failure_category: "AUTH_SUPABASE_INIT_FAILURE",
+        ip: trimText(context.ip) || null,
+        stage: "super_admin_post_otp_user_reload",
+        user_id: otpRecord.userId,
+      },
+      {
+        dedupeKey: "super-admin-post-otp-user-reload",
+        user: maskEmailAddress(otpRecord.email),
+      },
+    );
+    return buildError(
+      503,
+      "Super admin sign-in is temporarily unavailable. Please try again shortly.",
+      "AUTH_SESSION_STORE_UNAVAILABLE",
+      {
+        detail: toSafeErrorMessage(error),
+        failureCategory: "AUTH_SUPABASE_INIT_FAILURE",
+      },
+    );
+  }
   const hasSuperAdminRole = user.roles.includes("super_admin");
   logSuperAdminDebug("post-OTP role check completed", {
     email: maskEmailAddress(otpRecord.email),
@@ -3148,6 +3309,15 @@ export const resolveRefreshSessionRequest = async (
     return buildError(401, "Session expired. Please sign in again.", "SESSION_MISSING");
   }
 
+  const integrityResponse = await buildAuthIntegrityFlowResponse<RefreshSessionResponse>(
+    env,
+    "auth_refresh",
+    context,
+  );
+  if (integrityResponse) {
+    return integrityResponse;
+  }
+
   try {
     let trustedSession: Awaited<ReturnType<typeof getTrustedDeviceSession>>;
     try {
@@ -3192,7 +3362,35 @@ export const resolveRefreshSessionRequest = async (
       );
     }
 
-    const user = await loadAuthUserById(env, trustedSession.user_id);
+    let user: Awaited<ReturnType<typeof loadAuthUserById>>;
+    try {
+      user = await loadAuthUserById(env, trustedSession.user_id);
+    } catch (error) {
+      logAuthError(
+        "AUTH_SUPABASE_INIT_FAILURE",
+        "Session refresh could not reload the authenticated user.",
+        {
+          error_message: toSafeErrorMessage(error),
+          error_stack: toSafeErrorStack(error),
+          failure_category: "AUTH_SUPABASE_INIT_FAILURE",
+          ip: trimText(context.ip) || null,
+          stage: "refresh_reload_user",
+          user_id: trustedSession.user_id,
+        },
+        {
+          dedupeKey: "auth-refresh-reload-user",
+        },
+      );
+      return buildError(
+        503,
+        "Unable to refresh the session right now. Please sign in again.",
+        "AUTH_REFRESH_ERROR",
+        {
+          detail: toSafeErrorMessage(error),
+          failureCategory: "AUTH_SUPABASE_INIT_FAILURE",
+        },
+      );
+    }
     if (trustedSession.session_scope === "super_admin" && !user.roles.includes("super_admin")) {
       await revokeRefreshToken(env, refreshToken, "super_admin_role_removed");
       return buildErrorWithCookies(
@@ -3206,7 +3404,7 @@ export const resolveRefreshSessionRequest = async (
     const runtimeIssues = getCustomAuthRuntimeIssues(env);
     if (runtimeIssues.length) {
       logAuthError(
-        "AUTH_REFRESH_RUNTIME_CONFIG_INCOMPLETE",
+        "AUTH_RUNTIME_CONFIG_FAILURE",
         "Session refresh runtime configuration is incomplete.",
         {
           ip: trimText(context.ip) || null,
@@ -3280,10 +3478,11 @@ export const resolveRefreshSessionRequest = async (
     };
   } catch (error) {
     logAuthError(
-      "AUTH_REFRESH_FAILED",
+      "AUTH_REFRESH_FAILURE",
       "Session refresh failed unexpectedly.",
       {
         error_message: toSafeErrorMessage(error),
+        error_stack: toSafeErrorStack(error),
         ip: trimText(context.ip) || null,
       },
       {

@@ -1,4 +1,5 @@
 import { normalizeParsedRequestBody } from "./httpRequest.server.js";
+import { warmAuthRuntimeIntegrity } from "./authRuntimeIntegrity.server.js";
 import { logEvent } from "./observability/eventLogger.server.js";
 import {
   applyTraceResponseHeaders,
@@ -215,6 +216,8 @@ const runObservabilitySafely = (operation: () => Promise<unknown> | unknown) => 
     // Observability must never fail auth responses.
   }
 };
+
+warmAuthRuntimeIntegrity(process.env, "startup");
 
 const logUnexpectedAuthFailure = (pathname: string, error: unknown) => {
   runObservabilitySafely(() =>

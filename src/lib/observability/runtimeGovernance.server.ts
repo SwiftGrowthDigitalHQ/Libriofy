@@ -12,6 +12,7 @@ import {
   isLibriofyAppUrl,
 } from "../libriofyConfig.js";
 import { readSafeMaintenanceStatus } from "../maintenanceRuntime.server.js";
+import { getAuthRuntimeIntegrity } from "../authRuntimeIntegrity.server.js";
 import { getCriticalDatabaseHealth } from "./databaseHealth.server.js";
 import type {
   RuntimeCapabilityMode,
@@ -629,8 +630,23 @@ export const buildRuntimeReadinessReport = async (
   const database = await getCriticalDatabaseHealth(env, {
     phase: options.phase ?? `${options.target}_readiness`,
   });
+  const authIntegrity = await getAuthRuntimeIntegrity(env, {
+    flow: "startup",
+  });
 
   const checks = [...config.checks];
+  checks.push(
+    buildCheck(
+      "auth_runtime_bootstrap",
+      authIntegrity.status === "ok" ? "pass" : "fail",
+      authIntegrity.status === "ok"
+        ? "Auth startup integrity probes succeeded."
+        : authIntegrity.detail,
+      {
+        category: "dependency",
+      },
+    ),
+  );
   checks.push(
     buildCheck(
       "maintenance_source",
