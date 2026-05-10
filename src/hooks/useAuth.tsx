@@ -31,6 +31,7 @@ import {
 } from "@/lib/auth.shared";
 import { resolveLibriofyAppUrl } from "@/lib/libriofyConfig";
 import { normalizeBasePath } from "@/lib/maintenance";
+import { SUPER_ADMIN_LOGIN_ROUTE } from "@/lib/superAdminPaths";
 import { supabase, supabaseAuth } from "@/integrations/supabase/client";
 
 interface AuthContextType {
@@ -71,6 +72,13 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const AUTH_ACTIVITY_STORAGE_KEY = "libriofy.auth.last-activity";
+const PUBLIC_AUTH_ROUTES = new Set([
+  "/auth",
+  "/login",
+  "/signup",
+  "/reset-password",
+  SUPER_ADMIN_LOGIN_ROUTE,
+]);
 
 const toAuthUserFromSupabaseSession = (session: Session): AuthUser => ({
   id: session.user.id,
@@ -104,6 +112,31 @@ const readLastActivityTimestamp = () => {
   const rawValue = readBrowserStorageItem("local", AUTH_ACTIVITY_STORAGE_KEY);
   const parsed = rawValue ? Number(rawValue) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : Date.now();
+};
+
+const getCurrentClientPath = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  if (import.meta.env.VITE_USE_HASH_ROUTER === "true") {
+    const rawHashPath = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const normalizedHashPath = rawHashPath.startsWith("/") ? rawHashPath : `/${rawHashPath}`;
+    return normalizedHashPath.split("?")[0]?.split("#")[0] ?? normalizedHashPath;
+  }
+
+  return window.location.pathname;
+};
+
+const shouldSkipInitialRefreshOnPublicAuthRoute = (hasValidCachedSession: boolean) => {
+  if (hasValidCachedSession) {
+    return false;
+  }
+
+  const currentPath = getCurrentClientPath();
+  return currentPath ? PUBLIC_AUTH_ROUTES.has(currentPath) : false;
 };
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
@@ -198,6 +231,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     } catch {
       await supabaseAuth.auth.signOut({ scope: "local" }).catch(() => undefined);
+    }
+
+    if (shouldSkipInitialRefreshOnPublicAuthRoute(hasValidCachedSession)) {
+      if (!hasValidCachedSession) {
+        applySession(null);
+      }
+      return;
     }
 
     try {
