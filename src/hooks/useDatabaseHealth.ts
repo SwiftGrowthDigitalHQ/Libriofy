@@ -1,7 +1,11 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { resolveMissingDatabaseEntities, type DatabaseHealthPayload } from "@/lib/observability/databaseHealth.shared";
+import {
+  resolveMissingDatabaseContracts,
+  resolveMissingDatabaseEntities,
+  type DatabaseHealthPayload,
+} from "@/lib/observability/databaseHealth.shared";
 import { captureClientError } from "@/lib/observability/clientMonitoring";
 
 const fetchDatabaseHealth = async (): Promise<DatabaseHealthPayload> => {
@@ -40,7 +44,8 @@ export const useDatabaseHealth = () => {
     }
 
     const missingEntities = resolveMissingDatabaseEntities(health);
-    const signature = `${health.status}:${missingEntities.join(",")}:${health.detail ?? ""}`;
+    const missingContracts = resolveMissingDatabaseContracts(health);
+    const signature = `${health.status}:${missingEntities.join(",")}:${missingContracts.join(",")}:${health.detail ?? ""}`;
     if (lastLoggedSignature.current === signature) {
       return;
     }
@@ -49,6 +54,7 @@ export const useDatabaseHealth = () => {
 
     console.error("[health] database schema warning", {
       detail: health.detail,
+      missingContracts,
       missingEntities,
       route: typeof window !== "undefined" ? window.location.pathname : "/",
       source: "database_health",
@@ -57,6 +63,7 @@ export const useDatabaseHealth = () => {
 
     captureClientError(new Error(health.detail || "Critical database health check is degraded."), {
       detail: health.detail,
+      missingContracts,
       missingEntities,
       route: typeof window !== "undefined" ? window.location.pathname : "/",
       source: "database_health",

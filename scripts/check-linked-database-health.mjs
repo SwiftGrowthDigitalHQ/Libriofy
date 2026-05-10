@@ -145,6 +145,26 @@ if (missingEntities.length > 0) {
   process.exit(1);
 }
 
+const authRuntimeResponse = await supabaseFetch("/rest/v1/rpc/get_auth_runtime_status", {
+  method: "POST",
+});
+
+if (!authRuntimeResponse.ok || !Array.isArray(authRuntimeResponse.body)) {
+  console.error("Auth runtime health RPC failed.");
+  console.error(authRuntimeResponse.rawText || `HTTP ${authRuntimeResponse.status}`);
+  process.exit(1);
+}
+
+const failingAuthContracts = authRuntimeResponse.body.filter((entry) => !entry?.ok);
+
+if (failingAuthContracts.length > 0) {
+  console.error("Critical auth runtime contracts are missing on the linked project:");
+  for (const contract of failingAuthContracts) {
+    console.error(`  - ${String(contract.check_name)}: ${String(contract.detail || "Unknown failure")}`);
+  }
+  process.exit(1);
+}
+
 let failed = false;
 
 for (const check of relationChecks) {

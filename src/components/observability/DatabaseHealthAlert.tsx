@@ -1,4 +1,8 @@
-import { resolveMissingDatabaseEntities, type DatabaseHealthPayload } from "@/lib/observability/databaseHealth.shared";
+import {
+  resolveMissingDatabaseContracts,
+  resolveMissingDatabaseEntities,
+  type DatabaseHealthPayload,
+} from "@/lib/observability/databaseHealth.shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { TriangleAlert } from "lucide-react";
 import type { RecentObservabilitySignal } from "@/lib/observability/types";
@@ -11,11 +15,24 @@ type DatabaseHealthAlertProps = {
 
 const describeHealthIssue = (health: DatabaseHealthPayload, viewer: DatabaseHealthAlertProps["viewer"]) => {
   const missingEntities = resolveMissingDatabaseEntities(health).map((entity) => `public.${entity}`).join(", ");
+  const missingContracts = resolveMissingDatabaseContracts(health);
 
   if (health.status === "failed") {
     return viewer === "super_admin"
       ? "Database connectivity or schema validation failed. Investigate Supabase credentials and schema health before continuing."
       : "Critical database validation failed. Some features may be unavailable. Contact your administrator or support immediately.";
+  }
+
+  if (missingContracts.length > 0 && missingEntities) {
+    return viewer === "super_admin"
+      ? `Critical auth runtime contracts and database entities are missing: ${missingContracts.join(", ")}; ${missingEntities}. Apply the latest Supabase auth migrations before continuing.`
+      : "Critical auth runtime contracts and database entities are missing. Some admin tools are running in degraded mode. Contact your administrator or support.";
+  }
+
+  if (missingContracts.length > 0) {
+    return viewer === "super_admin"
+      ? `Critical auth runtime contracts are missing: ${missingContracts.join(", ")}. Apply the latest Supabase auth migrations before continuing.`
+      : "Critical auth runtime contracts are missing. Some admin tools are running in degraded mode. Contact your administrator or support.";
   }
 
   if (viewer === "super_admin") {

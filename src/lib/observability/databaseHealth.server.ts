@@ -1,4 +1,9 @@
-import { CRITICAL_DB_ENTITIES, type DatabaseHealthPayload, type DatabaseSchemaEntityCheck } from "./databaseHealth.shared.js";
+import {
+  CRITICAL_DB_ENTITIES,
+  type AuthRuntimeContractCheck,
+  type DatabaseHealthPayload,
+  type DatabaseSchemaEntityCheck,
+} from "./databaseHealth.shared.js";
 import { sendAdminAlert } from "./alertService.server.js";
 import { logEvent } from "./eventLogger.server.js";
 import { captureServerError } from "./serverMonitoring.js";
@@ -18,6 +23,13 @@ const emptySignals = {
   systemWarnings: [],
 };
 
+const supabaseRequestHeaders = (serviceRoleKey: string) => ({
+  Accept: "application/json",
+  Authorization: `Bearer ${serviceRoleKey}`,
+  "Content-Type": "application/json",
+  apikey: serviceRoleKey,
+});
+
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {
     const value = env[name];
@@ -32,17 +44,21 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
 const buildFailedHealthPayload = (
   detail: string,
   signals: { recentCriticalErrors: DatabaseHealthPayload["recent_critical_errors"]; systemWarnings: DatabaseHealthPayload["system_warnings"] } = emptySignals,
+  options: {
+    authRuntimeChecks?: AuthRuntimeContractCheck[];
+    entities?: DatabaseSchemaEntityCheck[];
+    missingContracts?: string[];
+    missingEntities?: string[];
+  } = {},
 ): DatabaseHealthPayload => ({
+  auth_runtime_checks: options.authRuntimeChecks ?? [],
+  entities: options.entities ?? [],
+  missing: options.missingEntities ?? [],
+  missing_contracts: options.missingContracts ?? [],
+  missing_entities: options.missingEntities ?? [],
   checked_at: new Date().toISOString(),
   connectivity: "fail",
   detail,
-  entities: CRITICAL_DB_ENTITIES.map((entity_name) => ({
-    entity_name,
-    exists_in_schema: false,
-    relation_name: null,
-  })),
-  missing: [...CRITICAL_DB_ENTITIES],
-  missing_entities: [...CRITICAL_DB_ENTITIES],
   recent_critical_errors: signals.recentCriticalErrors,
   service: HEALTH_SERVICE_NAME,
   source: "live",
@@ -69,7 +85,7 @@ const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string)
     return;
   }
 
-  const signature = `${phase}:${payload.status}:${payload.missing_entities.join(",")}:${payload.detail ?? ""}`;
+  const signature = `${phase}:${payload.status}:${payload.missing_entities.join(",")}:${(payload.missing_contracts ?? []).join(",")}:${payload.detail ?? ""}`;
   if (signature === lastLoggedFailureSignature) {
     return;
   }
@@ -79,6 +95,7 @@ const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string)
   console.error("[health] critical database schema issue", {
     connectivity: payload.connectivity,
     detail: payload.detail,
+    missingContracts: payload.missing_contracts ?? [],
     missingEntities: payload.missing_entities,
     phase,
     source: "database_health",
@@ -87,6 +104,7 @@ const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string)
 
   captureServerError(new Error(payload.detail || "Critical database schema validation failed."), {
     connectivity: payload.connectivity,
+    missingContracts: payload.missing_contracts ?? [],
     missingEntities: payload.missing_entities,
     phase,
     source: "database_health",
@@ -101,6 +119,7 @@ const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string)
     user: HEALTH_SERVICE_NAME,
     metadata: {
       connectivity: payload.connectivity,
+      missingContracts: payload.missing_contracts ?? [],
       missingEntities: payload.missing_entities,
       phase,
       severity,
@@ -117,12 +136,58 @@ const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string)
     message: payload.detail || "Critical database schema validation failed.",
     metadata: {
       connectivity: payload.connectivity,
+      missingContracts: payload.missing_contracts ?? [],
       missingEntities: payload.missing_entities,
       phase,
       source: "database_health",
       status: payload.status,
     },
   });
+};
+
+const formatFailedRpcDetail = (scope: string, status: number, rawText: string) =>
+  `${scope} RPC failed with status ${status}: ${rawText.slice(0, 400) || "Unknown error"}`;
+
+const buildHealthDetail = (missingEntities: string[], missingContracts: string[]) => {
+  const issues: string[] = [];
+
+  if (missingEntities.length > 0) {
+    issues.push(`Missing critical database entities: ${missingEntities.join(", ")}.`);
+  }
+
+  if (missingContracts.length > 0) {
+    issues.push(`Missing auth runtime contracts: ${missingContracts.join(", ")}.`);
+  }
+
+  return issues.length > 0 ? issues.join(" ") : "Critical database schema and auth runtime contracts verified.";
+};
+
+const parseRpcJson = <T>(rawText: string, scope: string): T => {
+  if (!rawText.trim()) {
+    throw new Error(`${scope} RPC returned an empty response body.`);
+  }
+
+  return JSON.parse(rawText) as T;
+};
+
+const invokeSupabaseRpc = async (
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  functionName: string,
+  body: Record<string, unknown> = {},
+) => {
+  const endpoint = new URL(`/rest/v1/rpc/${functionName}`, supabaseUrl);
+  const response = await fetch(endpoint.toString(), {
+    body: JSON.stringify(body),
+    headers: supabaseRequestHeaders(serviceRoleKey),
+    method: "POST",
+  });
+
+  return {
+    ok: response.ok,
+    rawText: await response.text(),
+    status: response.status,
+  };
 };
 
 const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPayload> => {
@@ -134,48 +199,50 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
   }
 
   try {
-    const endpoint = new URL("/rest/v1/rpc/get_schema_entity_status", supabaseUrl);
-    const response = await fetch(endpoint.toString(), {
-      body: JSON.stringify({
+    const [schemaResponse, authRuntimeResponse] = await Promise.all([
+      invokeSupabaseRpc(supabaseUrl, serviceRoleKey, "get_schema_entity_status", {
         p_entities: [...CRITICAL_DB_ENTITIES],
       }),
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${serviceRoleKey}`,
-        "Content-Type": "application/json",
-        apikey: serviceRoleKey,
-      },
-      method: "POST",
-    });
+      invokeSupabaseRpc(supabaseUrl, serviceRoleKey, "get_auth_runtime_status"),
+    ]);
 
-    const rawText = await response.text();
-    if (!response.ok) {
+    if (!schemaResponse.ok) {
       return buildFailedHealthPayload(
-        `Schema health RPC failed with status ${response.status}: ${rawText.slice(0, 400) || "Unknown error"}`,
+        formatFailedRpcDetail("Schema health", schemaResponse.status, schemaResponse.rawText),
         await loadRecentSignals(env),
       );
     }
 
-    const entities = (JSON.parse(rawText) as DatabaseSchemaEntityCheck[]) ?? [];
+    if (!authRuntimeResponse.ok) {
+      return buildFailedHealthPayload(
+        formatFailedRpcDetail("Auth runtime health", authRuntimeResponse.status, authRuntimeResponse.rawText),
+        await loadRecentSignals(env),
+      );
+    }
+
+    const entities = parseRpcJson<DatabaseSchemaEntityCheck[]>(schemaResponse.rawText, "Schema health") ?? [];
+    const authRuntimeChecks = parseRpcJson<AuthRuntimeContractCheck[]>(authRuntimeResponse.rawText, "Auth runtime health") ?? [];
     const missingEntities = entities
       .filter((entity) => !entity.exists_in_schema)
       .map((entity) => entity.entity_name);
+    const missingContracts = authRuntimeChecks
+      .filter((check) => !check.ok)
+      .map((check) => check.check_name);
     const signals = await loadRecentSignals(env);
 
     return {
+      auth_runtime_checks: authRuntimeChecks,
       checked_at: new Date().toISOString(),
       connectivity: "pass",
-      detail:
-        missingEntities.length > 0
-          ? `Missing critical database entities: ${missingEntities.join(", ")}.`
-          : "Critical database schema verified.",
+      detail: buildHealthDetail(missingEntities, missingContracts),
       entities,
       missing: missingEntities,
+      missing_contracts: missingContracts,
       missing_entities: missingEntities,
       recent_critical_errors: signals.recentCriticalErrors,
       service: HEALTH_SERVICE_NAME,
       source: "live",
-      status: missingEntities.length > 0 ? "degraded" : "ok",
+      status: missingEntities.length > 0 || missingContracts.length > 0 ? "degraded" : "ok",
       system_warnings: signals.systemWarnings,
     };
   } catch (error) {

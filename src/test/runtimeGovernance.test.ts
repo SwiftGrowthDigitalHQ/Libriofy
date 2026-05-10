@@ -37,11 +37,13 @@ const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
 });
 
 const healthyDatabase = {
+  auth_runtime_checks: [],
   checked_at: "2026-05-09T00:00:00.000Z",
   connectivity: "pass" as const,
-  detail: "Critical database schema verified.",
+  detail: "Critical database schema and auth runtime contracts verified.",
   entities: [],
   missing: [],
+  missing_contracts: [],
   missing_entities: [],
   recent_critical_errors: [],
   service: "supabase-database-health",
@@ -130,6 +132,30 @@ describe("runtime governance", () => {
     expect(report.degraded.active).toBe(true);
     expect(report.checks.find((check) => check.name === "maintenance_source")?.status).toBe("warn");
     expect(report.contracts.find((contract) => contract.name === "maintenance")?.status).toBe("degraded");
+  });
+
+  it("fails readiness when auth runtime contracts drift in the database layer", async () => {
+    mockedGetCriticalDatabaseHealth.mockResolvedValue({
+      ...healthyDatabase,
+      detail: "Missing auth runtime contracts: column:auth_trusted_devices.auth_level.",
+      missing_contracts: ["column:auth_trusted_devices.auth_level"],
+      status: "degraded",
+    });
+
+    const report = await buildRuntimeReadinessReport(buildEnv(), {
+      hasDist: true,
+      phase: "test_auth_runtime_contract_drift",
+      service: "libriofy-auth-attendance-api",
+      startedAt: Date.now() - 5_000,
+      target: "express",
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.status).toBe("failed");
+    expect(report.checks.find((check) => check.name === "critical_database_schema")?.detail).toContain(
+      "Missing auth runtime contracts: column:auth_trusted_devices.auth_level.",
+    );
+    expect(report.contracts.find((contract) => contract.name === "governance")?.status).toBe("failed");
   });
 
   it("keeps readiness semantics aligned between express and serverless runtimes", async () => {

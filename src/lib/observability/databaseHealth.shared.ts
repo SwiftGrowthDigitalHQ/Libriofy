@@ -10,12 +10,20 @@ export type DatabaseSchemaEntityCheck = {
   relation_name: string | null;
 };
 
+export type AuthRuntimeContractCheck = {
+  check_name: string;
+  detail: string;
+  ok: boolean;
+};
+
 export type DatabaseHealthPayload = {
+  auth_runtime_checks?: AuthRuntimeContractCheck[];
   checked_at: string;
   connectivity: "pass" | "fail";
   detail: string | null;
   entities: DatabaseSchemaEntityCheck[];
   missing: string[];
+  missing_contracts?: string[];
   missing_entities: string[];
   recent_critical_errors?: RecentObservabilitySignal[];
   service: string;
@@ -27,3 +35,7 @@ export type DatabaseHealthPayload = {
 export const resolveMissingDatabaseEntities = (
   health: Pick<DatabaseHealthPayload, "missing" | "missing_entities"> | null | undefined,
 ) => health?.missing ?? health?.missing_entities ?? [];
+
+export const resolveMissingDatabaseContracts = (
+  health: Pick<DatabaseHealthPayload, "missing_contracts"> | null | undefined,
+) => health?.missing_contracts ?? [];

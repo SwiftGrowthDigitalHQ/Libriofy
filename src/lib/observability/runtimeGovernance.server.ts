@@ -672,7 +672,7 @@ export const buildRuntimeReadinessReport = async (
       "critical_database_schema",
       database.status === "ok" ? "pass" : "fail",
       database.status === "ok"
-        ? "Critical database entities are present."
+        ? "Critical database entities and auth runtime contracts are present."
         : database.detail || "Critical database entities are missing.",
       {
         category: "dependency",
