@@ -16,6 +16,17 @@ export type AuthRuntimeContractCheck = {
   ok: boolean;
 };
 
+export type AuthRuntimeHealthPayload = {
+  checked_at: string;
+  checks: AuthRuntimeContractCheck[];
+  connectivity: "pass" | "fail";
+  detail: string | null;
+  missing_contracts: string[];
+  service: string;
+  source: "live" | "cache";
+  status: DatabaseHealthStatus;
+};
+
 export type DatabaseHealthPayload = {
   auth_runtime_checks?: AuthRuntimeContractCheck[];
   checked_at: string;

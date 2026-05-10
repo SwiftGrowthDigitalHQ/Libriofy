@@ -52,6 +52,7 @@ import {
   resolveLibriofyAppUrl,
   resolveLibriofyEmailFrom,
 } from "./libriofyConfig.js";
+import { getAuthRuntimeHealth } from "./observability/databaseHealth.server.js";
 import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.server.js";
 import { logEvent } from "./observability/eventLogger.server.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
@@ -773,6 +774,43 @@ const buildRuntimeIssueResponse = (issues: AuthConfigIssue[]): ServiceResponse<n
   }
 
   return buildError(503, primaryIssue.message, primaryIssue.code);
+};
+
+const buildSuperAdminAuthRuntimePreflightResponse = <T>({
+  context,
+  detail,
+  email,
+  missingContracts,
+}: {
+  context: RequestContext;
+  detail: string | null;
+  email: string;
+  missingContracts: string[];
+}): ServiceResponse<T> => {
+  const hasSchemaDrift = missingContracts.length > 0;
+
+  logAuthError(
+    hasSchemaDrift ? "AUTH_SESSION_STORE_SCHEMA_MISMATCH" : "AUTH_SESSION_STORE_FAILURE",
+    "Super admin auth runtime preflight failed.",
+    {
+      device: buildLoginDeviceLabel(context),
+      email: maskEmailAddress(email),
+      ip: trimText(context.ip) || null,
+      missing_contracts: missingContracts,
+      remediation: hasSchemaDrift ? "apply auth runtime migrations and verify service_role grants" : null,
+    },
+    {
+      dedupeKey: `super-admin-auth-runtime:${hasSchemaDrift ? "schema" : "service"}`,
+      user: maskEmailAddress(email),
+    },
+  );
+
+  return buildError(
+    503,
+    "Super admin sign-in is temporarily unavailable. Please try again shortly.",
+    hasSchemaDrift ? "AUTH_SESSION_STORE_SCHEMA_MISMATCH" : "AUTH_SESSION_STORE_UNAVAILABLE",
+    detail ? { detail } : undefined,
+  );
 };
 
 const getDatabaseErrorRecord = (error: unknown): DatabaseErrorLike =>
@@ -2034,6 +2072,23 @@ export const resolveSuperAdminLoginRequest = async (
     ip: trimText(context.ip) || null,
   });
 
+  if (!email) {
+    logSuperAdminDebug("login request rejected because email is missing", {
+      email: maskEmailAddress(email),
+    });
+    return buildError(400, "Enter your approved Super Admin email to continue.", "INVALID_REQUEST");
+  }
+
+  const authRuntimeHealth = await getAuthRuntimeHealth(env);
+  if (authRuntimeHealth.status !== "ok") {
+    return buildSuperAdminAuthRuntimePreflightResponse({
+      context,
+      detail: authRuntimeHealth.detail,
+      email,
+      missingContracts: authRuntimeHealth.missing_contracts,
+    });
+  }
+
   const redis = getRedisConnection(env);
   const ip = trimText(context.ip);
   const [ipRetryAfter, emailRetryAfter] = await Promise.all([
@@ -2077,13 +2132,6 @@ export const resolveSuperAdminLoginRequest = async (
     return buildError(429, "Too many Super Admin OTP requests. Please wait a bit.", "RATE_LIMITED", {
       retryAfter,
     });
-  }
-
-  if (!email) {
-    logSuperAdminDebug("login request rejected because email is missing", {
-      email: maskEmailAddress(email),
-    });
-    return buildError(400, "Enter your approved Super Admin email to continue.", "INVALID_REQUEST");
   }
 
   const blockedTtl = await getSuperAdminBlockedTtl(redis, email, ip);

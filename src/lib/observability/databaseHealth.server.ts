@@ -1,6 +1,7 @@
 import {
   CRITICAL_DB_ENTITIES,
   type AuthRuntimeContractCheck,
+  type AuthRuntimeHealthPayload,
   type DatabaseHealthPayload,
   type DatabaseSchemaEntityCheck,
 } from "./databaseHealth.shared.js";
@@ -16,6 +17,8 @@ const HEALTH_SERVICE_NAME = "supabase-database-health";
 
 let cachedHealth: { expiresAt: number; value: DatabaseHealthPayload } | null = null;
 let inFlightHealthCheck: Promise<DatabaseHealthPayload> | null = null;
+let cachedAuthRuntimeHealth: { expiresAt: number; value: AuthRuntimeHealthPayload } | null = null;
+let inFlightAuthRuntimeHealthCheck: Promise<AuthRuntimeHealthPayload> | null = null;
 let lastLoggedFailureSignature = "";
 
 const emptySignals = {
@@ -148,6 +151,11 @@ const logCriticalSchemaFailure = (payload: DatabaseHealthPayload, phase: string)
 const formatFailedRpcDetail = (scope: string, status: number, rawText: string) =>
   `${scope} RPC failed with status ${status}: ${rawText.slice(0, 400) || "Unknown error"}`;
 
+const buildAuthRuntimeDetail = (missingContracts: string[]) =>
+  missingContracts.length > 0
+    ? `Missing auth runtime contracts: ${missingContracts.join(", ")}.`
+    : "Auth runtime contracts verified.";
+
 const buildHealthDetail = (missingEntities: string[], missingContracts: string[]) => {
   const issues: string[] = [];
 
@@ -190,6 +198,59 @@ const invokeSupabaseRpc = async (
   };
 };
 
+const buildFailedAuthRuntimeHealthPayload = (
+  detail: string,
+  options: {
+    checks?: AuthRuntimeContractCheck[];
+    missingContracts?: string[];
+  } = {},
+): AuthRuntimeHealthPayload => ({
+  checked_at: new Date().toISOString(),
+  checks: options.checks ?? [],
+  connectivity: "fail",
+  detail,
+  missing_contracts: options.missingContracts ?? [],
+  service: HEALTH_SERVICE_NAME,
+  source: "live",
+  status: "failed",
+});
+
+const loadLiveAuthRuntimeHealth = async (env: EnvLike): Promise<AuthRuntimeHealthPayload> => {
+  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
+  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    return buildFailedAuthRuntimeHealthPayload("Supabase URL or service role key is missing.");
+  }
+
+  try {
+    const authRuntimeResponse = await invokeSupabaseRpc(supabaseUrl, serviceRoleKey, "get_auth_runtime_status");
+    if (!authRuntimeResponse.ok) {
+      return buildFailedAuthRuntimeHealthPayload(
+        formatFailedRpcDetail("Auth runtime health", authRuntimeResponse.status, authRuntimeResponse.rawText),
+      );
+    }
+
+    const checks = parseRpcJson<AuthRuntimeContractCheck[]>(authRuntimeResponse.rawText, "Auth runtime health") ?? [];
+    const missingContracts = checks.filter((check) => !check.ok).map((check) => check.check_name);
+
+    return {
+      checked_at: new Date().toISOString(),
+      checks,
+      connectivity: "pass",
+      detail: buildAuthRuntimeDetail(missingContracts),
+      missing_contracts: missingContracts,
+      service: HEALTH_SERVICE_NAME,
+      source: "live",
+      status: missingContracts.length > 0 ? "degraded" : "ok",
+    };
+  } catch (error) {
+    return buildFailedAuthRuntimeHealthPayload(
+      error instanceof Error ? error.message : "Unexpected auth runtime health validation failure.",
+    );
+  }
+};
+
 const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPayload> => {
   const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
   const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
@@ -199,11 +260,11 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
   }
 
   try {
-    const [schemaResponse, authRuntimeResponse] = await Promise.all([
+    const [schemaResponse, authRuntimeHealth] = await Promise.all([
       invokeSupabaseRpc(supabaseUrl, serviceRoleKey, "get_schema_entity_status", {
         p_entities: [...CRITICAL_DB_ENTITIES],
       }),
-      invokeSupabaseRpc(supabaseUrl, serviceRoleKey, "get_auth_runtime_status"),
+      loadLiveAuthRuntimeHealth(env),
     ]);
 
     if (!schemaResponse.ok) {
@@ -213,21 +274,23 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
       );
     }
 
-    if (!authRuntimeResponse.ok) {
+    if (authRuntimeHealth.connectivity !== "pass") {
       return buildFailedHealthPayload(
-        formatFailedRpcDetail("Auth runtime health", authRuntimeResponse.status, authRuntimeResponse.rawText),
+        authRuntimeHealth.detail || "Auth runtime health validation failed.",
         await loadRecentSignals(env),
+        {
+          authRuntimeChecks: authRuntimeHealth.checks,
+          missingContracts: authRuntimeHealth.missing_contracts,
+        },
       );
     }
 
     const entities = parseRpcJson<DatabaseSchemaEntityCheck[]>(schemaResponse.rawText, "Schema health") ?? [];
-    const authRuntimeChecks = parseRpcJson<AuthRuntimeContractCheck[]>(authRuntimeResponse.rawText, "Auth runtime health") ?? [];
+    const authRuntimeChecks = authRuntimeHealth.checks;
     const missingEntities = entities
       .filter((entity) => !entity.exists_in_schema)
       .map((entity) => entity.entity_name);
-    const missingContracts = authRuntimeChecks
-      .filter((check) => !check.ok)
-      .map((check) => check.check_name);
+    const missingContracts = authRuntimeHealth.missing_contracts;
     const signals = await loadRecentSignals(env);
 
     return {
@@ -289,9 +352,44 @@ export const getCriticalDatabaseHealth = async (
   return inFlightHealthCheck;
 };
 
+export const getAuthRuntimeHealth = async (
+  env: EnvLike = process.env,
+  options: { forceRefresh?: boolean } = {},
+): Promise<AuthRuntimeHealthPayload> => {
+  const forceRefresh = options.forceRefresh === true;
+
+  if (!forceRefresh && cachedAuthRuntimeHealth && cachedAuthRuntimeHealth.expiresAt > Date.now()) {
+    return {
+      ...cachedAuthRuntimeHealth.value,
+      source: "cache",
+    };
+  }
+
+  if (!forceRefresh && inFlightAuthRuntimeHealthCheck) {
+    return inFlightAuthRuntimeHealthCheck;
+  }
+
+  inFlightAuthRuntimeHealthCheck = loadLiveAuthRuntimeHealth(env)
+    .then((result) => {
+      cachedAuthRuntimeHealth = {
+        expiresAt: Date.now() + DATABASE_HEALTH_CACHE_TTL_MS,
+        value: result,
+      };
+      return result;
+    })
+    .finally(() => {
+      inFlightAuthRuntimeHealthCheck = null;
+    });
+
+  return inFlightAuthRuntimeHealthCheck;
+};
+
 export const warmCriticalDatabaseHealth = (env: EnvLike = process.env) => {
   void getCriticalDatabaseHealth(env, {
     forceRefresh: true,
     phase: "startup",
+  }).catch(() => undefined);
+  void getAuthRuntimeHealth(env, {
+    forceRefresh: true,
   }).catch(() => undefined);
 };

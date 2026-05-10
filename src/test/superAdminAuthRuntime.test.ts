@@ -1,4 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const getAuthRuntimeHealthMock = vi.fn();
+
+vi.mock("@/lib/observability/databaseHealth.server", () => ({
+  getAuthRuntimeHealth: (...args: unknown[]) => getAuthRuntimeHealthMock(...args),
+}));
 
 import {
   resolveSendOtpRequest,
@@ -16,6 +22,20 @@ const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
 });
 
 describe("Super Admin auth runtime safeguards", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getAuthRuntimeHealthMock.mockResolvedValue({
+      checked_at: "2026-05-10T00:00:00.000Z",
+      checks: [],
+      connectivity: "pass",
+      detail: "Auth runtime contracts verified.",
+      missing_contracts: [],
+      service: "supabase-database-health",
+      source: "live",
+      status: "ok",
+    });
+  });
+
   it("fails fast with a structured 503 when Redis is missing", async () => {
     const result = await resolveSuperAdminLoginRequest(
       buildEnv({
@@ -69,6 +89,43 @@ describe("Super Admin auth runtime safeguards", () => {
     expect(result.body).toMatchObject({
       code: "AUTH_INFRA_UNAVAILABLE",
       message: "Session and OTP challenge storage is not configured.",
+      success: false,
+    });
+  });
+
+  it("blocks Super Admin OTP delivery when auth runtime contracts are degraded", async () => {
+    getAuthRuntimeHealthMock.mockResolvedValue({
+      checked_at: "2026-05-10T00:00:00.000Z",
+      checks: [
+        {
+          check_name: "column:auth_trusted_devices.auth_level",
+          detail: "public.auth_trusted_devices.auth_level is missing.",
+          ok: false,
+        },
+      ],
+      connectivity: "pass",
+      detail: "Missing auth runtime contracts: column:auth_trusted_devices.auth_level.",
+      missing_contracts: ["column:auth_trusted_devices.auth_level"],
+      service: "supabase-database-health",
+      source: "live",
+      status: "degraded",
+    });
+
+    const result = await resolveSuperAdminLoginRequest(
+      buildEnv({
+        AUTH_EMAIL_FROM: "hello@libriofy.com",
+        REDIS_URL: "redis://example.test:6379",
+        RESEND_API_KEY: "resend-key",
+        SUPABASE_JWT_SECRET: "jwt-secret",
+      }),
+      { email: "admin@example.com" },
+      { ip: "127.0.0.1" },
+    );
+
+    expect(result.statusCode).toBe(503);
+    expect(result.body).toMatchObject({
+      code: "AUTH_SESSION_STORE_SCHEMA_MISMATCH",
+      message: "Super admin sign-in is temporarily unavailable. Please try again shortly.",
       success: false,
     });
   });
