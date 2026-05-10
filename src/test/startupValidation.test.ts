@@ -15,6 +15,6 @@ describe("validateServerStartupEnv", () => {
     expect(result.ok).toBe(false);
     expect(result.missing).toContain("REDIS_URL");
     expect(result.missing).toContain("SUPABASE_JWT_SECRET|JWT_SECRET|APP_JWT_SECRET");
-    expect(result.missing).toContain("RESEND_API_KEY+AUTH_EMAIL_FROM=hello@libriofy.com");
+    expect(result.missing).toContain("RESEND_API_KEY+AUTH_EMAIL_FROM|RESEND_FROM_EMAIL=hello@libriofy.com");
   });
 });

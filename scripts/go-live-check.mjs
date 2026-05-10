@@ -112,6 +112,8 @@ const matchesCanonicalLibriofyEmail = (value) => {
   return address === LIBRIOFY_AUTH_EMAIL;
 };
 
+const readSuperAdminEmailFrom = (env) => env.AUTH_EMAIL_FROM || env.RESEND_FROM_EMAIL || "";
+
 const looksLikePlaceholder = (key, rawValue) => {
   const value = String(rawValue || "").trim();
   if (!value) {
@@ -164,7 +166,7 @@ const validateServerStartupEnv = (env) => {
   const hasJwtSecret = ["SUPABASE_JWT_SECRET", "JWT_SECRET", "APP_JWT_SECRET"].some(
     (key) => hasValue(env[key]) && !looksLikePlaceholder(key, env[key]),
   );
-  const hasSuperAdminEmailOtp = hasValue(env.RESEND_API_KEY) && matchesCanonicalLibriofyEmail(env.AUTH_EMAIL_FROM);
+  const hasSuperAdminEmailOtp = hasValue(env.RESEND_API_KEY) && matchesCanonicalLibriofyEmail(readSuperAdminEmailFrom(env));
 
   if (!hasBaseUrl) {
     missing.push(`APP_URL|PUBLIC_APP_URL|SITE_URL=${LIBRIOFY_PUBLIC_APP_URL}`);
@@ -179,7 +181,7 @@ const validateServerStartupEnv = (env) => {
   }
 
   if (!hasSuperAdminEmailOtp) {
-    missing.push(`RESEND_API_KEY+AUTH_EMAIL_FROM=${LIBRIOFY_AUTH_EMAIL}`);
+    missing.push(`RESEND_API_KEY+AUTH_EMAIL_FROM|RESEND_FROM_EMAIL=${LIBRIOFY_AUTH_EMAIL}`);
   }
 
   return {
@@ -506,6 +508,7 @@ const appEnvRequirements = [
     anyOf: [
       "RESEND_API_KEY",
       "AUTH_EMAIL_FROM",
+      "RESEND_FROM_EMAIL",
       "TWILIO_ACCOUNT_SID",
       "TWILIO_AUTH_TOKEN",
       "TWILIO_WHATSAPP_FROM",

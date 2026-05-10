@@ -2,6 +2,9 @@ import { resolveLibriofyEmailFrom } from "./libriofyConfig.js";
 
 type EnvLike = Record<string, string | undefined>;
 
+export const SUPER_ADMIN_EMAIL_OTP_REQUIREMENT =
+  "RESEND_API_KEY+AUTH_EMAIL_FROM|RESEND_FROM_EMAIL=hello@libriofy.com";
+
 export type AuthConfigIssue = {
   code: "AUTH_INFRA_UNAVAILABLE" | "OTP_DELIVERY_UNAVAILABLE";
   message: string;
@@ -9,6 +12,16 @@ export type AuthConfigIssue = {
 };
 
 const hasValue = (value: string | undefined) => Boolean(value && value.trim());
+const readEnv = (env: EnvLike, ...names: string[]) => {
+  for (const name of names) {
+    const value = env[name];
+    if (hasValue(value)) {
+      return value;
+    }
+  }
+
+  return undefined;
+};
 
 const hasAny = (env: EnvLike, ...names: string[]) => names.some((name) => hasValue(env[name]));
 
@@ -16,7 +29,8 @@ export const hasCustomJwtSigningConfig = (env: EnvLike) =>
   hasAny(env, "SUPABASE_JWT_SECRET", "JWT_SECRET", "APP_JWT_SECRET");
 
 export const hasSuperAdminEmailOtpConfig = (env: EnvLike) =>
-  hasValue(env.RESEND_API_KEY) && Boolean(resolveLibriofyEmailFrom(env.AUTH_EMAIL_FROM));
+  hasValue(env.RESEND_API_KEY) &&
+  Boolean(resolveLibriofyEmailFrom(readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL")));
 
 export const getCustomAuthRuntimeIssues = (env: EnvLike): AuthConfigIssue[] => {
   const issues: AuthConfigIssue[] = [];
@@ -47,7 +61,7 @@ export const getSuperAdminLoginRuntimeIssues = (env: EnvLike): AuthConfigIssue[]
     issues.push({
       code: "OTP_DELIVERY_UNAVAILABLE",
       message: "Super admin email OTP delivery must use hello@libriofy.com via Resend.",
-      missing: ["RESEND_API_KEY+AUTH_EMAIL_FROM=hello@libriofy.com"],
+      missing: [SUPER_ADMIN_EMAIL_OTP_REQUIREMENT],
     });
   }
 

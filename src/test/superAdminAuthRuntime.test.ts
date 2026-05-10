@@ -53,6 +53,26 @@ describe("Super Admin auth runtime safeguards", () => {
     });
   });
 
+  it("accepts RESEND_FROM_EMAIL as the production sender alias", async () => {
+    const result = await resolveSuperAdminLoginRequest(
+      buildEnv({
+        REDIS_URL: undefined,
+        RESEND_API_KEY: "resend-key",
+        RESEND_FROM_EMAIL: "hello@libriofy.com",
+        SUPABASE_JWT_SECRET: "jwt-secret",
+      }),
+      { email: "admin@example.com" },
+      { ip: "127.0.0.1" },
+    );
+
+    expect(result.statusCode).toBe(503);
+    expect(result.body).toMatchObject({
+      code: "AUTH_INFRA_UNAVAILABLE",
+      message: "Session and OTP challenge storage is not configured.",
+      success: false,
+    });
+  });
+
   it("blocks OTP verification before touching Redis when signing config is missing", async () => {
     const result = await resolveSuperAdminVerifyOtpRequest(
       buildEnv({

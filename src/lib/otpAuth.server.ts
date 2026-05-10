@@ -55,6 +55,7 @@ import {
 import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.server.js";
 import { logEvent } from "./observability/eventLogger.server.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
+import { getRequestTraceContext } from "./observability/requestContext.server.js";
 import {
   createImpersonationSessionState,
   endImpersonationSession,
@@ -88,8 +89,17 @@ type ErrorResponseBody = {
   error: string;
   message: string;
   remainingAttempts?: number;
+  requestId?: string;
   retryAfter?: number;
   success: false;
+};
+
+type DatabaseErrorLike = {
+  code?: string | null;
+  details?: string | null;
+  hint?: string | null;
+  message?: string | null;
+  status?: number | null;
 };
 
 type ServiceResponse<T> = {
@@ -178,6 +188,11 @@ type ActiveSessionContext = {
   user: AuthUser;
 };
 
+type AuthSessionStoreFailureStage =
+  | "refresh_load_session"
+  | "refresh_rotate_session"
+  | "verify_issue_session";
+
 type StartImpersonationRequestBody = {
   confirmationText?: string | null;
   dryRun?: boolean;
@@ -245,16 +260,20 @@ const buildError = <T>(
   message: string,
   code?: string,
   extras?: Partial<ErrorResponseBody>,
-): ServiceResponse<T> => ({
-  statusCode,
-  body: {
-    success: false,
-    error: message,
-    message,
-    ...(code ? { code } : {}),
-    ...(extras ?? {}),
-  },
-});
+) => {
+  const requestId = getRequestTraceContext()?.requestId;
+  return {
+    statusCode,
+    body: {
+      success: false,
+      error: message,
+      message,
+      ...(code ? { code } : {}),
+      ...(requestId ? { requestId } : {}),
+      ...(extras ?? {}),
+    },
+  };
+};
 
 const buildErrorWithCookies = <T>(
   statusCode: number,
@@ -262,17 +281,21 @@ const buildErrorWithCookies = <T>(
   code: string,
   cookies: string[],
   extras?: Partial<ErrorResponseBody>,
-): ServiceResponse<T> => ({
-  statusCode,
-  body: {
-    success: false,
-    code,
-    error: message,
-    message,
-    ...(extras ?? {}),
-  },
-  cookies,
-});
+) => {
+  const requestId = getRequestTraceContext()?.requestId;
+  return {
+    statusCode,
+    body: {
+      success: false,
+      code,
+      error: message,
+      message,
+      ...(requestId ? { requestId } : {}),
+      ...(extras ?? {}),
+    },
+    cookies,
+  };
+};
 
 const createServiceClient = (env: EnvLike) => {
   const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
@@ -752,6 +775,112 @@ const buildRuntimeIssueResponse = (issues: AuthConfigIssue[]): ServiceResponse<n
   return buildError(503, primaryIssue.message, primaryIssue.code);
 };
 
+const getDatabaseErrorRecord = (error: unknown): DatabaseErrorLike =>
+  error && typeof error === "object" && !Array.isArray(error) ? (error as DatabaseErrorLike) : {};
+
+const classifyAuthSessionStoreFailure = (error: unknown) => {
+  const record = getDatabaseErrorRecord(error);
+  const code = trimText(record.code).toUpperCase();
+  const status = typeof record.status === "number" ? record.status : null;
+  const haystack = `${trimText(record.message)} ${trimText(record.details)} ${trimText(record.hint)}`.toLowerCase();
+
+  if (code === "42501" || haystack.includes("permission denied")) {
+    return {
+      clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
+      kind: "permission_denied" as const,
+      serviceCode: code || null,
+    };
+  }
+
+  if (
+    code === "42703" ||
+    code === "42P01" ||
+    code === "PGRST204" ||
+    code === "PGRST205" ||
+    haystack.includes("auth_trusted_devices") ||
+    haystack.includes("auth_level") ||
+    haystack.includes("idle_timeout_seconds") ||
+    haystack.includes("refresh_token_hash") ||
+    haystack.includes("schema cache") ||
+    haystack.includes("session_scope")
+  ) {
+    return {
+      clientCode: "AUTH_SESSION_STORE_SCHEMA_MISMATCH",
+      kind: "schema_drift" as const,
+      serviceCode: code || null,
+    };
+  }
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    code === "PGRST301" ||
+    haystack.includes("invalid api key") ||
+    haystack.includes("invalid jwt")
+  ) {
+    return {
+      clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
+      kind: "service_role_unavailable" as const,
+      serviceCode: code || null,
+    };
+  }
+
+  return {
+    clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
+    kind: "unknown" as const,
+    serviceCode: code || null,
+  };
+};
+
+const buildAuthSessionStoreFailureResponse = <T>({
+  context,
+  email,
+  error,
+  stage,
+  userId,
+}: {
+  context: RequestContext;
+  email?: string | null;
+  error: unknown;
+  stage: AuthSessionStoreFailureStage;
+  userId?: string | null;
+}): ServiceResponse<T> => {
+  const failure = classifyAuthSessionStoreFailure(error);
+  const isRefreshFlow = stage.startsWith("refresh_");
+  const user = email ? maskEmailAddress(email) : null;
+
+  logAuthError(
+    failure.kind === "schema_drift" ? "AUTH_SESSION_STORE_SCHEMA_MISMATCH" : "AUTH_SESSION_STORE_FAILURE",
+    "Authentication session storage failed.",
+    {
+      device: buildLoginDeviceLabel(context),
+      email: user,
+      error_code: failure.serviceCode,
+      error_kind: failure.kind,
+      error_message: toSafeErrorMessage(error),
+      ip: trimText(context.ip) || null,
+      remediation:
+        failure.kind === "schema_drift"
+          ? "apply auth_trusted_devices migrations and verify service_role grants"
+          : null,
+      stage,
+      user_id: trimText(userId) || null,
+    },
+    {
+      dedupeKey: `auth-session-store:${stage}:${failure.kind}`,
+      user,
+    },
+  );
+
+  return buildError(
+    503,
+    isRefreshFlow
+      ? "Unable to restore the session right now. Please try again shortly."
+      : "Unable to establish the Super Admin session right now. Please try again shortly.",
+    failure.clientCode,
+  );
+};
+
 const getSuperAdminOtpRecord = async (redis: IORedis, email: string) => {
   const rawRecord = await redis.get(superAdminOtpKey(email));
   if (!rawRecord) {
@@ -859,6 +988,8 @@ const buildSuperAdminEmailHtml = (otp: string, fullName: string | null) => `
   </div>
 `;
 
+const resolveSuperAdminEmailFromEnv = (env: EnvLike) => readEnv(env, "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL");
+
 const sendSuperAdminOtpEmail = async ({
   email,
   env,
@@ -870,7 +1001,7 @@ const sendSuperAdminOtpEmail = async ({
   fullName: string | null;
   otp: string;
 }) => {
-  const from = resolveLibriofyEmailFrom(readEnv(env, "AUTH_EMAIL_FROM"));
+  const from = resolveLibriofyEmailFrom(resolveSuperAdminEmailFromEnv(env));
   if (!readEnv(env, "RESEND_API_KEY") || !from) {
     throw new Error("Email OTP delivery is not configured.");
   }
@@ -2344,17 +2475,28 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     return buildError(403, "Super admin access is no longer available for this account.", "ACCESS_DENIED");
   }
 
-  const authenticated = await createAuthenticatedResponse({
-    ...context,
-    authLevel: 2,
-    deliveryChannel: otpRecord.deliveryChannel,
-    effectiveUser: user,
-    env,
-    idleTimeoutSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
-    loginMethod: "email",
-    sessionScope: "super_admin",
-    sessionTtlSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
-  });
+  let authenticated: Awaited<ReturnType<typeof createAuthenticatedResponse>>;
+  try {
+    authenticated = await createAuthenticatedResponse({
+      ...context,
+      authLevel: 2,
+      deliveryChannel: otpRecord.deliveryChannel,
+      effectiveUser: user,
+      env,
+      idleTimeoutSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
+      loginMethod: "email",
+      sessionScope: "super_admin",
+      sessionTtlSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
+    });
+  } catch (error) {
+    return buildAuthSessionStoreFailureResponse({
+      context,
+      email: otpRecord.email,
+      error,
+      stage: "verify_issue_session",
+      userId: otpRecord.userId,
+    });
+  }
   logSuperAdminDebug("super admin session issued", {
     authLevel: 2,
     channel: otpRecord.deliveryChannel,
@@ -2959,7 +3101,16 @@ export const resolveRefreshSessionRequest = async (
   }
 
   try {
-    const trustedSession = await getTrustedDeviceSession(env, refreshToken);
+    let trustedSession: Awaited<ReturnType<typeof getTrustedDeviceSession>>;
+    try {
+      trustedSession = await getTrustedDeviceSession(env, refreshToken);
+    } catch (error) {
+      return buildAuthSessionStoreFailureResponse({
+        context,
+        error,
+        stage: "refresh_load_session",
+      });
+    }
     if (!trustedSession) {
       return buildErrorWithCookies(
         401,
@@ -3022,21 +3173,31 @@ export const resolveRefreshSessionRequest = async (
           dedupeKey: "auth-refresh-runtime",
         },
       );
-      return buildErrorWithCookies(
+      return buildError(
         503,
         runtimeIssues[0]?.message || "Unable to refresh the session right now. Please sign in again.",
         runtimeIssues[0]?.code || "AUTH_REFRESH_ERROR",
-        [buildClearedSessionCookie(env)],
       );
     }
 
-    const nextRefreshToken = await rotateTrustedDeviceSession({
-      deviceFingerprint: context.deviceFingerprint,
-      deviceSession: trustedSession,
-      env,
-      ip: context.ip,
-      userAgent: context.userAgent,
-    });
+    let nextRefreshToken: Awaited<ReturnType<typeof rotateTrustedDeviceSession>>;
+    try {
+      nextRefreshToken = await rotateTrustedDeviceSession({
+        deviceFingerprint: context.deviceFingerprint,
+        deviceSession: trustedSession,
+        env,
+        ip: context.ip,
+        userAgent: context.userAgent,
+      });
+    } catch (error) {
+      return buildAuthSessionStoreFailureResponse({
+        context,
+        email: user.email,
+        error,
+        stage: "refresh_rotate_session",
+        userId: user.id,
+      });
+    }
     const activeImpersonation = await resolveActiveImpersonationForTrustedSession(env, trustedSession, user);
     if (activeImpersonation) {
       await touchImpersonationSession(env, activeImpersonation.impersonation.impersonationId, {
@@ -3090,11 +3251,10 @@ export const resolveRefreshSessionRequest = async (
       status: "FAILED",
       type: "AUTH_ERROR",
     });
-    return buildErrorWithCookies(
+    return buildError(
       503,
       "Unable to refresh the session right now. Please sign in again.",
       "AUTH_REFRESH_ERROR",
-      [buildClearedSessionCookie(env)],
     );
   }
 };

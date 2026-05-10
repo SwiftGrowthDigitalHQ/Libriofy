@@ -4,6 +4,7 @@ import {
   hasCustomJwtSigningConfig,
   hasSuperAdminEmailOtpConfig,
   getSuperAdminLoginRuntimeIssues,
+  SUPER_ADMIN_EMAIL_OTP_REQUIREMENT,
 } from "../authRuntimeConfig.js";
 import {
   LIBRIOFY_AUTH_EMAIL,
@@ -307,17 +308,17 @@ export const validateRuntimeConfiguration = (
     buildCheck(
       "super_admin_email_otp",
       hasEmailOtp ? "pass" : "fail",
-      hasEmailOtp
-        ? "Super admin email OTP delivery is configured."
-        : `Super admin email OTP delivery must use ${LIBRIOFY_AUTH_EMAIL} via Resend.`,
+        hasEmailOtp
+          ? "Super admin email OTP delivery is configured."
+          : `Super admin email OTP delivery must use ${LIBRIOFY_AUTH_EMAIL} via Resend.`,
       {
         category: "config",
-        requirement: `RESEND_API_KEY+AUTH_EMAIL_FROM=${LIBRIOFY_AUTH_EMAIL}`,
+        requirement: SUPER_ADMIN_EMAIL_OTP_REQUIREMENT,
       },
     ),
   );
   if (!hasEmailOtp) {
-    missing.push(`RESEND_API_KEY+AUTH_EMAIL_FROM=${LIBRIOFY_AUTH_EMAIL}`);
+    missing.push(SUPER_ADMIN_EMAIL_OTP_REQUIREMENT);
   }
 
   if (options.target === "express") {

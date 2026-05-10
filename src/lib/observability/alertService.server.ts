@@ -47,7 +47,7 @@ const deliverAlertEmail = async (input: AdminAlertInput, env: EnvLike) => {
     return false;
   }
 
-  const from = resolveLibriofyEmailFrom(readAlertEnv(env, "OPS_ALERT_EMAIL_FROM", "AUTH_EMAIL_FROM"));
+  const from = resolveLibriofyEmailFrom(readAlertEnv(env, "OPS_ALERT_EMAIL_FROM", "AUTH_EMAIL_FROM", "RESEND_FROM_EMAIL"));
   const recipients = to
     .split(",")
     .map((value) => value.trim())
