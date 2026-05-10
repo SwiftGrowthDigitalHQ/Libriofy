@@ -901,10 +901,18 @@ const classifyAuthSessionStoreFailure = (error: unknown) => {
   const status = typeof record.status === "number" ? record.status : null;
   const haystack = `${trimText(record.message)} ${trimText(record.details)} ${trimText(record.hint)}`.toLowerCase();
 
-  if (code === "42501" || haystack.includes("permission denied")) {
+  // RLS Policy violations (code 42501 = INSUFFICIENT_PRIVILEGE)
+  // Also check for row-level security specific error keywords
+  if (
+    code === "42501" ||
+    haystack.includes("permission denied") ||
+    haystack.includes("row level security") ||
+    haystack.includes("rls policy") ||
+    haystack.includes("new row violates row level security")
+  ) {
     return {
       clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
-      kind: "permission_denied" as const,
+      kind: "rls_policy_violation" as const,
       serviceCode: code || null,
     };
   }
@@ -965,14 +973,32 @@ const buildAuthSessionStoreFailureResponse = <T>({
   const failure = classifyAuthSessionStoreFailure(error);
   const isRefreshFlow = stage.startsWith("refresh_");
   const user = email ? maskEmailAddress(email) : null;
-  const failureType =
+  
+  // Better error categorization
+  let failureType: string;
+  let remediationHint: string | null = null;
+  
+  if (failure.kind === "rls_policy_violation") {
+    failureType = "AUTH_RLS_POLICY_VIOLATION";
+    remediationHint = "RLS policy blocked auth_trusted_devices INSERT - verify service_role policies exist";
+  } else if (failure.kind === "schema_drift") {
+    failureType = "AUTH_SCHEMA_INTEGRITY_FAILURE";
+    remediationHint = "apply auth_trusted_devices migrations and verify service_role grants";
+  } else if (failure.kind === "service_role_unavailable") {
+    failureType = "AUTH_SERVICE_ROLE_UNAVAILABLE";
+    remediationHint = "verify SUPABASE_SERVICE_ROLE_KEY is valid and service_role has required permissions";
+  } else if (
     stage === "verify_issue_session"
-      ? "AUTH_TRUSTED_DEVICE_FAILURE"
-      : isRefreshFlow
-        ? "AUTH_REFRESH_FAILURE"
-        : failure.kind === "schema_drift"
-          ? "AUTH_SCHEMA_INTEGRITY_FAILURE"
-          : "AUTH_SESSION_STORE_FAILURE";
+  ) {
+    failureType = "AUTH_TRUSTED_DEVICE_FAILURE";
+    remediationHint = null;
+  } else if (isRefreshFlow) {
+    failureType = "AUTH_REFRESH_FAILURE";
+    remediationHint = null;
+  } else {
+    failureType = "AUTH_SESSION_STORE_FAILURE";
+    remediationHint = null;
+  }
 
   logAuthError(
     failureType,
@@ -986,10 +1012,7 @@ const buildAuthSessionStoreFailureResponse = <T>({
       error_stack: toSafeErrorStack(error),
       failure_category: failureType,
       ip: trimText(context.ip) || null,
-      remediation:
-        failure.kind === "schema_drift"
-          ? "apply auth_trusted_devices migrations and verify service_role grants"
-          : null,
+      remediation: remediationHint,
       stage,
       user_id: trimText(userId) || null,
     },

@@ -25,7 +25,8 @@ export type AuthIntegrityFailureCategory =
   | "AUTH_RESEND_FAILURE"
   | "AUTH_RUNTIME_CONFIG_FAILURE"
   | "AUTH_SCHEMA_INTEGRITY_FAILURE"
-  | "AUTH_SUPABASE_INIT_FAILURE";
+  | "AUTH_SUPABASE_INIT_FAILURE"
+  | "AUTH_RLS_POLICY_FAILURE";
 
 type AuthIntegrityCheck = {
   code: AuthIntegrityFailureCategory | null;
@@ -119,6 +120,19 @@ const classifyAuthRuntimeHealthFailure = (
 ): AuthIntegrityFailureCategory => {
   const normalizedDetail = trimText(detail).toLowerCase();
 
+  // RLS policy failures
+  if (
+    normalizedDetail.includes("permission denied") ||
+    normalizedDetail.includes("row level security") ||
+    normalizedDetail.includes("rls policy") ||
+    normalizedDetail.includes("policy ") ||
+    (normalizedDetail.includes("new row") && normalizedDetail.includes("violates")) ||
+    normalizedDetail.includes("pgrst112") ||
+    normalizedDetail.includes("42501") // PostgreSQL permission denied error code
+  ) {
+    return "AUTH_RLS_POLICY_FAILURE";
+  }
+
   if (
     missingContracts.length > 0 ||
     normalizedDetail.includes("get_auth_runtime_status") ||
@@ -136,7 +150,8 @@ const classifyAuthRuntimeHealthFailure = (
     normalizedDetail.includes("invalid jwt") ||
     normalizedDetail.includes("status 401") ||
     normalizedDetail.includes("status 403") ||
-    normalizedDetail.includes("service role key")
+    normalizedDetail.includes("service role key") ||
+    normalizedDetail.includes("not authorized")
   ) {
     return "AUTH_SUPABASE_INIT_FAILURE";
   }
