@@ -327,7 +327,10 @@ export const handleAuthApiRequest = async (
             ? "Unable to refresh the session right now. Please sign in again."
             : "Authentication service is temporarily unavailable.",
           pathname === "/api/auth/refresh" ? "AUTH_REFRESH_ERROR" : "AUTH_ERROR",
-          { requestId: traceContext.requestId },
+          {
+            failureCategory: "AUTH_RUNTIME_FAILURE",
+            requestId: traceContext.requestId,
+          },
         ),
       );
     } finally {

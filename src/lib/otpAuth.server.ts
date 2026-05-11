@@ -58,6 +58,7 @@ import {
   type AuthIntegrityFlow,
 } from "./authRuntimeIntegrity.server.js";
 import { logInternalError, logInternalInfo, logInternalWarning } from "./observability/internalLogger.server.js";
+import { type AuthRuntimeFailureCategory } from "./observability/databaseHealth.shared.js";
 import { logEvent } from "./observability/eventLogger.server.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 import { getRequestTraceContext } from "./observability/requestContext.server.js";
@@ -654,7 +655,7 @@ const getRedisConnection = (env: EnvLike) => {
 
   client.on("error", (error) => {
     logAuthWarning(
-      "AUTH_REDIS_CONNECTION_FAILURE",
+      "AUTH_REDIS_FAILURE",
       "Redis connection reported an auth infrastructure error.",
       {
         error_message: toSafeErrorMessage(error),
@@ -785,7 +786,7 @@ const logSuperAdminRuntimeIssues = (
   email?: string | null,
 ) => {
   logAuthError(
-    "AUTH_RUNTIME_CONFIG_FAILURE",
+    "AUTH_RUNTIME_FAILURE",
     "Super admin auth runtime configuration is incomplete.",
     {
       device: buildLoginDeviceLabel(context),
@@ -828,7 +829,7 @@ const buildAuthIntegrityFlowResponse = async <T>(
   }
 
   logAuthError(
-    report.primaryCode ?? "AUTH_RUNTIME_CONFIG_FAILURE",
+    report.primaryCode ?? "AUTH_RUNTIME_FAILURE",
     "Auth runtime integrity validation blocked the request.",
     {
       detail: report.detail,
@@ -895,24 +896,59 @@ const buildSuperAdminAuthRuntimePreflightResponse = <T>({
 const getDatabaseErrorRecord = (error: unknown): DatabaseErrorLike =>
   error && typeof error === "object" && !Array.isArray(error) ? (error as DatabaseErrorLike) : {};
 
-const classifyAuthSessionStoreFailure = (error: unknown) => {
+type ClassifiedAuthDatabaseFailure = {
+  category: AuthRuntimeFailureCategory;
+  clientCode: "AUTH_INFRA_UNAVAILABLE" | "AUTH_SESSION_STORE_SCHEMA_MISMATCH" | "AUTH_SESSION_STORE_UNAVAILABLE";
+  kind:
+    | "grant_failure"
+    | "rls_failure"
+    | "rpc_failure"
+    | "runtime_failure"
+    | "schema_drift"
+    | "unknown";
+  serviceCode: string | null;
+};
+
+const classifyAuthDatabaseFailure = (error: unknown): ClassifiedAuthDatabaseFailure => {
   const record = getDatabaseErrorRecord(error);
   const code = trimText(record.code).toUpperCase();
   const status = typeof record.status === "number" ? record.status : null;
   const haystack = `${trimText(record.message)} ${trimText(record.details)} ${trimText(record.hint)}`.toLowerCase();
 
-  // RLS Policy violations (code 42501 = INSUFFICIENT_PRIVILEGE)
-  // Also check for row-level security specific error keywords
   if (
-    code === "42501" ||
-    haystack.includes("permission denied") ||
+    code === "PGRST202" ||
+    haystack.includes("could not find the function") ||
+    (haystack.includes("schema cache") && haystack.includes("function"))
+  ) {
+    return {
+      category: "AUTH_RPC_FAILURE",
+      clientCode: "AUTH_SESSION_STORE_SCHEMA_MISMATCH",
+      kind: "rpc_failure",
+      serviceCode: code || null,
+    };
+  }
+
+  if (
     haystack.includes("row level security") ||
     haystack.includes("rls policy") ||
     haystack.includes("new row violates row level security")
   ) {
     return {
+      category: "AUTH_RLS_FAILURE",
       clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
-      kind: "rls_policy_violation" as const,
+      kind: "rls_failure",
+      serviceCode: code || null,
+    };
+  }
+
+  if (
+    code === "42501" ||
+    haystack.includes("permission denied")
+  ) {
+    return {
+      category: "AUTH_GRANT_FAILURE",
+      clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
+      kind: "grant_failure",
       serviceCode: code || null,
     };
   }
@@ -930,8 +966,9 @@ const classifyAuthSessionStoreFailure = (error: unknown) => {
     haystack.includes("session_scope")
   ) {
     return {
+      category: "AUTH_SCHEMA_FAILURE",
       clientCode: "AUTH_SESSION_STORE_SCHEMA_MISMATCH",
-      kind: "schema_drift" as const,
+      kind: "schema_drift",
       serviceCode: code || null,
     };
   }
@@ -944,15 +981,17 @@ const classifyAuthSessionStoreFailure = (error: unknown) => {
     haystack.includes("invalid jwt")
   ) {
     return {
+      category: "AUTH_RUNTIME_FAILURE",
       clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
-      kind: "service_role_unavailable" as const,
+      kind: "runtime_failure",
       serviceCode: code || null,
     };
   }
 
   return {
-    clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
-    kind: "unknown" as const,
+    category: "AUTH_RUNTIME_FAILURE",
+    clientCode: "AUTH_INFRA_UNAVAILABLE",
+    kind: "unknown",
     serviceCode: code || null,
   };
 };
@@ -970,38 +1009,32 @@ const buildAuthSessionStoreFailureResponse = <T>({
   stage: AuthSessionStoreFailureStage;
   userId?: string | null;
 }): ServiceResponse<T> => {
-  const failure = classifyAuthSessionStoreFailure(error);
+  const failure = classifyAuthDatabaseFailure(error);
   const isRefreshFlow = stage.startsWith("refresh_");
   const user = email ? maskEmailAddress(email) : null;
-  
-  // Better error categorization
-  let failureType: string;
+
   let remediationHint: string | null = null;
-  
-  if (failure.kind === "rls_policy_violation") {
-    failureType = "AUTH_RLS_POLICY_VIOLATION";
-    remediationHint = "RLS policy blocked auth_trusted_devices INSERT - verify service_role policies exist";
-  } else if (failure.kind === "schema_drift") {
-    failureType = "AUTH_SCHEMA_INTEGRITY_FAILURE";
-    remediationHint = "apply auth_trusted_devices migrations and verify service_role grants";
-  } else if (failure.kind === "service_role_unavailable") {
-    failureType = "AUTH_SERVICE_ROLE_UNAVAILABLE";
-    remediationHint = "verify SUPABASE_SERVICE_ROLE_KEY is valid and service_role has required permissions";
-  } else if (
-    stage === "verify_issue_session"
-  ) {
-    failureType = "AUTH_TRUSTED_DEVICE_FAILURE";
-    remediationHint = null;
-  } else if (isRefreshFlow) {
-    failureType = "AUTH_REFRESH_FAILURE";
-    remediationHint = null;
-  } else {
-    failureType = "AUTH_SESSION_STORE_FAILURE";
-    remediationHint = null;
+  switch (failure.category) {
+    case "AUTH_RLS_FAILURE":
+      remediationHint = "RLS blocked auth_trusted_devices access - verify trusted-device policies for service_role";
+      break;
+    case "AUTH_GRANT_FAILURE":
+      remediationHint = "verify service_role grants on auth_trusted_devices and auth RPCs";
+      break;
+    case "AUTH_RPC_FAILURE":
+      remediationHint = "deploy auth runtime RPC migrations and reload the PostgREST schema cache";
+      break;
+    case "AUTH_SCHEMA_FAILURE":
+      remediationHint = "apply auth runtime schema migrations and verify trusted-device columns/indexes";
+      break;
+    case "AUTH_RUNTIME_FAILURE":
+    default:
+      remediationHint = "verify SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and auth runtime credentials";
+      break;
   }
 
   logAuthError(
-    failureType,
+    failure.category,
     "Authentication session storage failed.",
     {
       device: buildLoginDeviceLabel(context),
@@ -1010,7 +1043,7 @@ const buildAuthSessionStoreFailureResponse = <T>({
       error_kind: failure.kind,
       error_message: toSafeErrorMessage(error),
       error_stack: toSafeErrorStack(error),
-      failure_category: failureType,
+      failure_category: failure.category,
       ip: trimText(context.ip) || null,
       remediation: remediationHint,
       stage,
@@ -1028,7 +1061,79 @@ const buildAuthSessionStoreFailureResponse = <T>({
       ? "Unable to restore the session right now. Please try again shortly."
       : "Unable to establish the Super Admin session right now. Please try again shortly.",
     failure.clientCode,
+    {
+      detail: toSafeErrorMessage(error),
+      failureCategory: failure.category,
+    },
   );
+};
+
+const buildAuthDatabaseFailureResponse = <T>({
+  clientCode,
+  clientMessage,
+  context,
+  email,
+  error,
+  stage,
+  userId,
+}: {
+  clientCode?: ClassifiedAuthDatabaseFailure["clientCode"] | "AUTH_REFRESH_ERROR";
+  clientMessage: string;
+  context: RequestContext;
+  email?: string | null;
+  error: unknown;
+  stage: string;
+  userId?: string | null;
+}): ServiceResponse<T> => {
+  const failure = classifyAuthDatabaseFailure(error);
+  const user = email ? maskEmailAddress(email) : null;
+
+  let remediationHint: string | null = null;
+  switch (failure.category) {
+    case "AUTH_RLS_FAILURE":
+      remediationHint = "RLS blocked auth runtime access - verify trusted-device and auth RPC policies";
+      break;
+    case "AUTH_GRANT_FAILURE":
+      remediationHint = "verify service_role grants on auth runtime tables and RPCs";
+      break;
+    case "AUTH_RPC_FAILURE":
+      remediationHint = "deploy the auth RPC migrations and reload the PostgREST schema cache";
+      break;
+    case "AUTH_SCHEMA_FAILURE":
+      remediationHint = "apply the auth runtime schema migrations and verify contract drift";
+      break;
+    case "AUTH_RUNTIME_FAILURE":
+    default:
+      remediationHint = "verify Supabase runtime credentials and auth runtime configuration";
+      break;
+  }
+
+  logAuthError(
+    failure.category,
+    clientMessage,
+    {
+      device: buildLoginDeviceLabel(context),
+      email: user,
+      error_code: failure.serviceCode,
+      error_kind: failure.kind,
+      error_message: toSafeErrorMessage(error),
+      error_stack: toSafeErrorStack(error),
+      failure_category: failure.category,
+      ip: trimText(context.ip) || null,
+      remediation: remediationHint,
+      stage,
+      user_id: trimText(userId) || null,
+    },
+    {
+      dedupeKey: `auth-db-failure:${stage}:${failure.kind}`,
+      user,
+    },
+  );
+
+  return buildError(503, clientMessage, clientCode ?? failure.clientCode, {
+    detail: toSafeErrorMessage(error),
+    failureCategory: failure.category,
+  });
 };
 
 const getSuperAdminOtpRecord = async (redis: IORedis, email: string) => {
@@ -2294,32 +2399,14 @@ export const resolveSuperAdminLoginRequest = async (
   try {
     user = await resolveSuperAdminEmailUser(env, email);
   } catch (error) {
-    logAuthError(
-      "AUTH_SUPABASE_INIT_FAILURE",
-      "Super admin email lookup failed.",
-      {
-        device: buildLoginDeviceLabel(context),
-        email: maskEmailAddress(email),
-        error_message: toSafeErrorMessage(error),
-        error_stack: toSafeErrorStack(error),
-        failure_category: "AUTH_SUPABASE_INIT_FAILURE",
-        ip: ip || null,
-        stage: "super_admin_email_lookup",
-      },
-      {
-        dedupeKey: "super-admin-email-lookup",
-        user: maskEmailAddress(email),
-      },
-    );
-    return buildError(
-      503,
-      "Super admin sign-in is temporarily unavailable. Please try again shortly.",
-      "AUTH_SESSION_STORE_UNAVAILABLE",
-      {
-        detail: toSafeErrorMessage(error),
-        failureCategory: "AUTH_SUPABASE_INIT_FAILURE",
-      },
-    );
+    return buildAuthDatabaseFailureResponse({
+      clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
+      clientMessage: "Super admin sign-in is temporarily unavailable. Please try again shortly.",
+      context,
+      email,
+      error,
+      stage: "super_admin_email_lookup",
+    });
   }
   logSuperAdminDebug("super admin email lookup completed", {
     email: maskEmailAddress(email),
@@ -2658,33 +2745,15 @@ export const resolveSuperAdminVerifyOtpRequest = async (
   try {
     user = await loadAuthUserById(env, otpRecord.userId);
   } catch (error) {
-    logAuthError(
-      "AUTH_SUPABASE_INIT_FAILURE",
-      "Super admin identity reload failed after OTP verification.",
-      {
-        device: buildLoginDeviceLabel(context),
-        email: maskEmailAddress(otpRecord.email),
-        error_message: toSafeErrorMessage(error),
-        error_stack: toSafeErrorStack(error),
-        failure_category: "AUTH_SUPABASE_INIT_FAILURE",
-        ip: trimText(context.ip) || null,
-        stage: "super_admin_post_otp_user_reload",
-        user_id: otpRecord.userId,
-      },
-      {
-        dedupeKey: "super-admin-post-otp-user-reload",
-        user: maskEmailAddress(otpRecord.email),
-      },
-    );
-    return buildError(
-      503,
-      "Super admin sign-in is temporarily unavailable. Please try again shortly.",
-      "AUTH_SESSION_STORE_UNAVAILABLE",
-      {
-        detail: toSafeErrorMessage(error),
-        failureCategory: "AUTH_SUPABASE_INIT_FAILURE",
-      },
-    );
+    return buildAuthDatabaseFailureResponse({
+      clientCode: "AUTH_SESSION_STORE_UNAVAILABLE",
+      clientMessage: "Super admin sign-in is temporarily unavailable. Please try again shortly.",
+      context,
+      email: otpRecord.email,
+      error,
+      stage: "super_admin_post_otp_user_reload",
+      userId: otpRecord.userId,
+    });
   }
   const hasSuperAdminRole = user.roles.includes("super_admin");
   logSuperAdminDebug("post-OTP role check completed", {
@@ -3389,30 +3458,14 @@ export const resolveRefreshSessionRequest = async (
     try {
       user = await loadAuthUserById(env, trustedSession.user_id);
     } catch (error) {
-      logAuthError(
-        "AUTH_SUPABASE_INIT_FAILURE",
-        "Session refresh could not reload the authenticated user.",
-        {
-          error_message: toSafeErrorMessage(error),
-          error_stack: toSafeErrorStack(error),
-          failure_category: "AUTH_SUPABASE_INIT_FAILURE",
-          ip: trimText(context.ip) || null,
-          stage: "refresh_reload_user",
-          user_id: trustedSession.user_id,
-        },
-        {
-          dedupeKey: "auth-refresh-reload-user",
-        },
-      );
-      return buildError(
-        503,
-        "Unable to refresh the session right now. Please sign in again.",
-        "AUTH_REFRESH_ERROR",
-        {
-          detail: toSafeErrorMessage(error),
-          failureCategory: "AUTH_SUPABASE_INIT_FAILURE",
-        },
-      );
+      return buildAuthDatabaseFailureResponse({
+        clientCode: "AUTH_REFRESH_ERROR",
+        clientMessage: "Unable to refresh the session right now. Please sign in again.",
+        context,
+        error,
+        stage: "refresh_reload_user",
+        userId: trustedSession.user_id,
+      });
     }
     if (trustedSession.session_scope === "super_admin" && !user.roles.includes("super_admin")) {
       await revokeRefreshToken(env, refreshToken, "super_admin_role_removed");
@@ -3427,7 +3480,7 @@ export const resolveRefreshSessionRequest = async (
     const runtimeIssues = getCustomAuthRuntimeIssues(env);
     if (runtimeIssues.length) {
       logAuthError(
-        "AUTH_RUNTIME_CONFIG_FAILURE",
+        "AUTH_RUNTIME_FAILURE",
         "Session refresh runtime configuration is incomplete.",
         {
           ip: trimText(context.ip) || null,

@@ -1,4 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const getAuthRuntimeHealthMock = vi.fn();
+
+vi.mock("@/lib/observability/databaseHealth.server", () => ({
+  getAuthRuntimeHealth: (...args: unknown[]) => getAuthRuntimeHealthMock(...args),
+}));
 
 import {
   handleAuthApiRequest,
@@ -6,6 +12,7 @@ import {
   type ApiRequest,
   type ApiResponse,
 } from "@/lib/authApiRoute.server";
+import { clearAuthRuntimeIntegrityCacheForTest } from "@/lib/authRuntimeIntegrity.server";
 import { resolveRefreshSessionRequest } from "@/lib/otpAuth.server";
 
 const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
@@ -43,6 +50,21 @@ const createMockResponse = () => {
 const parseBody = (body: string) => JSON.parse(body) as Record<string, unknown>;
 
 describe("auth API route handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearAuthRuntimeIntegrityCacheForTest();
+    getAuthRuntimeHealthMock.mockResolvedValue({
+      checked_at: "2026-05-11T00:00:00.000Z",
+      checks: [],
+      connectivity: "pass",
+      detail: "Auth runtime contracts verified.",
+      missing_contracts: [],
+      service: "supabase-database-health",
+      source: "live",
+      status: "ok",
+    });
+  });
+
   it("supports the canonical Super Admin auth paths", () => {
     expect(isSupportedAuthApiPath("/api/auth/super-admin/login")).toBe(true);
     expect(isSupportedAuthApiPath("/api/auth/super-admin/verify")).toBe(true);

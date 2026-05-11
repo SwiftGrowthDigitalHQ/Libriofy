@@ -1,4 +1,4 @@
-import type { DatabaseHealthPayload } from "./databaseHealth.shared.js";
+import type { AuthRuntimeFailureCategory, DatabaseHealthPayload } from "./databaseHealth.shared.js";
 
 export type RuntimeTarget =
   | "express"
@@ -37,6 +37,25 @@ export type RuntimeCapabilityReport = {
   status: RuntimeCheckStatus;
 };
 
+export type RuntimeAuthIntegrityCheck = {
+  code: AuthRuntimeFailureCategory | null;
+  detail: string;
+  name: string;
+  requirement?: string | null;
+  status: "fail" | "pass" | "warn";
+};
+
+export type RuntimeAuthIntegrityReport = {
+  checkedAt: string;
+  checks: RuntimeAuthIntegrityCheck[];
+  detail: string;
+  durationMs: number;
+  failedCodes: AuthRuntimeFailureCategory[];
+  flow: "auth_refresh" | "startup" | "super_admin_login" | "super_admin_verify";
+  primaryCode: AuthRuntimeFailureCategory | null;
+  status: "failed" | "ok";
+};
+
 export type RuntimeConfigReport = {
   checks: ServerHealthCheck[];
   driftWarnings: string[];
@@ -72,6 +91,7 @@ export type RuntimeDeploymentReport = {
 
 export type RuntimeReadinessReport = {
   appEnv: string;
+  authIntegrity: RuntimeAuthIntegrityReport;
   capabilities: RuntimeCapabilityReport[];
   checks: ServerHealthCheck[];
   config: RuntimeConfigReport;

@@ -168,6 +168,7 @@ const handleAuthRoute = async (req: ApiRequest, res: ApiResponse, resolver: Auth
       success: false,
       code: "AUTH_ERROR",
       error: message,
+      failureCategory: "AUTH_RUNTIME_FAILURE",
       message,
     });
   }

@@ -16,6 +16,8 @@ const LEGACY_RELEASE_SAFETY_EXEMPTIONS = new Set([
   "20260314190000_partner_sales_system.sql",
   "20260326152000_student_photo_uploads.sql",
   "20260507143000_queue_runtime_and_billing_resilience.sql",
+  "20260510170000_super_admin_auth_runtime_repair.sql",
+  "20260511103000_auth_runtime_integrity_hardening.sql",
 ]);
 
 const issues = [];

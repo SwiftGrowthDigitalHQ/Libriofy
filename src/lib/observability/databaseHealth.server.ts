@@ -1,6 +1,8 @@
 import {
+  classifyAuthRuntimeFailure,
   CRITICAL_DB_ENTITIES,
   type AuthRuntimeContractCheck,
+  type AuthRuntimeFailureCategory,
   type AuthRuntimeHealthPayload,
   type DatabaseHealthPayload,
   type DatabaseSchemaEntityCheck,
@@ -49,12 +51,16 @@ const buildFailedHealthPayload = (
   signals: { recentCriticalErrors: DatabaseHealthPayload["recent_critical_errors"]; systemWarnings: DatabaseHealthPayload["system_warnings"] } = emptySignals,
   options: {
     authRuntimeChecks?: AuthRuntimeContractCheck[];
+    authRuntimeFailureCategory?: AuthRuntimeFailureCategory | null;
+    authRuntimeFailingChecks?: AuthRuntimeContractCheck[];
     entities?: DatabaseSchemaEntityCheck[];
     missingContracts?: string[];
     missingEntities?: string[];
   } = {},
 ): DatabaseHealthPayload => ({
   auth_runtime_checks: options.authRuntimeChecks ?? [],
+  auth_runtime_failure_category: options.authRuntimeFailureCategory ?? null,
+  auth_runtime_failing_checks: options.authRuntimeFailingChecks ?? [],
   entities: options.entities ?? [],
   missing: options.missingEntities ?? [],
   missing_contracts: options.missingContracts ?? [],
@@ -202,6 +208,8 @@ const buildFailedAuthRuntimeHealthPayload = (
   detail: string,
   options: {
     checks?: AuthRuntimeContractCheck[];
+    failureCategory?: AuthRuntimeFailureCategory | null;
+    failingChecks?: AuthRuntimeContractCheck[];
     missingContracts?: string[];
   } = {},
 ): AuthRuntimeHealthPayload => ({
@@ -209,6 +217,8 @@ const buildFailedAuthRuntimeHealthPayload = (
   checks: options.checks ?? [],
   connectivity: "fail",
   detail,
+  failing_checks: options.failingChecks ?? options.checks ?? [],
+  failure_category: options.failureCategory ?? classifyAuthRuntimeFailure(detail, options.missingContracts ?? []),
   missing_contracts: options.missingContracts ?? [],
   service: HEALTH_SERVICE_NAME,
   source: "live",
@@ -233,12 +243,18 @@ const loadLiveAuthRuntimeHealth = async (env: EnvLike): Promise<AuthRuntimeHealt
 
     const checks = parseRpcJson<AuthRuntimeContractCheck[]>(authRuntimeResponse.rawText, "Auth runtime health") ?? [];
     const missingContracts = checks.filter((check) => !check.ok).map((check) => check.check_name);
+    const failingChecks = checks.filter((check) => !check.ok);
 
     return {
       checked_at: new Date().toISOString(),
       checks,
       connectivity: "pass",
       detail: buildAuthRuntimeDetail(missingContracts),
+      failing_checks: failingChecks,
+      failure_category:
+        missingContracts.length > 0
+          ? classifyAuthRuntimeFailure(buildAuthRuntimeDetail(missingContracts), missingContracts)
+          : null,
       missing_contracts: missingContracts,
       service: HEALTH_SERVICE_NAME,
       source: "live",
@@ -280,6 +296,8 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
         await loadRecentSignals(env),
         {
           authRuntimeChecks: authRuntimeHealth.checks,
+          authRuntimeFailureCategory: authRuntimeHealth.failure_category ?? null,
+          authRuntimeFailingChecks: authRuntimeHealth.failing_checks ?? [],
           missingContracts: authRuntimeHealth.missing_contracts,
         },
       );
@@ -295,6 +313,8 @@ const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPaylo
 
     return {
       auth_runtime_checks: authRuntimeChecks,
+      auth_runtime_failure_category: authRuntimeHealth.failure_category ?? null,
+      auth_runtime_failing_checks: authRuntimeHealth.failing_checks ?? [],
       checked_at: new Date().toISOString(),
       connectivity: "pass",
       detail: buildHealthDetail(missingEntities, missingContracts),

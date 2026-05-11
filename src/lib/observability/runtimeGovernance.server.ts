@@ -725,6 +725,16 @@ export const buildRuntimeReadinessReport = async (
 
   return {
     appEnv: getAppEnv(env),
+    authIntegrity: {
+      checkedAt: authIntegrity.checkedAt,
+      checks: authIntegrity.checks,
+      detail: authIntegrity.detail,
+      durationMs: authIntegrity.durationMs,
+      failedCodes: authIntegrity.failedCodes,
+      flow: authIntegrity.flow,
+      primaryCode: authIntegrity.primaryCode,
+      status: authIntegrity.status,
+    },
     capabilities,
     checks,
     config,

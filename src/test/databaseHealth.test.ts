@@ -91,6 +91,7 @@ describe("database health runtime contracts", () => {
     expect(result.detail).toBe("Critical database schema and auth runtime contracts verified.");
     expect(result.missing_entities).toEqual([]);
     expect(result.missing_contracts).toEqual([]);
+    expect(result.auth_runtime_failure_category).toBeNull();
     expect(result.auth_runtime_checks).toEqual(healthyAuthContracts);
   });
 
@@ -130,6 +131,7 @@ describe("database health runtime contracts", () => {
     expect(result.connectivity).toBe("pass");
     expect(result.missing_entities).toEqual([]);
     expect(result.missing_contracts).toEqual(["column:auth_trusted_devices.auth_level"]);
+    expect(result.auth_runtime_failure_category).toBe("AUTH_SCHEMA_FAILURE");
     expect(result.detail).toContain("Missing auth runtime contracts: column:auth_trusted_devices.auth_level.");
   });
 
@@ -165,6 +167,7 @@ describe("database health runtime contracts", () => {
     expect(result.connectivity).toBe("fail");
     expect(result.missing_entities).toEqual([]);
     expect(result.missing_contracts).toEqual([]);
+    expect(result.auth_runtime_failure_category).toBe("AUTH_RPC_FAILURE");
     expect(result.detail).toContain("Auth runtime health RPC failed with status 404");
   });
 });

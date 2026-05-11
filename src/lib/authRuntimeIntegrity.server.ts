@@ -8,6 +8,10 @@ import {
 } from "./authRuntimeConfig.js";
 import { LIBRIOFY_PUBLIC_APP_URL, isLibriofyAppUrl } from "./libriofyConfig.js";
 import { getAuthRuntimeHealth } from "./observability/databaseHealth.server.js";
+import {
+  classifyAuthRuntimeFailure,
+  type AuthRuntimeFailureCategory,
+} from "./observability/databaseHealth.shared.js";
 import { logInternalError, logInternalWarning } from "./observability/internalLogger.server.js";
 import { getRequestTraceContext } from "./observability/requestContext.server.js";
 import { incrementRuntimeMetric, recordRuntimeLatency } from "./observability/runtimeMetrics.server.js";
@@ -20,13 +24,7 @@ export type AuthIntegrityFlow =
   | "super_admin_login"
   | "super_admin_verify";
 
-export type AuthIntegrityFailureCategory =
-  | "AUTH_REDIS_CONNECTION_FAILURE"
-  | "AUTH_RESEND_FAILURE"
-  | "AUTH_RUNTIME_CONFIG_FAILURE"
-  | "AUTH_SCHEMA_INTEGRITY_FAILURE"
-  | "AUTH_SUPABASE_INIT_FAILURE"
-  | "AUTH_RLS_POLICY_FAILURE";
+export type AuthIntegrityFailureCategory = AuthRuntimeFailureCategory;
 
 type AuthIntegrityCheck = {
   code: AuthIntegrityFailureCategory | null;
@@ -114,51 +112,6 @@ const createTimeoutSignal = (timeoutMs = AUTH_INTEGRITY_PROBE_TIMEOUT_MS) =>
     ? AbortSignal.timeout(timeoutMs)
     : undefined;
 
-const classifyAuthRuntimeHealthFailure = (
-  detail: string | null | undefined,
-  missingContracts: string[],
-): AuthIntegrityFailureCategory => {
-  const normalizedDetail = trimText(detail).toLowerCase();
-
-  // RLS policy failures
-  if (
-    normalizedDetail.includes("permission denied") ||
-    normalizedDetail.includes("row level security") ||
-    normalizedDetail.includes("rls policy") ||
-    normalizedDetail.includes("policy ") ||
-    (normalizedDetail.includes("new row") && normalizedDetail.includes("violates")) ||
-    normalizedDetail.includes("pgrst112") ||
-    normalizedDetail.includes("42501") // PostgreSQL permission denied error code
-  ) {
-    return "AUTH_RLS_POLICY_FAILURE";
-  }
-
-  if (
-    missingContracts.length > 0 ||
-    normalizedDetail.includes("get_auth_runtime_status") ||
-    normalizedDetail.includes("schema cache") ||
-    normalizedDetail.includes("missing auth runtime contracts") ||
-    normalizedDetail.includes("pgrst202") ||
-    normalizedDetail.includes("pgrst204") ||
-    normalizedDetail.includes("pgrst205")
-  ) {
-    return "AUTH_SCHEMA_INTEGRITY_FAILURE";
-  }
-
-  if (
-    normalizedDetail.includes("invalid api key") ||
-    normalizedDetail.includes("invalid jwt") ||
-    normalizedDetail.includes("status 401") ||
-    normalizedDetail.includes("status 403") ||
-    normalizedDetail.includes("service role key") ||
-    normalizedDetail.includes("not authorized")
-  ) {
-    return "AUTH_SUPABASE_INIT_FAILURE";
-  }
-
-  return "AUTH_SUPABASE_INIT_FAILURE";
-};
-
 const shouldProbeRedis = (flow: AuthIntegrityFlow) =>
   flow === "startup" || flow === "super_admin_login" || flow === "super_admin_verify";
 
@@ -185,7 +138,7 @@ const logIntegrityReportFailure = (report: AuthIntegrityReport) => {
   lastFailureSignatureByFlow.set(report.flow, signature);
 
   void logInternalError({
-    type: report.primaryCode ?? "AUTH_RUNTIME_CONFIG_FAILURE",
+    type: report.primaryCode ?? "AUTH_RUNTIME_FAILURE",
     message: `Auth integrity validation failed for ${report.flow}.`,
     metadata: {
       area: "auth",
@@ -235,7 +188,7 @@ const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
       hasCanonicalUrl ? "pass" : "fail",
       hasCanonicalUrl ? "Canonical Libriofy app URL is configured." : `Expected ${LIBRIOFY_PUBLIC_APP_URL}.`,
       {
-        code: hasCanonicalUrl ? null : "AUTH_RUNTIME_CONFIG_FAILURE",
+        code: hasCanonicalUrl ? null : "AUTH_RUNTIME_FAILURE",
         requirement: `APP_URL|PUBLIC_APP_URL|SITE_URL=${LIBRIOFY_PUBLIC_APP_URL}`,
       },
     ),
@@ -248,7 +201,7 @@ const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
       supabaseUrl ? "pass" : "fail",
       supabaseUrl ? "SUPABASE_URL is configured." : "SUPABASE_URL is missing.",
       {
-        code: supabaseUrl ? null : "AUTH_RUNTIME_CONFIG_FAILURE",
+        code: supabaseUrl ? null : "AUTH_RUNTIME_FAILURE",
         requirement: "SUPABASE_URL",
       },
     ),
@@ -261,7 +214,7 @@ const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
       serviceRoleKey ? "pass" : "fail",
       serviceRoleKey ? "SUPABASE_SERVICE_ROLE_KEY is configured." : "SUPABASE_SERVICE_ROLE_KEY is missing.",
       {
-        code: serviceRoleKey ? null : "AUTH_RUNTIME_CONFIG_FAILURE",
+        code: serviceRoleKey ? null : "AUTH_RUNTIME_FAILURE",
         requirement: "SUPABASE_SERVICE_ROLE_KEY",
       },
     ),
@@ -275,7 +228,7 @@ const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
         "fail",
         "Custom auth token signing is not configured.",
         {
-          code: "AUTH_RUNTIME_CONFIG_FAILURE",
+          code: "AUTH_RUNTIME_FAILURE",
           requirement: "SUPABASE_JWT_SECRET|JWT_SECRET|APP_JWT_SECRET",
         },
       ),
@@ -304,7 +257,7 @@ const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
           "fail",
           `JWT signing configuration failed a sign/verify probe: ${error instanceof Error ? error.message : String(error)}`,
           {
-            code: "AUTH_RUNTIME_CONFIG_FAILURE",
+            code: "AUTH_RUNTIME_FAILURE",
             requirement: "SUPABASE_JWT_SECRET|JWT_SECRET|APP_JWT_SECRET",
           },
         ),
@@ -320,7 +273,7 @@ const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
         redisUrl ? "pass" : "fail",
         redisUrl ? "REDIS_URL is configured." : "REDIS_URL is missing.",
         {
-          code: redisUrl ? null : "AUTH_RUNTIME_CONFIG_FAILURE",
+          code: redisUrl ? null : "AUTH_REDIS_FAILURE",
           requirement: "REDIS_URL",
         },
       ),
@@ -386,7 +339,7 @@ const probeRedisReachability = async (env: EnvLike) => {
       "fail",
       `Redis reachability probe failed: ${error instanceof Error ? error.message : String(error)}`,
       {
-        code: "AUTH_REDIS_CONNECTION_FAILURE",
+        code: "AUTH_REDIS_FAILURE",
         requirement: "REDIS_URL",
       },
     );
@@ -476,7 +429,7 @@ const probeSupabaseAuthRuntime = async (env: EnvLike) => {
     "fail",
     health.detail || "Auth runtime contracts could not be verified.",
     {
-      code: classifyAuthRuntimeHealthFailure(health.detail, health.missing_contracts),
+      code: classifyAuthRuntimeFailure(health.detail, health.missing_contracts),
     },
   );
 };
@@ -543,7 +496,7 @@ const loadAuthRuntimeIntegrity = async (
     const warningChecks = report.checks.filter((check) => check.status === "warn");
     if (warningChecks.length > 0) {
       void logInternalWarning({
-        type: "AUTH_RUNTIME_CONFIG_FAILURE",
+        type: "AUTH_RUNTIME_FAILURE",
         message: `Auth integrity validation for ${flow} completed with warnings.`,
         metadata: {
           area: "auth",
@@ -614,6 +567,12 @@ export const warmAuthRuntimeIntegrity = (
   }).catch(() => undefined);
 };
 
+export const clearAuthRuntimeIntegrityCacheForTest = () => {
+  cachedReports.clear();
+  inFlightReports.clear();
+  lastFailureSignatureByFlow.clear();
+};
+
 export const assertAuthSchemaIntegrity = async (
   env: EnvLike = process.env,
   options: {
@@ -631,7 +590,7 @@ export const assertAuthSchemaIntegrity = async (
 
   const error = new Error(report.detail);
   Object.assign(error, {
-    code: report.primaryCode ?? "AUTH_RUNTIME_CONFIG_FAILURE",
+    code: report.primaryCode ?? "AUTH_RUNTIME_FAILURE",
     report,
   });
   throw error;
@@ -648,12 +607,14 @@ const mapPrimaryCodeToClientCode = (
   switch (primaryCode) {
     case "AUTH_RESEND_FAILURE":
       return "OTP_DELIVERY_UNAVAILABLE";
-    case "AUTH_SCHEMA_INTEGRITY_FAILURE":
+    case "AUTH_RPC_FAILURE":
+    case "AUTH_SCHEMA_FAILURE":
       return "AUTH_SESSION_STORE_SCHEMA_MISMATCH";
-    case "AUTH_SUPABASE_INIT_FAILURE":
+    case "AUTH_GRANT_FAILURE":
+    case "AUTH_RLS_FAILURE":
       return "AUTH_SESSION_STORE_UNAVAILABLE";
-    case "AUTH_REDIS_CONNECTION_FAILURE":
-    case "AUTH_RUNTIME_CONFIG_FAILURE":
+    case "AUTH_REDIS_FAILURE":
+    case "AUTH_RUNTIME_FAILURE":
     default:
       return "AUTH_INFRA_UNAVAILABLE";
   }

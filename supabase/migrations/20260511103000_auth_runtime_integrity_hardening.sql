@@ -1,91 +1,50 @@
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- =============================================================================
+-- Migration: Auth runtime integrity hardening
+-- Purpose:
+--   * complete the trusted-device schema contract idempotently
+--   * scope trusted-device RLS explicitly to authenticated users and service_role
+--   * preserve user-ownership checks without allowing direct client session minting
+--   * harden auth RPC/grant verification for startup and readiness probes
+-- =============================================================================
 
-CREATE TABLE IF NOT EXISTS public.auth_trusted_devices (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  refresh_token_hash TEXT NOT NULL,
-  device_fingerprint_hash TEXT,
-  device_label TEXT,
-  login_method TEXT NOT NULL,
-  phone_number TEXT,
-  delivery_channel TEXT,
-  user_agent TEXT,
-  last_ip TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at TIMESTAMPTZ NOT NULL,
-  revoked_at TIMESTAMPTZ,
-  revocation_reason TEXT,
-  session_scope TEXT NOT NULL DEFAULT 'general',
-  auth_level SMALLINT NOT NULL DEFAULT 1,
-  idle_timeout_seconds INTEGER
-);
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+
+ALTER TABLE public.auth_trusted_devices ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.auth_trusted_devices
   ADD COLUMN IF NOT EXISTS refresh_token_hash TEXT,
   ADD COLUMN IF NOT EXISTS device_fingerprint_hash TEXT,
-  ADD COLUMN IF NOT EXISTS device_label TEXT,
-  ADD COLUMN IF NOT EXISTS login_method TEXT,
-  ADD COLUMN IF NOT EXISTS phone_number TEXT,
-  ADD COLUMN IF NOT EXISTS delivery_channel TEXT,
-  ADD COLUMN IF NOT EXISTS user_agent TEXT,
-  ADD COLUMN IF NOT EXISTS last_ip TEXT,
-  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now(),
-  ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ DEFAULT now(),
-  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS revocation_reason TEXT,
   ADD COLUMN IF NOT EXISTS session_scope TEXT DEFAULT 'general',
   ADD COLUMN IF NOT EXISTS auth_level SMALLINT DEFAULT 1,
   ADD COLUMN IF NOT EXISTS idle_timeout_seconds INTEGER;
 
 UPDATE public.auth_trusted_devices
 SET
-  created_at = COALESCE(created_at, now()),
-  expires_at = COALESCE(expires_at, now()),
-  last_used_at = COALESCE(last_used_at, now()),
-  login_method = COALESCE(NULLIF(btrim(login_method), ''), CASE WHEN NULLIF(btrim(phone_number), '') IS NOT NULL THEN 'otp' ELSE 'email' END),
-  session_scope = COALESCE(NULLIF(btrim(session_scope), ''), 'general'),
+  refresh_token_hash = COALESCE(
+    NULLIF(BTRIM(refresh_token_hash), ''),
+    encode(extensions.digest(COALESCE(id::TEXT, gen_random_uuid()::TEXT), 'sha256'::TEXT), 'hex')
+  ),
+  session_scope = COALESCE(NULLIF(BTRIM(session_scope), ''), 'general'),
   auth_level = COALESCE(auth_level, 1),
   idle_timeout_seconds = CASE
-    WHEN idle_timeout_seconds IS NULL AND COALESCE(NULLIF(btrim(session_scope), ''), 'general') = 'super_admin' THEN 1800
+    WHEN idle_timeout_seconds IS NULL
+      AND COALESCE(NULLIF(BTRIM(session_scope), ''), 'general') = 'super_admin'
+      THEN 1800
     ELSE idle_timeout_seconds
-  END,
-  refresh_token_hash = COALESCE(
-    NULLIF(btrim(refresh_token_hash), ''),
-    encode(extensions.digest(COALESCE(id::text, gen_random_uuid()::text), 'sha256'::text), 'hex')
-  ),
-  revoked_at = CASE
-    WHEN (
-      refresh_token_hash IS NULL OR btrim(refresh_token_hash) = '' OR
-      expires_at IS NULL OR
-      login_method IS NULL OR btrim(login_method) = '' OR
-      session_scope IS NULL OR btrim(session_scope) = '' OR
-      auth_level IS NULL
-    )
-      THEN COALESCE(revoked_at, now())
-    ELSE revoked_at
-  END,
-  revocation_reason = CASE
-    WHEN (
-      refresh_token_hash IS NULL OR btrim(refresh_token_hash) = '' OR
-      expires_at IS NULL OR
-      login_method IS NULL OR btrim(login_method) = '' OR
-      session_scope IS NULL OR btrim(session_scope) = '' OR
-      auth_level IS NULL
-    )
-      THEN COALESCE(revocation_reason, 'auth_runtime_repair')
-    ELSE revocation_reason
-  END;
+  END
+WHERE
+  refresh_token_hash IS NULL
+  OR BTRIM(refresh_token_hash) = ''
+  OR session_scope IS NULL
+  OR BTRIM(session_scope) = ''
+  OR auth_level IS NULL
+  OR (
+    idle_timeout_seconds IS NULL
+    AND COALESCE(NULLIF(BTRIM(session_scope), ''), 'general') = 'super_admin'
+  );
 
 ALTER TABLE public.auth_trusted_devices
   ALTER COLUMN refresh_token_hash SET NOT NULL,
-  ALTER COLUMN login_method SET NOT NULL,
-  ALTER COLUMN created_at SET DEFAULT now(),
-  ALTER COLUMN created_at SET NOT NULL,
-  ALTER COLUMN last_used_at SET DEFAULT now(),
-  ALTER COLUMN last_used_at SET NOT NULL,
-  ALTER COLUMN expires_at SET NOT NULL,
   ALTER COLUMN session_scope SET DEFAULT 'general',
   ALTER COLUMN session_scope SET NOT NULL,
   ALTER COLUMN auth_level SET DEFAULT 1,
@@ -157,115 +116,60 @@ BEGIN
 END;
 $$;
 
-ALTER TABLE public.auth_trusted_devices ENABLE ROW LEVEL SECURITY;
-
 DROP POLICY IF EXISTS "Users can view own trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "Users can update own trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "Users can insert own trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "Service role full access to trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "service_role insert trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "service_role select trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "service_role update trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "service_role delete trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "Service role can manage trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "Service role insert trusted devices" ON public.auth_trusted_devices;
+DROP POLICY IF EXISTS "Service role can insert trusted devices" ON public.auth_trusted_devices;
+
 CREATE POLICY "Users can view own trusted devices"
   ON public.auth_trusted_devices
   FOR SELECT
+  TO authenticated
   USING (auth.uid() = user_id);
 
-DROP POLICY IF EXISTS "Users can update own trusted devices" ON public.auth_trusted_devices;
 CREATE POLICY "Users can update own trusted devices"
   ON public.auth_trusted_devices
   FOR UPDATE
+  TO authenticated
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
-CREATE TABLE IF NOT EXISTS public.login_logs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  email TEXT,
-  ip_address TEXT,
-  device TEXT,
-  login_time TIMESTAMPTZ NOT NULL DEFAULT now(),
-  status TEXT NOT NULL,
-  login_step TEXT NOT NULL,
-  reason TEXT,
-  channel TEXT
-);
+-- This policy stays grant-gated: we intentionally do not grant INSERT to authenticated.
+-- If a future runtime needs it, the policy already constrains inserts to non-elevated sessions.
+CREATE POLICY "Users can insert own trusted devices"
+  ON public.auth_trusted_devices
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    auth.uid() = user_id
+    AND COALESCE(NULLIF(BTRIM(session_scope), ''), 'general') = 'general'
+    AND auth_level = 1
+    AND idle_timeout_seconds IS NULL
+    AND revoked_at IS NULL
+    AND revocation_reason IS NULL
+    AND expires_at <= now() + INTERVAL '90 days'
+  );
 
-ALTER TABLE public.login_logs
-  ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS email TEXT,
-  ADD COLUMN IF NOT EXISTS ip_address TEXT,
-  ADD COLUMN IF NOT EXISTS device TEXT,
-  ADD COLUMN IF NOT EXISTS login_time TIMESTAMPTZ DEFAULT now(),
-  ADD COLUMN IF NOT EXISTS status TEXT,
-  ADD COLUMN IF NOT EXISTS login_step TEXT,
-  ADD COLUMN IF NOT EXISTS reason TEXT,
-  ADD COLUMN IF NOT EXISTS channel TEXT;
+CREATE POLICY "Service role full access to trusted devices"
+  ON public.auth_trusted_devices
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
 
-UPDATE public.login_logs
-SET
-  login_time = COALESCE(login_time, now()),
-  login_step = CASE
-    WHEN login_step = 'password' THEN 'email'
-    WHEN login_step IS NULL OR btrim(login_step) = '' THEN 'email'
-    ELSE login_step
-  END,
-  status = COALESCE(NULLIF(btrim(status), ''), 'failed');
-
-ALTER TABLE public.login_logs
-  ALTER COLUMN login_time SET DEFAULT now(),
-  ALTER COLUMN login_time SET NOT NULL,
-  ALTER COLUMN status SET NOT NULL,
-  ALTER COLUMN login_step SET NOT NULL;
-
-ALTER TABLE public.login_logs
-  DROP CONSTRAINT IF EXISTS login_logs_status_check,
-  DROP CONSTRAINT IF EXISTS login_logs_login_step_check;
-
-ALTER TABLE public.login_logs
-  ADD CONSTRAINT login_logs_status_check
-    CHECK (status IN ('success', 'failed')),
-  ADD CONSTRAINT login_logs_login_step_check
-    CHECK (login_step IN ('email', 'otp'));
-
-CREATE INDEX IF NOT EXISTS login_logs_user_id_idx
-  ON public.login_logs (user_id, login_time DESC);
-
-CREATE INDEX IF NOT EXISTS login_logs_login_time_idx
-  ON public.login_logs (login_time DESC);
-
-ALTER TABLE public.login_logs ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Super admins can view login logs" ON public.login_logs;
-CREATE POLICY "Super admins can view login logs"
-  ON public.login_logs
-  FOR SELECT
-  USING (public.has_role(auth.uid(), 'super_admin'));
-
-CREATE OR REPLACE FUNCTION public.find_super_admin_by_email(candidate_email TEXT)
-RETURNS TABLE (
-  user_id UUID,
-  email TEXT,
-  full_name TEXT
-)
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = public, auth
-AS $$
-  SELECT
-    auth_user.id,
-    COALESCE(profile.email, auth_user.email) AS email,
-    profile.full_name
-  FROM auth.users AS auth_user
-  JOIN public.user_roles AS role_map
-    ON role_map.user_id = auth_user.id
-   AND role_map.role = 'super_admin'
-  LEFT JOIN public.profiles AS profile
-    ON profile.user_id = auth_user.id
-  WHERE lower(COALESCE(auth_user.email, '')) = lower(COALESCE(candidate_email, ''))
-  LIMIT 1;
-$$;
-
-REVOKE ALL ON public.auth_trusted_devices FROM anon, authenticated;
-REVOKE ALL ON public.login_logs FROM anon, authenticated;
-REVOKE ALL ON FUNCTION public.find_super_admin_by_email(TEXT) FROM PUBLIC, anon, authenticated;
-
+REVOKE ALL ON public.auth_trusted_devices FROM anon, public;
+REVOKE INSERT, DELETE ON public.auth_trusted_devices FROM authenticated;
+GRANT SELECT, UPDATE ON public.auth_trusted_devices TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.auth_trusted_devices TO service_role;
-GRANT SELECT, INSERT ON public.login_logs TO service_role;
+
+REVOKE ALL ON FUNCTION public.find_super_admin_by_email(TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.find_super_admin_by_email(TEXT) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.get_auth_runtime_status()
@@ -398,7 +302,13 @@ AS $$
       END AS detail
     FROM required_columns AS required
     WHERE required.table_name = 'auth_trusted_devices'
-      AND required.column_name IN ('refresh_token_hash', 'device_fingerprint_hash', 'session_scope', 'auth_level', 'idle_timeout_seconds')
+      AND required.column_name IN (
+        'refresh_token_hash',
+        'device_fingerprint_hash',
+        'session_scope',
+        'auth_level',
+        'idle_timeout_seconds'
+      )
   ),
   index_checks AS (
     SELECT
@@ -493,35 +403,10 @@ AS $$
           THEN 'RLS is enabled on public.auth_trusted_devices.'
         ELSE 'RLS is disabled on public.auth_trusted_devices.'
       END AS detail
-
-    UNION ALL
-
-    SELECT
-      'rls:login_logs'::TEXT AS check_name,
-      COALESCE((
-        SELECT class.relrowsecurity
-        FROM pg_class AS class
-        JOIN pg_namespace AS namespace
-          ON namespace.oid = class.relnamespace
-        WHERE namespace.nspname = 'public'
-          AND class.relname = 'login_logs'
-      ), FALSE) AS ok,
-      CASE
-        WHEN COALESCE((
-          SELECT class.relrowsecurity
-          FROM pg_class AS class
-          JOIN pg_namespace AS namespace
-            ON namespace.oid = class.relnamespace
-          WHERE namespace.nspname = 'public'
-            AND class.relname = 'login_logs'
-        ), FALSE)
-          THEN 'RLS is enabled on public.login_logs.'
-        ELSE 'RLS is disabled on public.login_logs.'
-      END AS detail
   ),
   policy_checks AS (
     SELECT
-      'policy:auth_trusted_devices.view_own'::TEXT AS check_name,
+      'policy:auth_trusted_devices.authenticated_select_own'::TEXT AS check_name,
       EXISTS (
         SELECT 1
         FROM pg_policies
@@ -544,7 +429,7 @@ AS $$
     UNION ALL
 
     SELECT
-      'policy:auth_trusted_devices.update_own'::TEXT AS check_name,
+      'policy:auth_trusted_devices.authenticated_update_own'::TEXT AS check_name,
       EXISTS (
         SELECT 1
         FROM pg_policies
@@ -562,6 +447,52 @@ AS $$
         )
           THEN 'Policy "Users can update own trusted devices" is present.'
         ELSE 'Policy "Users can update own trusted devices" is missing.'
+      END AS detail
+
+    UNION ALL
+
+    SELECT
+      'policy:auth_trusted_devices.authenticated_insert_own'::TEXT AS check_name,
+      EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'auth_trusted_devices'
+          AND policyname = 'Users can insert own trusted devices'
+      ) AS ok,
+      CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM pg_policies
+          WHERE schemaname = 'public'
+            AND tablename = 'auth_trusted_devices'
+            AND policyname = 'Users can insert own trusted devices'
+        )
+          THEN 'Policy "Users can insert own trusted devices" is present.'
+        ELSE 'Policy "Users can insert own trusted devices" is missing.'
+      END AS detail
+
+    UNION ALL
+
+    SELECT
+      'policy:auth_trusted_devices.service_role_all'::TEXT AS check_name,
+      EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'auth_trusted_devices'
+          AND policyname = 'Service role full access to trusted devices'
+      ) AS ok,
+      CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM pg_policies
+          WHERE schemaname = 'public'
+            AND tablename = 'auth_trusted_devices'
+            AND policyname = 'Service role full access to trusted devices'
+        )
+          THEN 'Policy "Service role full access to trusted devices" is present.'
+        ELSE 'Policy "Service role full access to trusted devices" is missing.'
       END AS detail
 
     UNION ALL
@@ -632,6 +563,19 @@ AS $$
     UNION ALL
 
     SELECT
+      'grant:authenticated.auth_trusted_devices_read_update'::TEXT AS check_name,
+      COALESCE(has_table_privilege('authenticated', 'public.auth_trusted_devices', 'SELECT'), FALSE)
+      AND COALESCE(has_table_privilege('authenticated', 'public.auth_trusted_devices', 'UPDATE'), FALSE) AS ok,
+      CASE
+        WHEN COALESCE(has_table_privilege('authenticated', 'public.auth_trusted_devices', 'SELECT'), FALSE)
+          AND COALESCE(has_table_privilege('authenticated', 'public.auth_trusted_devices', 'UPDATE'), FALSE)
+          THEN 'authenticated has SELECT/UPDATE on public.auth_trusted_devices.'
+        ELSE 'authenticated is missing SELECT/UPDATE on public.auth_trusted_devices.'
+      END AS detail
+
+    UNION ALL
+
+    SELECT
       'grant:service_role.login_logs_select_insert'::TEXT AS check_name,
       COALESCE(has_table_privilege('service_role', 'public.login_logs', 'SELECT'), FALSE)
       AND COALESCE(has_table_privilege('service_role', 'public.login_logs', 'INSERT'), FALSE) AS ok,
@@ -697,7 +641,7 @@ AS $$
   ORDER BY check_name;
 $$;
 
-REVOKE ALL ON FUNCTION public.get_auth_runtime_status() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_auth_runtime_status() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_auth_runtime_status() TO service_role;
 
 NOTIFY pgrst, 'reload schema';

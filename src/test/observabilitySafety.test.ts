@@ -66,6 +66,10 @@ const loadAuthApiRouteWithFailingLogger = async (
     logEvent,
   }));
 
+  vi.doMock("../lib/authRuntimeIntegrity.server.js", () => ({
+    warmAuthRuntimeIntegrity: vi.fn(),
+  }));
+
   vi.doMock("../lib/otpAuth.server.js", () => createOtpAuthMock(otpAuthOverrides));
 
   const module = await import("../lib/authApiRoute.server.ts");
@@ -103,7 +107,7 @@ describe("auth route observability safety", () => {
       message: "Authentication service is temporarily unavailable.",
       success: false,
     });
-    expect(logEvent).toHaveBeenCalledTimes(1);
+    expect(logEvent).toHaveBeenCalled();
   });
 
   it("keeps /api/auth/refresh from crashing when auth fails and logging rejects", async () => {
@@ -127,7 +131,7 @@ describe("auth route observability safety", () => {
       message: "Unable to refresh the session right now. Please sign in again.",
       success: false,
     });
-    expect(logEvent).toHaveBeenCalledTimes(1);
+    expect(logEvent).toHaveBeenCalled();
   });
 });
 

@@ -149,6 +149,7 @@ describe("runtime governance", () => {
     expect(report.ok).toBe(true);
     expect(report.status).toBe("degraded");
     expect(report.degraded.active).toBe(true);
+    expect(report.authIntegrity.status).toBe("ok");
     expect(report.checks.find((check) => check.name === "maintenance_source")?.status).toBe("warn");
     expect(report.contracts.find((contract) => contract.name === "maintenance")?.status).toBe("degraded");
   });
@@ -171,6 +172,7 @@ describe("runtime governance", () => {
 
     expect(report.ok).toBe(false);
     expect(report.status).toBe("failed");
+    expect(report.authIntegrity.status).toBe("ok");
     expect(report.checks.find((check) => check.name === "critical_database_schema")?.detail).toContain(
       "Missing auth runtime contracts: column:auth_trusted_devices.auth_level.",
     );
