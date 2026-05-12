@@ -644,16 +644,34 @@ const getRedisConnection = (env: EnvLike) => {
 
   const existing = redisClients.get(redisUrl);
   if (existing) {
-    return existing;
+    // Serverless runtimes can keep broken sockets between invocations (EPIPE/ECONNRESET).
+    // Recreate terminal clients so OTP verification does not keep failing on a dead connection.
+    if (existing.status === "end" || existing.status === "close") {
+      redisClients.delete(redisUrl);
+      try {
+        existing.disconnect(false);
+      } catch {
+        // ignore best-effort cleanup
+      }
+    } else {
+      return existing;
+    }
   }
 
   const client = new IORedis(redisUrl, {
+    connectTimeout: 8_000,
     enableReadyCheck: false,
-    lazyConnect: true,
+    lazyConnect: false,
     maxRetriesPerRequest: null,
+    retryStrategy: (times: number) => Math.min(250 * times, 2_000),
   });
 
   client.on("error", (error) => {
+    const message = toSafeErrorMessage(error).toLowerCase();
+    if (message.includes("epipe") || message.includes("econnreset") || message.includes("socket closed")) {
+      redisClients.delete(redisUrl);
+    }
+
     logAuthWarning(
       "AUTH_REDIS_FAILURE",
       "Redis connection reported an auth infrastructure error.",
@@ -665,6 +683,10 @@ const getRedisConnection = (env: EnvLike) => {
         dedupeKey: `auth-redis:${redisUrl}`,
       },
     );
+  });
+
+  client.on("end", () => {
+    redisClients.delete(redisUrl);
   });
 
   redisClients.set(redisUrl, client);
