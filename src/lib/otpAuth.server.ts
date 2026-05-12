@@ -1715,6 +1715,13 @@ const insertTrustedDeviceSession = async ({
 
   if (error) {
     const errorMessage = String(error.message || "").toLowerCase();
+    const isPhoneNumberNotNullMismatch =
+      (
+        error.code === "23502" ||
+        errorMessage.includes("not-null") ||
+        errorMessage.includes("null value")
+      ) &&
+      errorMessage.includes("phone_number");
     const isTrustedDeviceSchemaDrift =
       error.code === "42703" &&
       (
@@ -1766,6 +1773,46 @@ const insertTrustedDeviceSession = async ({
         error_details: legacyError.details,
         error_hint: legacyError.hint,
         error_message: legacyError.message,
+        userId: user.id
+      });
+    }
+
+    if (isPhoneNumberNotNullMismatch) {
+      logAuthWarning("AUTH_TRUSTED_DEVICE_PHONE_RETRY", "Trusted device insert retried with fallback phone number.", {
+        error_code: error.code,
+        error_message: error.message,
+        userId: user.id,
+      });
+
+      const fallbackPhonePayload = {
+        ...sessionInsertPayload,
+        // Keep session creation alive for email OTP flows on older schemas enforcing NOT NULL.
+        phone_number: trimText(user.phone) || "n/a",
+      };
+
+      const { data: fallbackPhoneData, error: fallbackPhoneError } = await serviceClient
+        .from("auth_trusted_devices")
+        .insert(fallbackPhonePayload)
+        .select("id")
+        .maybeSingle();
+
+      if (!fallbackPhoneError) {
+        logAuthInfo("AUTH_TRUSTED_DEVICE_INSERT_SUCCESS", "Successfully inserted trusted device with phone fallback", {
+          userId: user.id,
+          sessionId: fallbackPhoneData?.id
+        });
+
+        return {
+          refreshToken,
+          sessionId: normalizeText((fallbackPhoneData as { id?: string | null } | null)?.id) || createRequestId(),
+        };
+      }
+
+      logAuthError("AUTH_TRUSTED_DEVICE_INSERT_PHONE_FALLBACK_ERROR", "Supabase phone fallback insert failed", {
+        error_code: fallbackPhoneError.code,
+        error_details: fallbackPhoneError.details,
+        error_hint: fallbackPhoneError.hint,
+        error_message: fallbackPhoneError.message,
         userId: user.id
       });
     }
