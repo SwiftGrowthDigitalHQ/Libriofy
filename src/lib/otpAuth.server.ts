@@ -1689,30 +1689,87 @@ const insertTrustedDeviceSession = async ({
     userId: user.id,
     hasFingerprint: !!fingerprintHash
   });
+  const sessionInsertPayload = {
+    auth_level: authLevel,
+    delivery_channel: deliveryChannel ?? null,
+    device_fingerprint_hash: fingerprintHash,
+    device_label: trimText(deviceLabel) || null,
+    expires_at: expiresAt,
+    idle_timeout_seconds: idleTimeoutSeconds ?? null,
+    last_ip: trimText(ip) || null,
+    last_used_at: new Date().toISOString(),
+    login_method: loginMethod,
+    phone_number: user.phone,
+    refresh_token_hash: refreshTokenHash,
+    revoked_at: null,
+    session_scope: sessionScope === "impersonation" ? "super_admin" : sessionScope,
+    user_agent: trimText(userAgent) || null,
+    user_id: user.id,
+  };
 
   const { data, error } = await serviceClient
     .from("auth_trusted_devices")
-    .insert({
-      auth_level: authLevel,
-      delivery_channel: deliveryChannel ?? null,
-      device_fingerprint_hash: fingerprintHash,
-      device_label: trimText(deviceLabel) || null,
-      expires_at: expiresAt,
-      idle_timeout_seconds: idleTimeoutSeconds ?? null,
-      last_ip: trimText(ip) || null,
-      last_used_at: new Date().toISOString(),
-      login_method: loginMethod,
-      phone_number: user.phone,
-      refresh_token_hash: refreshTokenHash,
-      revoked_at: null,
-      session_scope: sessionScope === "impersonation" ? "super_admin" : sessionScope,
-      user_agent: trimText(userAgent) || null,
-      user_id: user.id,
-    })
+    .insert(sessionInsertPayload)
     .select("id")
     .maybeSingle();
 
   if (error) {
+    const errorMessage = String(error.message || "").toLowerCase();
+    const isTrustedDeviceSchemaDrift =
+      error.code === "42703" &&
+      (
+        errorMessage.includes("auth_level") ||
+        errorMessage.includes("delivery_channel") ||
+        errorMessage.includes("idle_timeout_seconds") ||
+        errorMessage.includes("session_scope") ||
+        errorMessage.includes("user_agent")
+      );
+
+    if (isTrustedDeviceSchemaDrift) {
+      logAuthWarning("AUTH_TRUSTED_DEVICE_LEGACY_RETRY", "Trusted device insert retried with legacy payload.", {
+        error_code: error.code,
+        error_message: error.message,
+        userId: user.id,
+      });
+
+      const legacyPayload = {
+        device_fingerprint_hash: fingerprintHash,
+        expires_at: expiresAt,
+        last_ip: trimText(ip) || null,
+        login_method: loginMethod,
+        phone_number: user.phone,
+        refresh_token_hash: refreshTokenHash,
+        revoked_at: null,
+        user_id: user.id,
+      };
+
+      const { data: legacyData, error: legacyError } = await serviceClient
+        .from("auth_trusted_devices")
+        .insert(legacyPayload)
+        .select("id")
+        .maybeSingle();
+
+      if (!legacyError) {
+        logAuthInfo("AUTH_TRUSTED_DEVICE_INSERT_SUCCESS", "Successfully inserted trusted device with legacy payload", {
+          userId: user.id,
+          sessionId: legacyData?.id
+        });
+
+        return {
+          refreshToken,
+          sessionId: normalizeText((legacyData as { id?: string | null } | null)?.id) || createRequestId(),
+        };
+      }
+
+      logAuthError("AUTH_TRUSTED_DEVICE_INSERT_LEGACY_ERROR", "Supabase legacy insert retry failed", {
+        error_code: legacyError.code,
+        error_details: legacyError.details,
+        error_hint: legacyError.hint,
+        error_message: legacyError.message,
+        userId: user.id
+      });
+    }
+
     logAuthError("AUTH_TRUSTED_DEVICE_INSERT_ERROR", "Supabase insert failed", {
       error_code: error.code,
       error_details: error.details,
