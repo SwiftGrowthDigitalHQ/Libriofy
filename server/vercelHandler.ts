@@ -603,10 +603,13 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
       await handleAuthRoute(req, res, (body, context) => resolveEmailLoginRequest(process.env, body, context));
       return;
     case "/api/auth/super-admin/login":
+    case "/api/utils/user-admin/login":
       await handleAuthRoute(req, res, (body, context) => resolveSuperAdminLoginRequest(process.env, body, context));
       return;
     case "/api/auth/super-admin/verify-otp":
     case "/api/auth/super-admin/verify":
+    case "/api/utils/user-admin/verify-otp":
+    case "/api/utils/user-admin/verify":
       await handleAuthRoute(req, res, (body, context) => resolveSuperAdminVerifyOtpRequest(process.env, body, context));
       return;
     case "/api/auth/refresh":
