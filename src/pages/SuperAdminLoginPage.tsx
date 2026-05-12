@@ -39,6 +39,13 @@ const SuperAdminLoginPage = () => {
   const [otp, setOtp] = useState("");
   const [maskedDestination, setMaskedDestination] = useState("");
   const [error, setError] = useState("");
+  const [verifyDebugMeta, setVerifyDebugMeta] = useState<{
+    code: string | null;
+    detail: string | null;
+    failureCategory: string | null;
+    requestId: string | null;
+    status: number | null;
+  } | null>(null);
   const [stepLoading, setStepLoading] = useState<"email" | "otp" | "resend" | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
@@ -82,6 +89,7 @@ const SuperAdminLoginPage = () => {
   const sendOtpToEmail = async (resend = false) => {
     const normalizedEmail = email.trim().toLowerCase();
     setError("");
+    setVerifyDebugMeta(null);
     setStepLoading(resend ? "resend" : "email");
 
     try {
@@ -114,12 +122,30 @@ const SuperAdminLoginPage = () => {
     }
 
     setError("");
+    setVerifyDebugMeta(null);
     setStepLoading("otp");
 
     try {
       await verifySuperAdminOtp(normalizedEmail, otp);
       navigate(redirectTarget ?? SUPER_ADMIN_DASHBOARD_ROUTE, { replace: true });
     } catch (submitError) {
+      // #region agent log
+      console.error("[agent-log] super-admin verify failed", {
+        code: (submitError as { code?: string })?.code ?? null,
+        detail: (submitError as { detail?: string })?.detail ?? null,
+        failureCategory: (submitError as { failureCategory?: string })?.failureCategory ?? null,
+        message: submitError instanceof Error ? submitError.message : String(submitError),
+        requestId: (submitError as { requestId?: string })?.requestId ?? null,
+        status: (submitError as { status?: number })?.status ?? null,
+      });
+      // #endregion
+      setVerifyDebugMeta({
+        code: (submitError as { code?: string })?.code ?? null,
+        detail: (submitError as { detail?: string })?.detail ?? null,
+        failureCategory: (submitError as { failureCategory?: string })?.failureCategory ?? null,
+        requestId: (submitError as { requestId?: string })?.requestId ?? null,
+        status: (submitError as { status?: number })?.status ?? null,
+      });
       const message = submitError instanceof Error ? submitError.message : "Unable to verify OTP.";
       setError(message);
       setOtp("");
@@ -162,6 +188,16 @@ const SuperAdminLoginPage = () => {
             <div className="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
+            </div>
+          ) : null}
+          {verifyDebugMeta ? (
+            <div className="rounded-2xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-xs text-zinc-300">
+              <p className="font-medium text-zinc-200">Debug verify payload</p>
+              <p>status: {verifyDebugMeta.status ?? "null"}</p>
+              <p>code: {verifyDebugMeta.code ?? "null"}</p>
+              <p>failureCategory: {verifyDebugMeta.failureCategory ?? "null"}</p>
+              <p>detail: {verifyDebugMeta.detail ?? "null"}</p>
+              <p>requestId: {verifyDebugMeta.requestId ?? "null"}</p>
             </div>
           ) : null}
 

@@ -79,6 +79,33 @@ export const AUTH_API_ROUTE_PATHS = [
 export type AuthApiRoutePath = (typeof AUTH_API_ROUTE_PATHS)[number];
 
 const AUTH_API_ROUTE_SET = new Set<string>(AUTH_API_ROUTE_PATHS);
+const DEBUG_LOG_ENDPOINT = "http://127.0.0.1:7266/ingest/f4824e4d-ec13-45f5-a86a-75af88463350";
+const DEBUG_SESSION_ID = "87e8cb";
+const DEBUG_RUN_ID = "super-admin-verify-run-2";
+
+const emitDebugLog = (
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+) => {
+  fetch(DEBUG_LOG_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": DEBUG_SESSION_ID,
+    },
+    body: JSON.stringify({
+      sessionId: DEBUG_SESSION_ID,
+      runId: DEBUG_RUN_ID,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+};
 
 const buildErrorBody = (
   message: string,
@@ -316,8 +343,21 @@ export const handleAuthApiRequest = async (
         requestId: traceContext.requestId,
         traceId: traceContext.traceId,
       });
+      // #region agent log
+      emitDebugLog("H5", "authApiRoute.server.ts:handleAuthApiRequest:resolverResult", "Auth resolver returned", {
+        hasCookies: Boolean(result.cookies?.length),
+        route: pathname,
+        statusCode: result.statusCode,
+      });
+      // #endregion
       sendAuthResponse(res, result);
     } catch (error) {
+      // #region agent log
+      emitDebugLog("H5", "authApiRoute.server.ts:handleAuthApiRequest:catch", "Auth resolver threw unhandled error", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        route: pathname,
+      });
+      // #endregion
       logUnexpectedAuthFailure(pathname, error);
       sendJson(
         res,

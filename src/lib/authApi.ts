@@ -16,7 +16,9 @@ import { buildBearerAuthorizationHeader, sanitizeHeaders } from "@/lib/httpHeade
 
 type ApiErrorPayload = {
   code?: string;
+  detail?: string;
   error?: string;
+  failureCategory?: string;
   message?: string;
   remainingAttempts?: number;
   requestId?: string;
@@ -102,7 +104,9 @@ const toError = async (response: Response) => {
   const message = payload.error || payload.message || getDefaultErrorMessage(response);
   const error = new Error(message) as Error & ApiErrorPayload & { status?: number };
   error.code = payload.code;
+  error.detail = payload.detail;
   error.error = payload.error;
+  error.failureCategory = payload.failureCategory;
   error.requestId = payload.requestId;
   error.remainingAttempts = payload.remainingAttempts;
   error.retryAfter = payload.retryAfter;

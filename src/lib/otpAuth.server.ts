@@ -263,6 +263,33 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
 
 const resolveDefaultCountryCode = (env: EnvLike) => readEnv(env, "AUTH_DEFAULT_COUNTRY_CODE", "DEFAULT_COUNTRY_CODE") || "+91";
 
+const DEBUG_LOG_ENDPOINT = "http://127.0.0.1:7266/ingest/f4824e4d-ec13-45f5-a86a-75af88463350";
+const DEBUG_SESSION_ID = "87e8cb";
+const DEBUG_RUN_ID = "super-admin-verify-run-1";
+const emitDebugLog = (
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+) => {
+  fetch(DEBUG_LOG_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": DEBUG_SESSION_ID,
+    },
+    body: JSON.stringify({
+      sessionId: DEBUG_SESSION_ID,
+      runId: DEBUG_RUN_ID,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+};
+
 const buildError = <T>(
   statusCode: number,
   message: string,
@@ -691,6 +718,65 @@ const getRedisConnection = (env: EnvLike) => {
 
   redisClients.set(redisUrl, client);
   return client;
+};
+
+const isRedisTransientFailure = (error: unknown) => {
+  const message = toSafeErrorMessage(error).toLowerCase();
+  return (
+    message.includes("epipe") ||
+    message.includes("econnreset") ||
+    message.includes("socket closed") ||
+    message.includes("connection is closed") ||
+    message.includes("connection lost") ||
+    message.includes("etimedout")
+  );
+};
+
+const runWithRedisRetry = async <T>(
+  env: EnvLike,
+  operation: string,
+  handler: (redis: IORedis) => Promise<T>,
+): Promise<T> => {
+  try {
+    return await handler(getRedisConnection(env));
+  } catch (error) {
+    if (!isRedisTransientFailure(error)) {
+      throw error;
+    }
+
+    const redisUrl = readEnv(env, "REDIS_URL");
+    if (redisUrl) {
+      const stale = redisClients.get(redisUrl);
+      if (stale) {
+        redisClients.delete(redisUrl);
+        try {
+          stale.disconnect(false);
+        } catch {
+          // ignore cleanup failures for retry path
+        }
+      }
+    }
+
+    logAuthWarning(
+      "AUTH_REDIS_RETRY",
+      "Retrying Redis auth operation after transient socket failure.",
+      {
+        error_message: toSafeErrorMessage(error),
+        operation,
+      },
+      {
+        dedupeKey: `auth-redis-retry:${operation}`,
+      },
+    );
+
+    const retryResult = await handler(getRedisConnection(env));
+    // #region agent log
+    emitDebugLog("H5", "otpAuth.server.ts:runWithRedisRetry", "Redis transient failure recovered on retry", {
+      operation,
+    });
+    // #endregion
+    return retryResult;
+  }
 };
 
 const getFallbackQueue = (env: EnvLike) => {
@@ -1734,6 +1820,13 @@ const insertTrustedDeviceSession = async ({
     .insert(sessionInsertPayload)
     .select("id")
     .maybeSingle();
+  // #region agent log
+  emitDebugLog("H3", "otpAuth.server.ts:insertTrustedDeviceSession:insertResult", "Trusted device insert finished", {
+    hasError: Boolean(error),
+    supabaseCode: error?.code ?? null,
+    userIdPresent: Boolean(user.id),
+  });
+  // #endregion
 
   if (error) {
     const errorMessage = String(error.message || "").toLowerCase();
@@ -1928,6 +2021,13 @@ const createAuthenticatedResponse = async ({
       (err as any).stage = "cookie_serialization";
       throw err;
     }
+    // #region agent log
+    emitDebugLog("H4", "otpAuth.server.ts:createAuthenticatedResponse:cookie", "Session cookie generated", {
+      hasSecureFlag: cookieString.includes("Secure"),
+      hasSameSiteNone: cookieString.includes("SameSite=None"),
+      hasHttpOnlyFlag: cookieString.includes("HttpOnly"),
+    });
+    // #endregion
 
     logAuthInfo("AUTH_COOKIE_SERIALIZED", "Session cookie generated", { userId: effectiveUser.id });
 
@@ -2736,6 +2836,12 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     logSuperAdminRuntimeIssues("verify", runtimeIssues, context, email);
     return buildRuntimeIssueResponse(runtimeIssues);
   }
+  // #region agent log
+  emitDebugLog("H1", "otpAuth.server.ts:resolveSuperAdminVerifyOtpRequest:runtime", "Verify request passed runtime issue gate", {
+    emailPresent: Boolean(email),
+    runtimeIssuesCount: runtimeIssues.length,
+  });
+  // #endregion
 
   const integrityResponse = await buildAuthIntegrityFlowResponse<SuperAdminVerifyOtpResponse>(
     env,
@@ -2756,12 +2862,14 @@ export const resolveSuperAdminVerifyOtpRequest = async (
 
   const redis = getRedisConnection(env);
   const ip = trimText(context.ip);
-  const ipRetryAfter = await enforceRateLimit(
-    redis,
-    "super-admin-verify-ip",
-    ip,
-    SUPER_ADMIN_VERIFY_IP_LIMIT,
-    RATE_LIMIT_WINDOW_SECONDS,
+  const ipRetryAfter = await runWithRedisRetry(env, "super_admin_verify_rate_limit", (retryRedis) =>
+    enforceRateLimit(
+      retryRedis,
+      "super-admin-verify-ip",
+      ip,
+      SUPER_ADMIN_VERIFY_IP_LIMIT,
+      RATE_LIMIT_WINDOW_SECONDS,
+    ),
   );
   if (ipRetryAfter) {
     logAuthWarning(
@@ -2795,7 +2903,15 @@ export const resolveSuperAdminVerifyOtpRequest = async (
     return buildError(400, "Enter the 6-digit OTP to continue.", "INVALID_REQUEST");
   }
 
-  const otpRecord = await getSuperAdminOtpRecord(redis, email);
+  const otpRecord = await runWithRedisRetry(env, "super_admin_verify_otp_lookup", (retryRedis) =>
+    getSuperAdminOtpRecord(retryRedis, email),
+  );
+  // #region agent log
+  emitDebugLog("H2", "otpAuth.server.ts:resolveSuperAdminVerifyOtpRequest:otpLookup", "OTP record lookup completed", {
+    emailPresent: Boolean(email),
+    hasRecord: Boolean(otpRecord),
+  });
+  // #endregion
   logSuperAdminDebug("OTP record lookup completed", {
     email: maskEmailAddress(email),
     recordFound: Boolean(otpRecord),
@@ -2967,6 +3083,17 @@ export const resolveSuperAdminVerifyOtpRequest = async (
 
   let authenticated: Awaited<ReturnType<typeof createAuthenticatedResponse>>;
   try {
+    // #region agent log
+    emitDebugLog(
+      "H3",
+      "otpAuth.server.ts:resolveSuperAdminVerifyOtpRequest:createAuthenticatedResponse:start",
+      "Starting authenticated session creation after OTP verification",
+      {
+        deliveryChannel: otpRecord.deliveryChannel,
+        userIdPresent: Boolean(otpRecord.userId),
+      },
+    );
+    // #endregion
     authenticated = await createAuthenticatedResponse({
       ...context,
       authLevel: 2,
@@ -2979,6 +3106,18 @@ export const resolveSuperAdminVerifyOtpRequest = async (
       sessionTtlSeconds: SUPER_ADMIN_IDLE_TIMEOUT_SECONDS,
     });
   } catch (error) {
+    // #region agent log
+    emitDebugLog(
+      "H3",
+      "otpAuth.server.ts:resolveSuperAdminVerifyOtpRequest:createAuthenticatedResponse:catch",
+      "Authenticated session creation threw error",
+      {
+        errorMessage: toSafeErrorMessage(error),
+        stage: (error as { stage?: string | null })?.stage ?? null,
+        supabaseCode: ((error as { supabaseError?: { code?: string | null } })?.supabaseError?.code ?? null),
+      },
+    );
+    // #endregion
     return buildAuthSessionStoreFailureResponse({
       context,
       email: otpRecord.email,
