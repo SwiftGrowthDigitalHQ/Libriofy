@@ -1033,8 +1033,24 @@ const buildAuthSessionStoreFailureResponse = <T>({
       break;
   }
 
+  const errorMessage = String((error as any)?.message || error);
+  const lowerError = errorMessage.toLowerCase();
+
+  let exactCategory = "AUTH_SESSION_FINALIZATION_FAILURE";
+  if (failure.kind === "rls_failure" || lowerError.includes("row level security") || lowerError.includes("rls")) {
+    exactCategory = "AUTH_RLS_REJECTION";
+  } else if (lowerError.includes("pgcrypto") || lowerError.includes("digest") || lowerError.includes("crypt")) {
+    exactCategory = "AUTH_PGCRYPTO_FAILURE";
+  } else if ((error as any)?.stage === "insertTrustedDeviceSession" || stage === "verify_issue_session") {
+    exactCategory = "AUTH_TRUSTED_DEVICE_INSERT_FAILURE";
+  } else if (lowerError.includes("cookie serialization")) {
+    exactCategory = "AUTH_COOKIE_SERIALIZATION_FAILURE";
+  } else if (isRefreshFlow || lowerError.includes("refresh token")) {
+    exactCategory = "AUTH_REFRESH_TOKEN_FAILURE";
+  }
+
   logAuthError(
-    failure.category,
+    exactCategory,
     "Authentication session storage failed.",
     {
       device: buildLoginDeviceLabel(context),
@@ -1043,14 +1059,15 @@ const buildAuthSessionStoreFailureResponse = <T>({
       error_kind: failure.kind,
       error_message: toSafeErrorMessage(error),
       error_stack: toSafeErrorStack(error),
-      failure_category: failure.category,
+      failure_category: exactCategory,
       ip: trimText(context.ip) || null,
       remediation: remediationHint,
       stage,
       user_id: trimText(userId) || null,
+      supabaseError: (error as any)?.supabaseError || null,
     },
     {
-      dedupeKey: `auth-session-store:${stage}:${failure.kind}`,
+      dedupeKey: `auth-session-store:${stage}:${exactCategory}`,
       user,
     },
   );
@@ -1060,10 +1077,10 @@ const buildAuthSessionStoreFailureResponse = <T>({
     isRefreshFlow
       ? "Unable to restore the session right now. Please try again shortly."
       : "Unable to establish the Super Admin session right now. Please try again shortly.",
-    failure.clientCode,
+    exactCategory,
     {
       detail: toSafeErrorMessage(error),
-      failureCategory: failure.category,
+      failureCategory: exactCategory,
     },
   );
 };
@@ -1660,16 +1677,25 @@ const insertTrustedDeviceSession = async ({
   user: AuthUser;
   userAgent?: string;
 }) => {
+  logAuthInfo("AUTH_TRUSTED_DEVICE_INSERT_START", "Starting trusted device session insert", { userId: user.id, authLevel, loginMethod });
   const serviceClient = createServiceClient(env);
   const refreshToken = createRefreshToken();
   const expiresAt = new Date(Date.now() + sessionTtlSeconds * 1000).toISOString();
+
+  const refreshTokenHash = sha256(refreshToken);
+  const fingerprintHash = trimText(deviceFingerprint) ? sha256(trimText(deviceFingerprint)) : null;
+
+  logAuthInfo("AUTH_HASH_GENERATION_COMPLETE", "Generated hashes for refresh token and fingerprint", {
+    userId: user.id,
+    hasFingerprint: !!fingerprintHash
+  });
 
   const { data, error } = await serviceClient
     .from("auth_trusted_devices")
     .insert({
       auth_level: authLevel,
       delivery_channel: deliveryChannel ?? null,
-      device_fingerprint_hash: trimText(deviceFingerprint) ? sha256(trimText(deviceFingerprint)) : null,
+      device_fingerprint_hash: fingerprintHash,
       device_label: trimText(deviceLabel) || null,
       expires_at: expiresAt,
       idle_timeout_seconds: idleTimeoutSeconds ?? null,
@@ -1677,7 +1703,7 @@ const insertTrustedDeviceSession = async ({
       last_used_at: new Date().toISOString(),
       login_method: loginMethod,
       phone_number: user.phone,
-      refresh_token_hash: sha256(refreshToken),
+      refresh_token_hash: refreshTokenHash,
       revoked_at: null,
       session_scope: sessionScope === "impersonation" ? "super_admin" : sessionScope,
       user_agent: trimText(userAgent) || null,
@@ -1687,8 +1713,24 @@ const insertTrustedDeviceSession = async ({
     .maybeSingle();
 
   if (error) {
-    throw error;
+    logAuthError("AUTH_TRUSTED_DEVICE_INSERT_ERROR", "Supabase insert failed", {
+      error_code: error.code,
+      error_details: error.details,
+      error_hint: error.hint,
+      error_message: error.message,
+      userId: user.id
+    });
+    
+    const customError = new Error(error.message);
+    (customError as any).supabaseError = error;
+    (customError as any).stage = "insertTrustedDeviceSession";
+    throw customError;
   }
+
+  logAuthInfo("AUTH_TRUSTED_DEVICE_INSERT_SUCCESS", "Successfully inserted trusted device", {
+    userId: user.id,
+    sessionId: data?.id
+  });
 
   return {
     refreshToken,
@@ -1722,49 +1764,70 @@ const createAuthenticatedResponse = async ({
   sessionScope?: AuthSessionScope;
   sessionTtlSeconds?: number;
 } & RequestContext) => {
-  const issuedSession = await insertTrustedDeviceSession({
-    authLevel,
-    deliveryChannel,
-    deviceFingerprint: context.deviceFingerprint,
-    deviceLabel: context.deviceLabel,
-    env,
-    idleTimeoutSeconds,
-    ip: context.ip,
-    loginMethod,
-    sessionScope,
-    sessionTtlSeconds,
-    user: realUser ?? effectiveUser,
-    userAgent: context.userAgent,
-  });
+  try {
+    const issuedSession = await insertTrustedDeviceSession({
+      authLevel,
+      deliveryChannel,
+      deviceFingerprint: context.deviceFingerprint,
+      deviceLabel: context.deviceLabel,
+      env,
+      idleTimeoutSeconds,
+      ip: context.ip,
+      loginMethod,
+      sessionScope,
+      sessionTtlSeconds,
+      user: realUser ?? effectiveUser,
+      userAgent: context.userAgent,
+    });
 
-  const accessToken = mintAccessToken({
-    accessTokenTtlSeconds,
-    authLevel,
-    effectiveUser,
-    env,
-    impersonation,
-    loginMethod,
-    realUser,
-    sessionId: issuedSession.sessionId,
-    sessionScope,
-  });
+    logAuthInfo("AUTH_SESSION_INSERTED", "Session inserted successfully, minting JWT", { userId: effectiveUser.id });
 
-  return {
-    cookies: [buildSessionCookie(env, issuedSession.refreshToken, sessionTtlSeconds)],
-    session: createClientSession({
-      accessToken,
+    const accessToken = mintAccessToken({
       accessTokenTtlSeconds,
       authLevel,
       effectiveUser,
-      idleTimeoutSeconds,
+      env,
       impersonation,
       loginMethod,
-      provider: "custom",
       realUser,
+      sessionId: issuedSession.sessionId,
       sessionScope,
-      trustedDevice: true,
-    }),
-  };
+    });
+
+    logAuthInfo("AUTH_JWT_SIGNED", "JWT signed successfully", { userId: effectiveUser.id });
+
+    const cookieString = buildSessionCookie(env, issuedSession.refreshToken, sessionTtlSeconds);
+    if (!cookieString) {
+      const err = new Error("Cookie serialization failed: empty cookie generated");
+      (err as any).stage = "cookie_serialization";
+      throw err;
+    }
+
+    logAuthInfo("AUTH_COOKIE_SERIALIZED", "Session cookie generated", { userId: effectiveUser.id });
+
+    return {
+      cookies: [cookieString],
+      session: createClientSession({
+        accessToken,
+        accessTokenTtlSeconds,
+        authLevel,
+        effectiveUser,
+        idleTimeoutSeconds,
+        impersonation,
+        loginMethod,
+        provider: "custom",
+        realUser,
+        sessionScope,
+        trustedDevice: true,
+      }),
+    };
+  } catch (err: any) {
+    logAuthError("AUTH_SESSION_CREATION_FAILED", "Failed during createAuthenticatedResponse", {
+      error_message: err.message,
+      stage: err.stage || "createAuthenticatedResponse"
+    });
+    throw err;
+  }
 };
 
 const getTrustedDeviceSession = async (env: EnvLike, refreshToken: string) => {

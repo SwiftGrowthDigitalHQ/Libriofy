@@ -22,11 +22,12 @@ export const createInstrumentedServerSupabaseFetch = (source: string): typeof fe
   const slowQueryThresholdMs = Math.max(250, Number(process.env.SLOW_DB_QUERY_THRESHOLD_MS || "800"));
 
   return async (input, init) => {
-    const details = getSupabaseRequestDetails(input, init);
+    const customInit = { ...init, cache: "no-store" as RequestCache };
+    const details = getSupabaseRequestDetails(input, customInit);
     const startedAt = Date.now();
 
     try {
-      const response = await baseFetch(input, init);
+      const response = await baseFetch(input, customInit);
       const durationMs = Date.now() - startedAt;
 
       if (!details.skipLogging && details.queryType !== "other") {
