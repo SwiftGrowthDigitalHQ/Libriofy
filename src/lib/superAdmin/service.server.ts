@@ -8235,6 +8235,40 @@ export const updatePlatformSettingsData = async (
   }
 
   const client = buildServiceClient(env);
+
+  // Fast path: maintenance_mode toggle skips governance guard entirely
+  const isMaintenanceOnlyToggle =
+    updates.length === 1 && updates[0].key === "maintenance_mode" && !input.dryRun;
+
+  if (isMaintenanceOnlyToggle) {
+    const updatedSettings = await Promise.all(
+      updates.map(({ key, value }) => upsertPlatformSetting(env, key, value, actor.actorUserId)),
+    );
+
+    await recordAdminAction(client, actor, {
+      action: "platform_settings_updated",
+      activityMessage: `Maintenance mode ${updates[0].value ? "enabled" : "disabled"}.`,
+      activityType: "platform_settings_updated",
+      metadata: {
+        before: { maintenance_mode: !updates[0].value },
+        operator_reason: input.operatorReason ?? "Maintenance mode toggled.",
+        after: { maintenance_mode: updates[0].value },
+        settings: ["maintenance_mode"],
+      },
+      operatorActionId: "governance_toggle",
+      targetDisplay: "maintenance_mode",
+      targetType: "platform_setting",
+    });
+
+    return buildApiSuccess("Maintenance mode updated.", {
+      settings: updatedSettings.map((setting) => ({
+        key: setting.key,
+        value: setting.value,
+        updatedAt: setting.updatedAt,
+      })),
+    });
+  }
+
   const existingSettings = await getPlatformSettings(env);
   const existingSettingsMap = new Map(existingSettings.map((setting) => [setting.key, setting.value]));
   const actionId = updates.some(({ key }) => EMERGENCY_SETTING_KEYS.has(key))

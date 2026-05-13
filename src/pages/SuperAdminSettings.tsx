@@ -748,20 +748,22 @@ const SuperAdminSettings = () => {
     });
   };
 
-  const handleMaintenanceToggle = () => {
-    openPlatformSettingsDialog({
-      confirmButtonLabel: "Apply maintenance change",
-      description:
-        "Maintenance changes affect runtime behavior immediately. Preview the impact first so the current platform state and review requirements are visible.",
-      initialReason: maintenanceMode
-        ? "Operator disabling maintenance mode after validation."
-        : "Operator enabling maintenance mode for controlled intervention.",
-      settings: {
-        maintenance_mode: !maintenanceMode,
-      },
-      successTitle: "Maintenance mode updated",
-      title: maintenanceMode ? "Review maintenance disable" : "Review maintenance enable",
-    });
+  const handleMaintenanceToggle = async () => {
+    try {
+      await savePlatform.mutateAsync({
+        settings: { maintenance_mode: !maintenanceMode },
+        operatorReason: maintenanceMode
+          ? "Operator disabling maintenance mode."
+          : "Operator enabling maintenance mode.",
+      });
+      toast({ title: maintenanceMode ? "Maintenance mode disabled" : "Maintenance mode enabled" });
+    } catch (error) {
+      toast({
+        description: error instanceof Error ? error.message : "Unable to update maintenance mode.",
+        title: "Maintenance toggle failed",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleAutomationSave = () => {
@@ -839,11 +841,15 @@ const SuperAdminSettings = () => {
                   {maintenanceMode ? "Enabled" : "Disabled"}
                 </Badge>
                 <Button disabled={savePlatform.isPending} onClick={handleMaintenanceToggle}>
-                  {maintenanceMode ? "Disable maintenance" : "Enable maintenance"}
+                  {savePlatform.isPending
+                    ? "Updating..."
+                    : maintenanceMode
+                      ? "Disable maintenance"
+                      : "Enable maintenance"}
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Writes directly to the centralized platform settings route and stays visible in the shared control-plane dashboard.
+                Instantly toggles maintenance mode. Normal users will see the maintenance page. Super admins always bypass.
               </p>
             </div>
           </ControlPlaneCard>
