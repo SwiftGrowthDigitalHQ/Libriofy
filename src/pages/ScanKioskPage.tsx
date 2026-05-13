@@ -1695,12 +1695,12 @@ const ScanKioskPage = () => {
         <div className="absolute bottom-[8%] right-[8%] h-[24rem] w-[24rem] rounded-full bg-emerald-500/8 blur-[130px]" />
       </div>
 
-      <div className="relative z-10 flex min-h-screen w-full flex-col px-2 py-2 sm:px-3 sm:py-3 lg:px-3.5 lg:py-3.5 xl:px-4">
+      <div className="relative z-10 flex min-h-screen w-full flex-col px-1 py-1 sm:px-2 sm:py-2 lg:px-3.5 lg:py-3.5 xl:px-4">
         <div
-          className="scan-dashboard-shell flex min-h-[calc(100dvh-1.5rem)] w-full flex-col rounded-[28px] border bg-[rgba(3,9,18,0.9)] shadow-[0_32px_140px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl"
+          className="scan-dashboard-shell flex min-h-[calc(100dvh-0.5rem)] w-full flex-col rounded-[18px] border bg-[rgba(3,9,18,0.9)] shadow-[0_32px_140px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl sm:min-h-[calc(100dvh-1rem)] sm:rounded-[24px] lg:rounded-[28px]"
           style={{ borderColor: shellBorder }}
         >
-          <header className="grid gap-3 border-b border-cyan-400/14 px-4 py-3 sm:px-5 sm:py-3.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center lg:grid-cols-[minmax(0,1.1fr)_auto_auto_minmax(0,0.78fr)] lg:gap-3.5 xl:gap-4 xl:px-6 xl:py-4">
+          <header className="grid gap-2 border-b border-cyan-400/14 px-3 py-2.5 sm:gap-3 sm:px-5 sm:py-3.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center lg:grid-cols-[minmax(0,1.1fr)_auto_auto_minmax(0,0.78fr)] lg:gap-3.5 xl:gap-4 xl:px-6 xl:py-4">
             <div className="flex min-w-0 items-center gap-3 sm:gap-4 md:col-span-2 lg:col-span-1">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] border border-cyan-400/30 bg-cyan-400/8 shadow-[0_0_36px_rgba(34,211,238,0.14)] sm:h-12 sm:w-12">
                 <div className="grid h-8 w-8 place-items-center rounded-[13px] bg-[linear-gradient(180deg,rgba(34,211,238,0.24),rgba(34,211,238,0.08))] text-cyan-100 sm:h-9 sm:w-9">
@@ -1719,17 +1719,17 @@ const ScanKioskPage = () => {
               </div>
             </div>
 
-            <div className="justify-self-start">
-              <div className="inline-flex w-full max-w-full items-center justify-center gap-2 rounded-full border border-cyan-400/22 bg-cyan-500/8 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:w-auto">
+            <div className="hidden sm:block justify-self-start">
+              <div className="inline-flex w-full max-w-full items-center justify-center gap-2 rounded-full border border-cyan-400/22 bg-cyan-500/8 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:px-4 sm:py-2 sm:text-[11px] sm:tracking-[0.24em] sm:w-auto">
                 <ShieldCheck className="h-3.5 w-3.5" />
                 Secure Kiosk Mode
               </div>
             </div>
 
-            <div className="justify-self-start md:justify-self-end lg:justify-self-center">
+            <div className="hidden md:block justify-self-start md:justify-self-end lg:justify-self-center">
               <div
                 className={cn(
-                  "inline-flex w-full max-w-full items-center justify-center gap-2 rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:w-auto",
+                  "inline-flex w-full max-w-full items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:px-4 sm:py-2 sm:text-[11px] sm:tracking-[0.24em] sm:w-auto",
                   gateTone === "danger"
                     ? "border-rose-400/22 bg-rose-500/10 text-rose-100"
                     : gateTone === "info"
@@ -1778,7 +1778,7 @@ const ScanKioskPage = () => {
           <div className="scan-dashboard-main flex-1 px-3 py-2.5 sm:px-3.5 sm:py-3 xl:px-4 xl:py-3.5">
             <div className="scan-dashboard-top main-layout items-start">
               <section
-                className="scan-dashboard-primary flex min-h-0 min-w-0 flex-col rounded-[28px] p-4 sm:p-4 xl:p-5"
+                className="scan-dashboard-primary flex min-h-0 min-w-0 flex-col rounded-[20px] p-3 sm:rounded-[28px] sm:p-4 xl:p-5"
                 style={{
                   background: panelSurfaceBright,
                   border: `1px solid ${panelBorder}`,
@@ -1938,7 +1938,7 @@ const ScanKioskPage = () => {
 
               <div className="scan-dashboard-side right-panel min-w-0">
                 <section
-                  className="scan-dashboard-side-card scan-dashboard-side-status rounded-[28px] p-3.5 sm:p-4 md:col-span-2 lg:col-span-1"
+                  className="scan-dashboard-side-card scan-dashboard-side-status rounded-[20px] p-3 sm:rounded-[28px] sm:p-4 md:col-span-2 lg:col-span-1"
                   style={{
                     background:
                       "radial-gradient(circle at top right, rgba(18,53,87,0.22), transparent 34%), linear-gradient(180deg, rgba(3,9,18,0.98), rgba(3,9,18,0.96))",
@@ -2006,7 +2006,7 @@ const ScanKioskPage = () => {
                 </section>
 
                 <section
-                  className="scan-dashboard-side-card scan-dashboard-side-verification rounded-[28px] p-3.5 sm:p-4"
+                  className="scan-dashboard-side-card scan-dashboard-side-verification rounded-[20px] p-3 sm:rounded-[28px] sm:p-4"
                   style={{
                     background:
                       "radial-gradient(circle at top left, rgba(20,67,109,0.16), transparent 34%), linear-gradient(180deg, rgba(3,9,18,0.98), rgba(3,9,18,0.96))",
@@ -2107,7 +2107,7 @@ const ScanKioskPage = () => {
                 </section>
 
                 <section
-                  className="scan-dashboard-side-card scan-dashboard-side-summary rounded-[28px] p-3.5 sm:p-4"
+                  className="scan-dashboard-side-card scan-dashboard-side-summary rounded-[20px] p-3 sm:rounded-[28px] sm:p-4"
                   style={{
                     background: panelSurface,
                     border: `1px solid ${panelBorder}`,
@@ -2162,7 +2162,7 @@ const ScanKioskPage = () => {
             </div>
 
             <section
-              className="scan-dashboard-activity-section mt-4 rounded-[28px] p-4 sm:p-4 lg:mt-0 xl:p-5"
+              className="scan-dashboard-activity-section mt-3 rounded-[20px] p-3 sm:mt-4 sm:rounded-[28px] sm:p-4 lg:mt-0 xl:p-5"
               style={{
                 background: panelSurface,
                 border: `1px solid ${panelBorder}`,
@@ -2180,7 +2180,7 @@ const ScanKioskPage = () => {
                 </motion.div>
               </div>
 
-              <div className="scan-dashboard-activity-rail mt-5 grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3.5">
+              <div className="scan-dashboard-activity-rail mt-5 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(240px,1fr))]">
                 {liveActivityItems.length === 0 ? (
                   <div className="col-span-full rounded-[22px] border border-white/8 bg-white/[0.02] px-6 py-8 text-center">
                     <p className="text-sm text-slate-400">No scans recorded yet. Activity will appear here in real time.</p>

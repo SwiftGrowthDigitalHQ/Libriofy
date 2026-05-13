@@ -40,6 +40,7 @@ const AuthPage = lazy(() => import("./pages/AuthPage"));
 const SignupPage = lazy(() => import("./pages/SignupPage"));
 const ReferralLanding = lazy(() => import("./pages/ReferralLanding"));
 const ScanPage = lazy(() => import("./pages/ScanKioskPage"));
+const ScanPageV2 = lazy(() => import("./pages/ScanKioskPageV2"));
 const SetupDevicePage = lazy(() => import("./pages/SetupDevicePage"));
 const PartnerEntryPage = lazy(() => import("./pages/PartnerEntryPage"));
 const PartnerRegistrationPage = lazy(() => import("./pages/PartnerRegistrationPage"));
@@ -133,6 +134,7 @@ const App = () => (
                     <Route path="/maintenance" element={<MaintenancePage />} />
                     <Route path="/setup-device" element={<DeviceSetupRoute />} />
                     <Route path="/scan" element={<DeviceScanRoute />} />
+                    <Route path="/scan-v2" element={<ScanPageV2 />} />
                     <Route
                       path="/auth"
                       element={
