@@ -135,83 +135,6 @@ type ActivityRailItem = ActivityFeedItem & {
   seat?: string | null;
 };
 
-const DEMO_LAST_VERIFICATION: VerificationCardData = {
-  avatarLabel: "AR",
-  liveLabel: "LIVE",
-  name: "Aditya Raj",
-  plan: "4 Hour",
-  seat: "B6",
-  statusLabel: "ACCESS GRANTED",
-  subtitle: "System is active and waiting for student ID",
-  timeSlot: "Morning (6:00 AM - 10:00 AM)",
-  tone: "success",
-  validTill: "27 Apr 2026",
-};
-
-const DEMO_SUMMARY_STATS: ScannerStatItem[] = [
-  {
-    helper: "Checked In",
-    label: "Checked In",
-    tone: "success",
-    value: "128",
-  },
-  {
-    helper: "Denied",
-    label: "Denied",
-    tone: "danger",
-    value: "7",
-  },
-  {
-    helper: "Pending Sync",
-    label: "Pending Sync",
-    tone: "info",
-    value: "15",
-  },
-];
-
-const DEMO_ACTIVITY_RAIL: ActivityRailItem[] = [
-  {
-    detail: "Access Granted",
-    id: "demo-activity-1",
-    seat: "B6",
-    timestampLabel: "12:49 PM",
-    title: "Aditya Raj",
-    tone: "success",
-  },
-  {
-    detail: "Access Denied",
-    id: "demo-activity-2",
-    seat: null,
-    timestampLabel: "12:47 PM",
-    title: "Rohit Kumar",
-    tone: "danger",
-  },
-  {
-    detail: "Access Granted",
-    id: "demo-activity-3",
-    seat: "C2",
-    timestampLabel: "12:45 PM",
-    title: "Sneha Verma",
-    tone: "success",
-  },
-  {
-    detail: "Access Granted",
-    id: "demo-activity-4",
-    seat: "A4",
-    timestampLabel: "12:43 PM",
-    title: "Karan Singh",
-    tone: "success",
-  },
-  {
-    detail: "Access Denied",
-    id: "demo-activity-5",
-    seat: null,
-    timestampLabel: "12:41 PM",
-    title: "Pooja Shah",
-    tone: "danger",
-  },
-];
-
 const scanFrameToneClasses: Record<ScannerLiveState, string> = {
   detected: "border-cyan-300/80 shadow-[0_0_0_1px_rgba(103,232,249,0.34),0_0_34px_rgba(34,211,238,0.26)]",
   failed: "border-rose-300/78 shadow-[0_0_0_1px_rgba(253,164,175,0.28),0_0_28px_rgba(251,113,133,0.18)]",
@@ -1648,10 +1571,6 @@ const ScanKioskPage = () => {
     return "QR ko 6–10 inch distance pe rakho";
   }, [cameraLive, controllerState.error, isOnline, phase]);
   const displaySummaryStats = useMemo<ScannerStatItem[]>(() => {
-    if (scanHistory.length === 0 && pendingCount === 0) {
-      return DEMO_SUMMARY_STATS;
-    }
-
     const checkedIn = scanHistory.filter((item) => item.tone === "success").length;
     const denied = scanHistory.filter((item) => item.tone === "danger").length;
     const syncPending =
@@ -1680,7 +1599,18 @@ const ScanKioskPage = () => {
   }, [pendingCount, scanHistory]);
   const displayVerification = useMemo<VerificationCardData>(() => {
     if (!activeResultCard) {
-      return DEMO_LAST_VERIFICATION;
+      return {
+        avatarLabel: "ID",
+        liveLabel: "LIVE",
+        name: "Waiting for scan",
+        plan: "--",
+        seat: "--",
+        statusLabel: "STANDBY",
+        subtitle: "System is active and waiting for student ID",
+        timeSlot: "--",
+        tone: "success",
+        validTill: "--",
+      };
     }
 
     const isRejected = activeResultCard.tone === "danger";
@@ -1697,8 +1627,8 @@ const ScanKioskPage = () => {
             ? "Offline Hold"
             : activeResultCard.statusLabel === "Already Marked"
               ? "Already Logged"
-              : DEMO_LAST_VERIFICATION.plan,
-      seat: activeResultCard.seat || (isRejected ? "--" : DEMO_LAST_VERIFICATION.seat),
+              : activeResultCard.plan || "--",
+      seat: activeResultCard.seat || "--",
       statusLabel:
         isRejected
           ? "ACCESS DENIED"
@@ -1714,7 +1644,7 @@ const ScanKioskPage = () => {
           ? "Awaiting background sync"
           : activeResultCard.statusLabel === "Already Marked"
             ? "Attendance already recorded"
-            : DEMO_LAST_VERIFICATION.timeSlot,
+            : activeResultCard.timeSlot || "--",
       tone: activeResultCard.tone,
       validTill: isRejected
         ? "Manual review"
@@ -1726,7 +1656,7 @@ const ScanKioskPage = () => {
     };
   }, [activeResultCard, nowMs]);
   const liveActivityItems = useMemo<ActivityRailItem[]>(() => {
-    const realItems = scanHistory.slice(0, 5).map((item) => ({
+    return scanHistory.slice(0, 5).map((item) => ({
       detail:
         item.tone === "success"
           ? item.statusLabel === "Already Marked"
@@ -1741,19 +1671,6 @@ const ScanKioskPage = () => {
       title: item.name,
       tone: item.tone,
     }));
-
-    if (realItems.length === 0) {
-      return DEMO_ACTIVITY_RAIL;
-    }
-
-    const existingTitles = new Set(realItems.map((item) => item.title));
-    return [
-      ...realItems,
-      ...DEMO_ACTIVITY_RAIL.filter((item) => !existingTitles.has(item.title)).slice(
-        0,
-        Math.max(0, 5 - realItems.length),
-      ),
-    ];
   }, [scanHistory]);
 
   const shellBorder = "rgba(56, 189, 248, 0.18)";
@@ -2264,6 +2181,11 @@ const ScanKioskPage = () => {
               </div>
 
               <div className="scan-dashboard-activity-rail mt-5 grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3.5">
+                {liveActivityItems.length === 0 ? (
+                  <div className="col-span-full rounded-[22px] border border-white/8 bg-white/[0.02] px-6 py-8 text-center">
+                    <p className="text-sm text-slate-400">No scans recorded yet. Activity will appear here in real time.</p>
+                  </div>
+                ) : null}
                 {liveActivityItems.map((item) => (
                   <div
                     key={item.id}
