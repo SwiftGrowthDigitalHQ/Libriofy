@@ -2037,7 +2037,7 @@ const insertTrustedDeviceSession = async ({
 
         return {
           refreshToken,
-          sessionId: normalizeText((legacyData as { id?: string | null } | null)?.id) || createRequestId(),
+          sessionId: trimText((legacyData as { id?: string | null } | null)?.id) || createRequestId(),
         };
       }
 
@@ -2077,7 +2077,7 @@ const insertTrustedDeviceSession = async ({
 
         return {
           refreshToken,
-          sessionId: normalizeText((fallbackPhoneData as { id?: string | null } | null)?.id) || createRequestId(),
+          sessionId: trimText((fallbackPhoneData as { id?: string | null } | null)?.id) || createRequestId(),
         };
       }
 
@@ -2111,7 +2111,7 @@ const insertTrustedDeviceSession = async ({
 
   return {
     refreshToken,
-    sessionId: normalizeText((data as { id?: string | null } | null)?.id) || createRequestId(),
+    sessionId: trimText((data as { id?: string | null } | null)?.id) || createRequestId(),
   };
 };
 
@@ -3656,7 +3656,7 @@ export const resolveStartImpersonationRequest = async (
       ? (requestBody as StartImpersonationRequestBody)
       : {};
 
-  const targetUserId = normalizeText(body.targetUserId);
+  const targetUserId = trimText(body.targetUserId);
   if (!targetUserId) {
     return buildError(400, "Target user ID is required.", "INVALID_REQUEST");
   }
@@ -3835,7 +3835,7 @@ export const resolveImpersonationAuditRequest = async (
     requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as AuditImpersonationRequestBody)
       : {};
-  const action = normalizeText(body.action).replace(/[^\w.-]+/g, "_").slice(0, 80);
+  const action = trimText(body.action).replace(/[^\w.-]+/g, "_").slice(0, 80);
   if (!action) {
     return buildError(400, "Audit action is required.", "INVALID_REQUEST");
   }
