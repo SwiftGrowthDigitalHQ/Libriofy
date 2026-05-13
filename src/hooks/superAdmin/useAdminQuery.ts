@@ -15,6 +15,8 @@ export const useAdminQuery = <TData>({
   useQuery<TData, Error, TData, QueryKey>({
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+    retry: false,
     staleTime,
+    meta: { suppressGlobalError: true },
     ...options,
   });

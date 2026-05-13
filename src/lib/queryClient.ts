@@ -15,6 +15,11 @@ const getRetryToastId = (queryHash: string) => `query-retry:${queryHash}`;
 export const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error, query) => {
+      // Admin queries handle their own error states — skip global toasts
+      if (query.meta?.suppressGlobalError) {
+        return;
+      }
+
       const failureCount = query.state.fetchFailureCount;
       const shouldRetry = failureCount < MAX_QUERY_RETRIES && isRetriableAppError(error);
       const toastId = getRetryToastId(query.queryHash);

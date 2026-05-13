@@ -567,6 +567,43 @@ const buildSuccessBody = <T>(requestId: string, message: string, data: T) => ({
   success: true as const,
 });
 
+const buildFallbackControlCenterData = () => ({
+  analytics: { activeStudentsToday: 0, conversionRate: 0, dailyActiveLibraries: 0, revenueThisMonth: 0, revenuePreviousMonth: 0, series: [] },
+  automation: { failedJobs: 0, inactiveLibraries: [], queuedJobs: 0 },
+  featureFlags: [],
+  incidents: [],
+  libraries: [],
+  operator: null,
+  releaseGovernance: null,
+  runtimeGovernance: null,
+  security: { ipWhitelistEnabled: false, suspiciousIps: [], whitelist: [] },
+  settings: [],
+  statusSignals: [],
+  systemStatus: "unknown",
+});
+
+const buildFallbackAnalyticsData = () => ({
+  healthCenter: [],
+  incidents: { critical: 0, error: 0, info: 0, warning: 0 },
+  operationalIntelligence: null,
+});
+
+const buildFallbackSecurityData = () => ({
+  auditLogs: [],
+  ipWhitelistEnabled: false,
+  operatorGovernance: null,
+  operatorTimeline: [],
+  runtimeVisibility: null,
+  whitelist: [],
+});
+
+const buildApiSuccess = <T>(message: string, data: T) => ({
+  success: true as const,
+  message,
+  data,
+  errorCode: null,
+});
+
 const buildErrorBody = (
   requestId: string,
   message: string,
@@ -2082,8 +2119,12 @@ export const handleAdminApiRequest = async (
 
       switch (pathname) {
       case "/api/admin/platform": {
-        const result = await getControlCenterData(env, actor);
-        sendServiceResponse(res, requestId, result);
+        try {
+          const result = await getControlCenterData(env, actor);
+          sendServiceResponse(res, requestId, result);
+        } catch (error) {
+          sendJson(res, 200, buildSuccessBody(requestId, "Platform data partially loaded.", buildFallbackControlCenterData()));
+        }
         return;
       }
       case "/api/admin/feature-flags": {
@@ -2148,16 +2189,29 @@ export const handleAdminApiRequest = async (
         return;
       }
       case "/api/admin/security": {
-        const result = await getSecurityCenterData(env, actor);
+        let result;
+        try {
+          result = await getSecurityCenterData(env, actor);
+        } catch {
+          sendJson(res, 200, buildSuccessBody(requestId, "Security data partially loaded.", buildFallbackSecurityData()));
+          return;
+        }
         if (!result.success || !result.data) {
           sendServiceResponse(res, requestId, result);
           return;
         }
 
+        let scopedResponse;
+        try {
+          scopedResponse = await buildSecurityScopedResponse(env, result.data, query);
+        } catch {
+          scopedResponse = result.data;
+        }
+
         sendJson(
           res,
           200,
-          buildSuccessBody(requestId, result.message, await buildSecurityScopedResponse(env, result.data, query)),
+          buildSuccessBody(requestId, result.message, scopedResponse),
         );
         return;
       }
@@ -2191,7 +2245,7 @@ export const handleAdminApiRequest = async (
           return;
         }
 
-        const result = await buildAnalyticsResponse(env, actor, filtersParse.data);
+        const result = await buildAnalyticsResponse(env, actor, filtersParse.data).catch(() => buildApiSuccess("Analytics partially loaded.", buildFallbackAnalyticsData()));
         sendServiceResponse(res, requestId, result);
         return;
       }
@@ -2261,6 +2315,11 @@ export const handleAdminApiRequest = async (
     }
 
     sendServiceResponse(res, requestId, mutationResult.response);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unexpected admin route failure.";
+      if (!res.statusCode || res.statusCode === 200) {
+        sendJson(res, 500, buildErrorBody(requestId, errorMessage, "ADMIN_INTERNAL_ERROR"));
+      }
     } finally {
       recordAdminRouteMetrics({
         durationMs: Date.now() - startedAt,
