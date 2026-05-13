@@ -49,7 +49,11 @@ export const getCustomAuthRuntimeIssues = (env: EnvLike): AuthConfigIssue[] => {
 export const getSuperAdminLoginRuntimeIssues = (env: EnvLike): AuthConfigIssue[] => {
   const issues = [...getCustomAuthRuntimeIssues(env)];
 
-  if (!hasValue(env.REDIS_URL)) {
+  // In non-production environments, Redis and email delivery are optional
+  // (in-memory fallback and console OTP logging are used instead)
+  const isNonProd = !hasValue(env.APP_ENV) || env.APP_ENV !== "production";
+
+  if (!hasValue(env.REDIS_URL) && !isNonProd) {
     issues.push({
       code: "AUTH_INFRA_UNAVAILABLE",
       message: "Session and OTP challenge storage is not configured.",
@@ -57,7 +61,7 @@ export const getSuperAdminLoginRuntimeIssues = (env: EnvLike): AuthConfigIssue[]
     });
   }
 
-  if (!hasSuperAdminEmailOtpConfig(env)) {
+  if (!hasSuperAdminEmailOtpConfig(env) && !isNonProd) {
     issues.push({
       code: "OTP_DELIVERY_UNAVAILABLE",
       message: "Super admin email OTP delivery must use hello@libriofy.com via Resend.",
@@ -71,7 +75,9 @@ export const getSuperAdminLoginRuntimeIssues = (env: EnvLike): AuthConfigIssue[]
 export const getSuperAdminVerifyRuntimeIssues = (env: EnvLike): AuthConfigIssue[] => {
   const issues = [...getCustomAuthRuntimeIssues(env)];
 
-  if (!hasValue(env.REDIS_URL)) {
+  const isNonProd = !hasValue(env.APP_ENV) || env.APP_ENV !== "production";
+
+  if (!hasValue(env.REDIS_URL) && !isNonProd) {
     issues.push({
       code: "AUTH_INFRA_UNAVAILABLE",
       message: "Session and OTP challenge storage is not configured.",

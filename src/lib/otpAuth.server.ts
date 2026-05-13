@@ -384,6 +384,10 @@ const resolveWebOtpHost = (env: EnvLike) => {
 };
 
 const shouldUseSecureCookies = (env: EnvLike) => {
+  // Never use Secure cookies in development (localhost uses http://)
+  if (isNonProductionAuthEnv(env)) {
+    return false;
+  }
   try {
     return new URL(resolvePublicAppUrl(env)).protocol === "https:";
   } catch {
@@ -663,9 +667,115 @@ const readRefreshTokenFromCookies = (cookieHeader: string | undefined) =>
 const createRequestId = () => randomBytes(12).toString("hex");
 const createRefreshToken = () => randomBytes(32).toString("hex");
 
+// In-memory Redis-compatible store for local development when Redis is unavailable.
+const inMemoryStore = new Map<string, { value: string; expiresAt: number | null }>();
+let inMemoryRedisInstance: IORedis | null = null;
+
+const createInMemoryRedis = (): IORedis => {
+  if (inMemoryRedisInstance) return inMemoryRedisInstance;
+
+  const handler: ProxyHandler<Record<string, unknown>> = {
+    get(_target, prop: string) {
+      if (prop === "status") return "ready";
+      if (prop === "disconnect" || prop === "quit") return () => Promise.resolve("OK");
+      if (prop === "on" || prop === "once" || prop === "removeListener") return () => ({});
+
+      if (prop === "get") {
+        return async (key: string) => {
+          const entry = inMemoryStore.get(key);
+          if (!entry) return null;
+          if (entry.expiresAt && entry.expiresAt <= Date.now()) {
+            inMemoryStore.delete(key);
+            return null;
+          }
+          return entry.value;
+        };
+      }
+
+      if (prop === "set") {
+        return async (key: string, value: string, ...args: unknown[]) => {
+          let expiresAt: number | null = null;
+          for (let i = 0; i < args.length; i++) {
+            const arg = String(args[i]).toUpperCase();
+            if ((arg === "EX" || arg === "PX") && i + 1 < args.length) {
+              const ttl = Number(args[i + 1]);
+              expiresAt = Date.now() + (arg === "EX" ? ttl * 1000 : ttl);
+              break;
+            }
+          }
+          inMemoryStore.set(key, { value, expiresAt });
+          return "OK";
+        };
+      }
+
+      if (prop === "del") {
+        return async (...keys: string[]) => {
+          let count = 0;
+          for (const key of keys.flat()) {
+            if (inMemoryStore.delete(key)) count++;
+          }
+          return count;
+        };
+      }
+
+      if (prop === "incr") {
+        return async (key: string) => {
+          const entry = inMemoryStore.get(key);
+          const current = entry ? parseInt(entry.value, 10) || 0 : 0;
+          const next = current + 1;
+          inMemoryStore.set(key, { value: String(next), expiresAt: entry?.expiresAt ?? null });
+          return next;
+        };
+      }
+
+      if (prop === "expire") {
+        return async (key: string, seconds: number) => {
+          const entry = inMemoryStore.get(key);
+          if (entry) {
+            entry.expiresAt = Date.now() + seconds * 1000;
+            return 1;
+          }
+          return 0;
+        };
+      }
+
+      if (prop === "ttl") {
+        return async (key: string) => {
+          const entry = inMemoryStore.get(key);
+          if (!entry) return -2;
+          if (!entry.expiresAt) return -1;
+          return Math.max(0, Math.ceil((entry.expiresAt - Date.now()) / 1000));
+        };
+      }
+
+      if (prop === "exists") {
+        return async (...keys: string[]) => {
+          let count = 0;
+          for (const key of keys.flat()) {
+            const entry = inMemoryStore.get(key);
+            if (entry && (!entry.expiresAt || entry.expiresAt > Date.now())) count++;
+          }
+          return count;
+        };
+      }
+
+      // Default: return a no-op async function for any unhandled command
+      return async () => null;
+    },
+  };
+
+  inMemoryRedisInstance = new Proxy({}, handler) as unknown as IORedis;
+  console.log("[auth] Using in-memory Redis fallback for local development.");
+  return inMemoryRedisInstance;
+};
+
 const getRedisConnection = (env: EnvLike) => {
   const redisUrl = readEnv(env, "REDIS_URL");
   if (!redisUrl) {
+    // Fallback to in-memory store in development when REDIS_URL is not set
+    if (isNonProductionAuthEnv(env)) {
+      return createInMemoryRedis();
+    }
     throw new Error("REDIS_URL is not configured.");
   }
 
@@ -685,18 +795,35 @@ const getRedisConnection = (env: EnvLike) => {
     }
   }
 
-  const client = new IORedis(redisUrl, {
-    connectTimeout: 8_000,
-    enableReadyCheck: false,
-    lazyConnect: false,
-    maxRetriesPerRequest: null,
-    retryStrategy: (times: number) => Math.min(250 * times, 2_000),
-  });
+  let client: IORedis;
+  try {
+    client = new IORedis(redisUrl, {
+      connectTimeout: 8_000,
+      enableReadyCheck: false,
+      lazyConnect: false,
+      maxRetriesPerRequest: null,
+      retryStrategy: (times: number) => {
+        if (times > 3 && isNonProductionAuthEnv(env)) {
+          // In development, stop retrying and fall back to in-memory after 3 attempts
+          return null as unknown as number;
+        }
+        return Math.min(250 * times, 2_000);
+      },
+    });
+  } catch {
+    if (isNonProductionAuthEnv(env)) {
+      return createInMemoryRedis();
+    }
+    throw new Error("Failed to connect to Redis.");
+  }
+
+  let connectionFailed = false;
 
   client.on("error", (error) => {
     const message = toSafeErrorMessage(error).toLowerCase();
-    if (message.includes("epipe") || message.includes("econnreset") || message.includes("socket closed")) {
+    if (message.includes("econnrefused") || message.includes("epipe") || message.includes("econnreset") || message.includes("socket closed")) {
       redisClients.delete(redisUrl);
+      connectionFailed = true;
     }
 
     logAuthWarning(
@@ -717,6 +844,13 @@ const getRedisConnection = (env: EnvLike) => {
   });
 
   redisClients.set(redisUrl, client);
+
+  // If Redis connection fails immediately in dev, fall back to in-memory
+  if (connectionFailed && isNonProductionAuthEnv(env)) {
+    redisClients.delete(redisUrl);
+    return createInMemoryRedis();
+  }
+
   return client;
 };
 
@@ -1383,23 +1517,47 @@ const sendSuperAdminOtpEmail = async ({
 }) => {
   const from = resolveLibriofyEmailFrom(resolveSuperAdminEmailFromEnv(env));
   if (!readEnv(env, "RESEND_API_KEY") || !from) {
+    // In development, log OTP to console instead of failing
+    if (isNonProductionAuthEnv(env)) {
+      console.log("\n╔══════════════════════════════════════════════════════╗");
+      console.log("║  [DEV] Super Admin OTP (email delivery skipped)     ║");
+      console.log(`║  Email: ${email.padEnd(43)}║`);
+      console.log(`║  OTP:   ${otp.padEnd(43)}║`);
+      console.log(`║  Name:  ${(fullName ?? "N/A").padEnd(43)}║`);
+      console.log("╚══════════════════════════════════════════════════════╝\n");
+      return;
+    }
     throw new Error("Email OTP delivery is not configured.");
   }
 
-  await sendEmail({
-    env,
-    from,
-    html: buildSuperAdminEmailHtml(otp, fullName),
-    metadata: {
-      category: "super_admin_otp",
-      delivery_channel: "email",
-      severity: "INFO",
-    },
-    subject: buildSuperAdminEmailSubject(),
-    text: buildSuperAdminEmailText(otp, fullName),
-    to: [email],
-    user: email,
-  });
+  try {
+    await sendEmail({
+      env,
+      from,
+      html: buildSuperAdminEmailHtml(otp, fullName),
+      metadata: {
+        category: "super_admin_otp",
+        delivery_channel: "email",
+        severity: "INFO",
+      },
+      subject: buildSuperAdminEmailSubject(),
+      text: buildSuperAdminEmailText(otp, fullName),
+      to: [email],
+      user: email,
+    });
+  } catch (emailError) {
+    // In development, log OTP to console if email sending fails
+    if (isNonProductionAuthEnv(env)) {
+      console.log("\n╔══════════════════════════════════════════════════════╗");
+      console.log("║  [DEV] Super Admin OTP (email send failed)          ║");
+      console.log(`║  Email: ${email.padEnd(43)}║`);
+      console.log(`║  OTP:   ${otp.padEnd(43)}║`);
+      console.log(`║  Name:  ${(fullName ?? "N/A").padEnd(43)}║`);
+      console.log("╚══════════════════════════════════════════════════════╝\n");
+      return;
+    }
+    throw emailError;
+  }
 };
 
 const isSuperAdminEmailAllowedByEnv = (env: EnvLike, email: string) => {
