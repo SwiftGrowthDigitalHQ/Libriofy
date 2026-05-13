@@ -209,9 +209,16 @@
   }
 
   .scan-dashboard-shell {
-    min-height: calc(100dvh - 1.5rem);
+    min-height: calc(100dvh - 1rem);
     height: auto;
     isolation: isolate;
+  }
+
+  @media (max-width: 480px) {
+    .scan-dashboard-shell {
+      min-height: calc(100dvh - 0.5rem);
+      border-radius: 18px;
+    }
   }
 
   .scan-dashboard-main,
@@ -323,6 +330,15 @@
     .scan-kiosk-rabbit {
       --rabbit-scale: 0.4;
     }
+
+    .scan-dashboard-activity-rail {
+      grid-template-columns: 1fr !important;
+    }
+
+    .scan-dashboard-summary-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+      gap: 0.5rem !important;
+    }
   }
 
   @media (min-width: 481px) and (max-width: 1024px) {
@@ -354,6 +370,10 @@
 
     .scanner {
       aspect-ratio: 1 / 1;
+    }
+
+    .scan-dashboard-activity-rail {
+      grid-template-columns: 1fr;
     }
   }
 
