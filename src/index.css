@@ -209,15 +209,26 @@
   }
 
   .scan-dashboard-shell {
-    min-height: calc(100dvh - 1rem);
-    height: auto;
+    height: calc(100dvh - 0.5rem);
+    max-height: calc(100dvh - 0.5rem);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
     isolation: isolate;
   }
 
   @media (max-width: 480px) {
     .scan-dashboard-shell {
-      min-height: calc(100dvh - 0.5rem);
+      height: calc(100dvh - 0.25rem);
+      max-height: calc(100dvh - 0.25rem);
       border-radius: 18px;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .scan-dashboard-shell {
+      height: calc(100dvh - 1rem);
+      max-height: calc(100dvh - 1rem);
     }
   }
 
@@ -234,8 +245,10 @@
   }
 
   .scan-dashboard-main {
+    flex: 1;
     gap: 1rem;
-    overflow: visible;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .main-layout {
@@ -467,13 +480,31 @@
     }
 
     .scan-dashboard-frame-wrap {
-      max-width: 500px;
+      max-width: 420px;
+    }
+
+    .scanner {
+      max-width: 420px;
     }
   }
 
   @media (min-width: 1024px) and (max-height: 860px) {
     .scan-dashboard-frame-wrap {
-      max-width: 460px;
+      max-width: 360px;
+    }
+
+    .scanner {
+      max-width: 360px;
+    }
+  }
+
+  @media (min-width: 1024px) and (max-height: 750px) {
+    .scan-dashboard-frame-wrap {
+      max-width: 300px;
+    }
+
+    .scanner {
+      max-width: 300px;
     }
   }
 }

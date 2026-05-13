@@ -1684,7 +1684,7 @@ const ScanKioskPage = () => {
 
   return (
     <div
-      className="min-h-screen overflow-x-hidden text-white"
+      className="h-[100dvh] overflow-hidden text-white"
       style={{ background: "radial-gradient(circle at top, #051321 0%, #020814 38%, #02050d 100%)" }}
     >
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -1695,9 +1695,9 @@ const ScanKioskPage = () => {
         <div className="absolute bottom-[8%] right-[8%] h-[24rem] w-[24rem] rounded-full bg-emerald-500/8 blur-[130px]" />
       </div>
 
-      <div className="relative z-10 flex min-h-screen w-full flex-col px-1 py-1 sm:px-2 sm:py-2 lg:px-3.5 lg:py-3.5 xl:px-4">
+      <div className="relative z-10 flex h-[100dvh] w-full flex-col px-1 py-0.5 sm:px-2 sm:py-1 lg:px-3.5 lg:py-1.5 xl:px-4">
         <div
-          className="scan-dashboard-shell flex min-h-[calc(100dvh-0.5rem)] w-full flex-col rounded-[18px] border bg-[rgba(3,9,18,0.9)] shadow-[0_32px_140px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl sm:min-h-[calc(100dvh-1rem)] sm:rounded-[24px] lg:rounded-[28px]"
+          className="scan-dashboard-shell flex w-full flex-col rounded-[18px] border bg-[rgba(3,9,18,0.9)] shadow-[0_32px_140px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl sm:rounded-[24px] lg:rounded-[28px]"
           style={{ borderColor: shellBorder }}
         >
           <header className="grid gap-2 border-b border-cyan-400/14 px-3 py-2.5 sm:gap-3 sm:px-5 sm:py-3.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center lg:grid-cols-[minmax(0,1.1fr)_auto_auto_minmax(0,0.78fr)] lg:gap-3.5 xl:gap-4 xl:px-6 xl:py-4">
@@ -1775,7 +1775,7 @@ const ScanKioskPage = () => {
             </div>
           </header>
 
-          <div className="scan-dashboard-main flex-1 px-3 py-2.5 sm:px-3.5 sm:py-3 xl:px-4 xl:py-3.5">
+          <div className="scan-dashboard-main flex-1 overflow-y-auto overflow-x-hidden px-3 py-2.5 sm:px-3.5 sm:py-3 xl:px-4 xl:py-3.5">
             <div className="scan-dashboard-top main-layout items-start">
               <section
                 className="scan-dashboard-primary flex min-h-0 min-w-0 flex-col rounded-[20px] p-3 sm:rounded-[28px] sm:p-4 xl:p-5"
