@@ -25,6 +25,7 @@ type SettingsCacheEntry = {
 
 const SETTINGS_CACHE_TTL_MS = 60_000;
 const settingsCache = new Map<string, SettingsCacheEntry>();
+const inflightRequests = new Map<string, Promise<PlatformSettingRecord[]>>();
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -148,45 +149,65 @@ export const getPlatformSettings = async (env: EnvLike = process.env, keys?: str
     return cachedEntry.value;
   }
 
+  // Deduplicate concurrent requests for the same cache key
+  const inflight = inflightRequests.get(cacheKey);
+  if (inflight) {
+    incrementRuntimeMetric("cache_operations_total", 1, {
+      area: "platform_settings",
+      backend: "memory",
+      outcome: "deduplicated",
+    });
+    return inflight;
+  }
+
   incrementRuntimeMetric("cache_operations_total", 1, {
     area: "platform_settings",
     backend: "memory",
     outcome: "miss",
   });
 
-  const client = createPlatformServiceClient(env);
+  const fetchPromise = (async () => {
+    const client = createPlatformServiceClient(env);
 
-  let query = client
-    .from("platform_settings")
-    .select("key, value, updated_at")
-    .order("key", { ascending: true });
+    let query = client
+      .from("platform_settings")
+      .select("key, value, updated_at")
+      .order("key", { ascending: true });
 
-  if (keys?.length) {
-    query = query.in("key", keys);
+    if (keys?.length) {
+      query = query.in("key", keys);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+
+    const value = ((data ?? []) as PlatformSettingRow[]).map((row) => ({
+      key: row.key,
+      updatedAt: typeof row.updated_at === "string" && row.updated_at.trim() ? row.updated_at : null,
+      value: row.value,
+    }));
+
+    settingsCache.set(cacheKey, {
+      expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS,
+      value,
+    });
+    incrementRuntimeMetric("cache_operations_total", 1, {
+      area: "platform_settings",
+      backend: "memory",
+      outcome: "write",
+    });
+
+    return value;
+  })();
+
+  inflightRequests.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    inflightRequests.delete(cacheKey);
   }
-
-  const { data, error } = await query;
-  if (error) {
-    throw error;
-  }
-
-  const value = ((data ?? []) as PlatformSettingRow[]).map((row) => ({
-    key: row.key,
-    updatedAt: typeof row.updated_at === "string" && row.updated_at.trim() ? row.updated_at : null,
-    value: row.value,
-  }));
-
-  settingsCache.set(cacheKey, {
-    expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS,
-    value,
-  });
-  incrementRuntimeMetric("cache_operations_total", 1, {
-    area: "platform_settings",
-    backend: "memory",
-    outcome: "write",
-  });
-
-  return value;
 };
 
 export const getPlatformSettingsMap = async (env: EnvLike = process.env, keys?: string[]) => {
