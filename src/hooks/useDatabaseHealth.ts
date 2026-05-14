@@ -26,12 +26,14 @@ const fetchDatabaseHealth = async (): Promise<DatabaseHealthPayload> => {
   return parsed as DatabaseHealthPayload;
 };
 
-export const useDatabaseHealth = () => {
+export const useDatabaseHealth = (options?: { enabled?: boolean }) => {
+  const isEnabled = options?.enabled ?? true;
   const lastLoggedSignature = useRef<string | null>(null);
   const query = useQuery({
     queryKey: ["database-health"],
     queryFn: fetchDatabaseHealth,
-    refetchInterval: 60_000,
+    enabled: isEnabled,
+    refetchInterval: isEnabled ? 60_000 : false,
     refetchOnWindowFocus: false,
     retry: 1,
     staleTime: 60_000,

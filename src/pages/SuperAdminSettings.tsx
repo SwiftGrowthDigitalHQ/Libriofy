@@ -819,6 +819,8 @@ const SuperAdminSettings = () => {
     }
   };
 
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"platform" | "automation" | "rbac" | "governance">("platform");
+
   return (
     <SuperAdminLayout>
       <div className="space-y-6">
@@ -833,6 +835,27 @@ const SuperAdminSettings = () => {
           title="Settings"
         />
 
+        {/* Tab Navigation */}
+        <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-muted/30 p-1">
+          {([
+            { key: "platform", label: "Platform Controls" },
+            { key: "automation", label: "Automation" },
+            { key: "rbac", label: "RBAC & Access" },
+            { key: "governance", label: "Governance" },
+          ] as const).map((tab) => (
+            <button
+              key={tab.key}
+              className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${activeSettingsTab === tab.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => setActiveSettingsTab(tab.key)}
+              type="button"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Platform Controls Tab */}
+        {activeSettingsTab === "platform" && (<>
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <ControlPlaneCard title="Maintenance mode">
             <div className="space-y-4">
@@ -902,7 +925,10 @@ const SuperAdminSettings = () => {
             </div>
           </ControlPlaneCard>
         </div>
+        </>)}
 
+        {/* Automation Tab */}
+        {activeSettingsTab === "automation" && (<>
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_1.9fr]">
           <ControlPlaneCard title="Automation settings">
             <div className="space-y-4">
@@ -1012,7 +1038,10 @@ const SuperAdminSettings = () => {
             </div>
           </ControlPlaneCard>
         </div>
+        </>)}
 
+        {/* RBAC & Access Tab */}
+        {activeSettingsTab === "rbac" && (<>
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_1.9fr]">
           <ControlPlaneCard title="Enterprise RBAC">
             <div className="space-y-4">
@@ -1660,7 +1689,10 @@ const SuperAdminSettings = () => {
             </div>
           </ControlPlaneCard>
         </div>
+        </>)}
 
+        {/* Governance Tab */}
+        {activeSettingsTab === "governance" && (<>
         <ControlPlaneCard title="Approval workflows">
           <div className="space-y-4">
             <Input
@@ -1765,6 +1797,7 @@ const SuperAdminSettings = () => {
             </div>
           </div>
         </ControlPlaneCard>
+        </>)}
       </div>
 
       <OperatorActionDialog
