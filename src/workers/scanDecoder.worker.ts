@@ -196,6 +196,7 @@ const isFrameBlurry = (analysis: ReturnType<typeof analyzeImageData>) =>
   analysis.edgeScore < (analysis.lowLight ? MIN_SHARP_EDGE_SCORE_LOW_LIGHT : MIN_SHARP_EDGE_SCORE);
 
 const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
+  // First attempt: direct read with both inversion modes
   const directRead = trimText(
     jsQR(imageData.data, imageData.width, imageData.height, {
       inversionAttempts: "attemptBoth",
@@ -205,18 +206,29 @@ const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
     return directRead;
   }
 
+  // Second attempt: enhanced contrast
+  const enhanced = createEnhancedImageData(imageData, {
+    contrast: brightness < 96 ? 1.4 : 1.25,
+    brightnessOffset: brightness < 96 ? 12 : 6,
+  });
+  const enhancedRead = trimText(
+    jsQR(enhanced.data, imageData.width, imageData.height, {
+      inversionAttempts: "attemptBoth",
+    })?.data,
+  );
+  if (enhancedRead) {
+    return enhancedRead;
+  }
+
+  // Third attempt: high contrast for screen-displayed QR codes
+  const highContrast = createEnhancedImageData(imageData, {
+    contrast: 1.6,
+    brightnessOffset: -10,
+  });
   return trimText(
-    jsQR(
-      createEnhancedImageData(imageData, {
-        contrast: brightness < 96 ? 1.28 : 1.18,
-        brightnessOffset: brightness < 96 ? 8 : 4,
-      }).data,
-      imageData.width,
-      imageData.height,
-      {
-        inversionAttempts: "attemptBoth",
-      },
-    )?.data,
+    jsQR(highContrast.data, imageData.width, imageData.height, {
+      inversionAttempts: "attemptBoth",
+    })?.data,
   );
 };
 
@@ -227,18 +239,7 @@ const decodePreparedFrame = async (
   const analysis = analyzeImageData(imageData);
   const blurry = isFrameBlurry(analysis);
 
-  if (blurry) {
-    return {
-      rawValue: null,
-      detector: null,
-      brightness: analysis.brightness,
-      blurry,
-      edgeScore: analysis.edgeScore,
-      glare: analysis.glare,
-      lowLight: analysis.lowLight,
-    };
-  }
-
+  // Always attempt decode regardless of blur — let jsQR/BarcodeDetector decide
   const nativeValue = nativeSource ? await detectWithBarcodeDetector(nativeSource) : null;
   if (nativeValue) {
     return {
@@ -347,13 +348,24 @@ const handleDecodeMessage = async (message: DecodeMessage) => {
   }
 };
 
+let frameCount = 0;
+let lastLogAt = 0;
+
 const handleImageDataDecodeMessage = async (message: DecodeImageDataMessage) => {
   const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  frameCount++;
   try {
     const result = await decodeImageData(message.imageData);
     const timingMs = Math.round(
       (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt,
     );
+
+    // Debug: log every 50 frames
+    const now = Date.now();
+    if (now - lastLogAt > 3000) {
+      lastLogAt = now;
+      console.log(`[scan-worker] frames=${frameCount} size=${message.imageData.width}x${message.imageData.height} brightness=${Math.round(result.brightness)} edge=${result.edgeScore.toFixed(1)} blurry=${result.blurry} found=${!!result.rawValue}`);
+    }
 
     postWorkerMessage({
       type: "result",

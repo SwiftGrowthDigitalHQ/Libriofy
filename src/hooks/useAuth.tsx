@@ -77,6 +77,9 @@ const PUBLIC_AUTH_ROUTES = new Set([
   "/login",
   "/signup",
   "/reset-password",
+  "/scan",
+  "/scan-v2",
+  "/setup-device",
   SUPER_ADMIN_LOGIN_ROUTE,
 ]);
 

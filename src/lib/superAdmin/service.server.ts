@@ -5697,24 +5697,28 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
       client
         .from("libraries")
         .select("id, name, city, state, owner_id, enabled, active_students, total_seats, monthly_revenue, updated_at, created_at")
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(500),
     ),
     readOptionalRows<SubscriptionRow>(
       client
         .from("library_subscriptions")
         .select("id, library_id, plan_name, plan_price, price, status, payment_status, started_at, updated_at")
-        .order("updated_at", { ascending: false }),
+        .order("updated_at", { ascending: false })
+        .limit(500),
     ),
     readOptionalRows<ProfileRow>(
       client
         .from("profiles")
         .select("user_id, email, full_name, phone_number")
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(1000),
     ),
     readOptionalRows<UserRoleRow>(
       client
         .from("user_roles")
-        .select("user_id, role"),
+        .select("user_id, role")
+        .limit(1000),
     ),
     readOptionalRows<LoginLogRow>(
       client
@@ -5734,7 +5738,8 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
       client
         .from("library_commission_overrides")
         .select("library_id, commission_percent, notes, updated_at")
-        .order("updated_at", { ascending: false }),
+        .order("updated_at", { ascending: false })
+        .limit(200),
     ),
     readOptionalRows<PayoutQueueRow>(
       client
@@ -5786,12 +5791,14 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
     readOptionalRows<AccountControlRow>(
       client
         .from("platform_account_controls")
-        .select("user_id, library_id, status, reason, until_at, clear_sessions_after, password_reset_required"),
+        .select("user_id, library_id, status, reason, until_at, clear_sessions_after, password_reset_required")
+        .limit(500),
     ),
     readOptionalRows<LibraryControlRow>(
       client
         .from("library_control_overrides")
-        .select("library_id, status, reason, until_at"),
+        .select("library_id, status, reason, until_at")
+        .limit(500),
     ),
     readOptionalRows<BroadcastRow>(
       client
@@ -5804,7 +5811,8 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
       client
         .from("communication_templates")
         .select("id, key, name, channel, subject, body, variables, is_active, updated_at")
-        .order("updated_at", { ascending: false }),
+        .order("updated_at", { ascending: false })
+        .limit(50),
     ),
     readOptionalRows<InvoiceRow>(
       client

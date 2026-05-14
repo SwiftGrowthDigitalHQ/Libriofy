@@ -55,15 +55,15 @@ type ScannerEngineOptions = {
 };
 
 const MOBILE_PREVIEW_BREAKPOINT = 640;
-const MOBILE_SCAN_BOX_MAX_EDGE = 260;
-const MOBILE_SCAN_BOX_MIN_EDGE = 220;
-const MOBILE_SCAN_BOX_RATIO = 0.58;
-const DESKTOP_SCAN_BOX_MAX_EDGE = 300;
-const DESKTOP_SCAN_BOX_MIN_EDGE = 250;
-const DESKTOP_SCAN_BOX_RATIO = 0.42;
-const TARGET_SCAN_INTERVAL_MS = 80;
-const TARGET_DECODE_MAX_EDGE = 400;
-const TARGET_DECODE_MIN_EDGE = 300;
+const MOBILE_SCAN_BOX_MAX_EDGE = 480;
+const MOBILE_SCAN_BOX_MIN_EDGE = 280;
+const MOBILE_SCAN_BOX_RATIO = 0.82;
+const DESKTOP_SCAN_BOX_MAX_EDGE = 600;
+const DESKTOP_SCAN_BOX_MIN_EDGE = 320;
+const DESKTOP_SCAN_BOX_RATIO = 0.78;
+const TARGET_SCAN_INTERVAL_MS = 60;
+const TARGET_DECODE_MAX_EDGE = 600;
+const TARGET_DECODE_MIN_EDGE = 360;
 const MAX_UPLOAD_IMAGE_BYTES = 8 * 1024 * 1024;
 const REQUIRED_VIDEO_READY_STATE =
   typeof HTMLMediaElement !== "undefined" ? HTMLMediaElement.HAVE_ENOUGH_DATA : 4;
@@ -306,7 +306,7 @@ export class ScannerEngine {
 
     this.lastFrameAt = Date.now();
     const { cropEdge, sourceX, sourceY } = this.resolveScanCropRect(video);
-    const targetEdge = Math.max(TARGET_DECODE_MIN_EDGE, Math.min(TARGET_DECODE_MAX_EDGE, Math.round(cropEdge * 1.6)));
+    const targetEdge = Math.max(TARGET_DECODE_MIN_EDGE, Math.min(TARGET_DECODE_MAX_EDGE, cropEdge));
     const nextRequestId = this.requestId + 1;
     this.requestId = nextRequestId;
     this.workerBusy = true;

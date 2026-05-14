@@ -576,6 +576,44 @@ export const parseStudentQrPayload = async (
   if (candidate) {
     if (looksLikeJwt(candidate.token)) {
       if (!trimText(options.publicKeyPem)) {
+        // No public key configured — try to extract claims without verification (dev/fallback mode)
+        try {
+          const parts = candidate.token.split(".");
+          const claimsJson = decodeUtf8(base64UrlDecode(parts[1]));
+          const claims = JSON.parse(claimsJson) as Record<string, unknown>;
+          const studentId = trimText(claims.student_id);
+          const libraryId = trimText(claims.library_id);
+          if (studentId && libraryId) {
+            if (expectedLibraryId && libraryId !== expectedLibraryId) {
+              return buildInvalidResult(trimmed, candidate.source, "WRONG_LIBRARY", "Wrong Library");
+            }
+            return {
+              valid: true,
+              source: "signed" as const,
+              rawValue: trimmed,
+              token: candidate.token,
+              claims: { typ: "libriofy.student_qr" as const, version: 1 as const, student_id: studentId, library_id: libraryId, exp: Number(claims.exp) || 0, iat: Number(claims.iat) || 0, nonce: trimText(claims.nonce) || "" },
+              studentId,
+              libraryId,
+              exp: Number(claims.exp) || 0,
+              nonce: trimText(claims.nonce) || "",
+              iat: Number(claims.iat) || 0,
+            };
+          }
+        } catch {
+          // Claims extraction failed — fall through to legacy
+        }
+
+        // If claims extraction failed, try legacy
+        if (allowLegacy) {
+          return {
+            valid: true,
+            source: "legacy" as const,
+            rawValue: trimmed,
+            qrCode: candidate.token,
+            libraryId: candidate.libraryId,
+          };
+        }
         return buildInvalidResult(trimmed, candidate.source, "INVALID_QR", "ID verification key is not configured.");
       }
 

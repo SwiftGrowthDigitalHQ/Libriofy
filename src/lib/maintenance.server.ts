@@ -85,25 +85,30 @@ const normalizeDatabaseMaintenanceStatus = (row: MaintenanceSettingRow | null): 
 };
 
 const fetchDatabaseMaintenanceStatus = async (env: EnvLike): Promise<MaintenanceStatus | null> => {
-  const client = createSettingsClient(env);
-  if (!client) {
-    return null;
-  }
-
+  // Use the cached platform settings to avoid repeated DB queries
   try {
-    const { data, error } = await client
-      .from("platform_settings")
-      .select("key, value, updated_at")
-      .eq("key", MAINTENANCE_SETTINGS_KEY)
-      .maybeSingle();
-
-    if (error) {
-      return null;
-    }
-
-    return normalizeDatabaseMaintenanceStatus((data as MaintenanceSettingRow | null) ?? null);
+    const { getPlatformSettingsMap } = await import("./platformSettings.server.js");
+    const settingsMap = await getPlatformSettingsMap(env, [MAINTENANCE_SETTINGS_KEY]);
+    const setting = settingsMap.get(MAINTENANCE_SETTINGS_KEY);
+    if (!setting) return null;
+    return normalizeDatabaseMaintenanceStatus({
+      key: MAINTENANCE_SETTINGS_KEY,
+      value: setting.value,
+      updated_at: setting.updatedAt,
+    });
   } catch {
-    return null;
+    // Fallback to direct query if import fails
+    const client = createSettingsClient(env);
+    if (!client) return null;
+    try {
+      const { data, error } = await client
+        .from("platform_settings")
+        .select("key, value, updated_at")
+        .eq("key", MAINTENANCE_SETTINGS_KEY)
+        .maybeSingle();
+      if (error) return null;
+      return normalizeDatabaseMaintenanceStatus((data as MaintenanceSettingRow | null) ?? null);
+    } catch { return null; }
   }
 };
 

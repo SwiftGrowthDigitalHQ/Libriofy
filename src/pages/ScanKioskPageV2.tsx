@@ -1,35 +1,17 @@
 /**
- * ScanKioskPageV2 — Premium Access Gate UI
- *
- * This is a clean redesign of the scanner kiosk interface.
- * It reuses all existing scanner logic from the original ScanKioskPage
- * but provides a modular, responsive, world-class UI.
- *
- * Architecture:
- * - UI components in src/components/scanner/v2/
- * - Scanner logic stays in this file (same as original)
- * - No fake/demo data — all real-time
+ * ScanKioskPageV2 — Clean Minimal Access Gate
+ * 
+ * Architecture: Single file with inline UI. No complex nested layouts.
+ * Layout: CSS Grid with `grid-template-rows: auto 1fr auto` for header/main/footer.
+ * Desktop: Two columns (scanner | info). Mobile: Single column scroll.
+ * No fixed heights. No overflow issues. Pure flex/grid flow.
  */
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { motion } from "framer-motion";
-import { QrCode, ScanLine, Shield, Wifi, WifiOff } from "lucide-react";
+import { CheckCircle2, CircleX, Clock, QrCode, Shield, Wifi, WifiOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import type {
-  ActivityFeedItem,
-  LastScanCardData,
-  ScannerDetailBadge,
-  ScannerLiveState,
-  ScannerStatItem,
-  ScannerUiTone,
-} from "@/components/scanner/types";
-import {
-  ActivityFeed,
-  MetricCard,
-  ScannerFrame,
-  StatusPulse,
-  VerificationCard,
-} from "@/components/scanner/v2";
+import type { ScannerLiveState, ScannerUiTone } from "@/components/scanner/types";
 import {
   type AttendanceQueueEntry,
   type AttendanceScanPayload,
@@ -49,443 +31,297 @@ import {
   writeDeviceSetupNotice,
 } from "@/lib/deviceKiosk";
 import { sendDeviceHeartbeat } from "@/lib/deviceHeartbeat";
-import {
-  readOfflineVerifiedStudent,
-  rememberOfflineVerifiedStudent,
-} from "@/lib/offlineVerifiedStudentCache";
+import { readOfflineVerifiedStudent, rememberOfflineVerifiedStudent } from "@/lib/offlineVerifiedStudentCache";
 import { ScanController } from "@/lib/scan/ScanController";
-import type {
-  ScanControllerLogLevel,
-  ScanControllerState,
-  ScanDetectionPayload,
-} from "@/lib/scan/types";
+import type { ScanControllerState, ScanDetectionPayload } from "@/lib/scan/types";
 import { cn } from "@/lib/utils";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Config ──────────────────────────────────────────────────────────────────
 const DEVICE_ID = import.meta.env.VITE_SCAN_DEVICE_ID ?? "LIB_GATE_01";
 const DEVICE_NAME = import.meta.env.VITE_SCAN_DEVICE_NAME ?? "Library ID Scanner";
 const SCAN_API_URL = import.meta.env.VITE_SCAN_API_URL ?? "/api/attendance/scan";
-const DEVICE_HEARTBEAT_API_URL = import.meta.env.VITE_DEVICE_HEARTBEAT_API_URL ?? "/api/device-heartbeat";
-const SCAN_DEVICE_TOKEN = import.meta.env.VITE_SCAN_DEVICE_TOKEN ?? "";
-const STUDENT_QR_PUBLIC_KEY = import.meta.env.VITE_QR_PUBLIC_KEY ?? import.meta.env.VITE_STUDENT_QR_PUBLIC_KEY ?? "";
+const HEARTBEAT_URL = import.meta.env.VITE_DEVICE_HEARTBEAT_API_URL ?? "/api/device-heartbeat";
+const DEVICE_TOKEN = import.meta.env.VITE_SCAN_DEVICE_TOKEN ?? "";
+const QR_PUBLIC_KEY = import.meta.env.VITE_QR_PUBLIC_KEY ?? import.meta.env.VITE_STUDENT_QR_PUBLIC_KEY ?? "";
 const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? "scanner-web";
 
-const DEVICE_BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY", "DEVICE_BLOCKED"]);
-const DUPLICATE_SCAN_WINDOW_MS = 3000;
-const HEARTBEAT_INTERVAL_MS = 30000;
-const MAX_SCAN_VALUE_LENGTH = 4096;
-const RESULT_HOLD_MS = 300;
-const SCAN_DEBOUNCE_MS = 350;
-const SYNC_INTERVAL_MS = 25000;
-const MAX_SCAN_HISTORY = 8;
+const BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY", "DEVICE_BLOCKED"]);
+const DUP_WINDOW_MS = 3000;
+const DEBOUNCE_MS = 350;
+const HOLD_MS = 350;
+const HEARTBEAT_MS = 30000;
+const SYNC_MS = 25000;
+const MAX_HISTORY = 6;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
-const getInitials = (value: string) =>
-  value.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "ID";
-const createUiId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-const formatClockLabel = (ts: string) => {
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? "--:--" : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-};
-const formatScanTime = (ts: string) => formatClockLabel(ts);
+const trim = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+const initials = (s: string) => s.split(/\s+/).slice(0, 2).map(p => p[0]?.toUpperCase() ?? "").join("") || "?";
+const clockFmt = (ms: number) => new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(ms);
+const dateFmt = (ms: number) => new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(ms);
+const timeFmt = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? "--:--" : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); };
 
-type KioskPhase = "idle" | "scanning" | "success" | "queued" | "error";
-type ScanHistoryItem = {
-  at: string; confidence: number; detail: string; id: string;
-  name: string; seat: string | null; statusLabel: string; studentKey: string | null; tone: ScannerUiTone;
-};
-type ActivityRailItem = ActivityFeedItem & { seat?: string | null };
+type Phase = "idle" | "scanning" | "success" | "queued" | "error";
+type HistoryItem = { id: string; name: string; seat: string | null; tone: ScannerUiTone; at: string; label: string };
 
-const getToneFromPayload = (p: AttendanceScanPayload): ScannerUiTone => {
-  if (p.status === "success") return p.duplicate ? "warning" : "success";
-  if (p.status === "queued") return p.verifiedOffline ? "info" : "warning";
-  return "danger";
-};
-const getConfidenceFromPayload = (p: AttendanceScanPayload) => {
-  if (p.status === "success") return p.duplicate ? 88 : 99;
-  if (p.status === "queued") return p.verifiedOffline ? 93 : 78;
-  return 34;
-};
-const describeScanPayload = (p: AttendanceScanPayload) => {
-  if (p.status === "success") return p.duplicate ? "Already recorded." : p.seat ? `Verified — Seat ${p.seat}` : "Verified.";
-  if (p.status === "queued") return p.verifiedOffline ? "Verified offline, queued for sync." : "Queued for sync.";
-  return p.message || "Verification failed.";
-};
-const getPayloadDisplayName = (p: AttendanceScanPayload) => p.status === "error" ? null : trimText(p.studentName) || trimText(p.name) || null;
-const getPayloadSeat = (p: AttendanceScanPayload) => p.status === "error" ? null : trimText(p.seat) || null;
+const toneOf = (p: AttendanceScanPayload): ScannerUiTone =>
+  p.status === "success" ? (p.duplicate ? "warning" : "success") : p.status === "queued" ? "info" : "danger";
+const nameOf = (p: AttendanceScanPayload) => trim(p.studentName) || trim(p.name) || null;
+const seatOf = (p: AttendanceScanPayload) => p.status === "error" ? null : trim(p.seat) || null;
 
-const triggerDetectionHaptic = () => { try { navigator?.vibrate?.(22); } catch {} };
-
-const createInitialControllerState = (): ScanControllerState => ({
-  activeCameraId: null, activeCameraLabel: null, devices: [], error: null,
-  lastFrameAt: null, permissionState: null, status: "idle",
-  torchBusy: false, torchEnabled: false, torchSupported: false,
-});
-
-const buildOfflineQueuedPayload = ({ entry, libraryId, parsedSource, studentId }: {
-  entry: AttendanceQueueEntry; libraryId: string; parsedSource: string; studentId: string;
-}): Extract<AttendanceScanPayload, { status: "queued" }> => {
-  const cached = readOfflineVerifiedStudent({ libraryId, studentId });
-  const verifiedOffline = Boolean(cached) || parsedSource === "signed";
-  return {
-    status: "queued", message: verifiedOffline ? "Verified offline." : "Saved offline.",
-    time: formatScanTime(entry.timestamp), entry_id: entry.entry_id,
-    ...(verifiedOffline ? { verifiedOffline: true } : {}),
-    ...(cached?.name ? { name: cached.name, studentName: cached.name } : {}),
-    ...(cached?.seat ? { seat: cached.seat } : {}),
-  };
-};
-
-// ─── Page Component ──────────────────────────────────────────────────────────
+// ─── Component ───────────────────────────────────────────────────────────────
 const ScanKioskPageV2 = () => {
   const navigate = useNavigate();
-  const bindingRedirectRef = useRef(false);
-  const controllerRef = useRef<ScanController | null>(null);
-  const cooldownRef = useRef(0);
-  const heartbeatRef = useRef(false);
-  const mountedRef = useRef(false);
-  const processingRef = useRef(false);
-  const lastScanRef = useRef({ at: 0, value: "" });
-  const resumeTimerRef = useRef<number | null>(null);
+  const ctrlRef = useRef<ScanController | null>(null);
+  const mountRef = useRef(false);
+  const procRef = useRef(false);
+  const coolRef = useRef(0);
+  const lastRef = useRef({ at: 0, val: "" });
+  const resumeRef = useRef<number | null>(null);
+  const hbRef = useRef(false);
   const syncRef = useRef(false);
+  const redirectRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const [controllerState, setControllerState] = useState<ScanControllerState>(createInitialControllerState);
-  const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
-  const [phase, setPhase] = useState<KioskPhase>("idle");
-  const [scanPayload, setScanPayload] = useState<AttendanceScanPayload | null>(null);
-  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [lastSyncAt, setLastSyncAt] = useState(() => readLastAttendanceSyncAt());
-  const [nowMs, setNowMs] = useState(Date.now);
+  const [ctrl, setCtrl] = useState<ScanControllerState>({ activeCameraId: null, activeCameraLabel: null, devices: [], error: null, lastFrameAt: null, permissionState: null, status: "idle", torchBusy: false, torchEnabled: false, torchSupported: false });
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [payload, setPayload] = useState<AttendanceScanPayload | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [pending, setPending] = useState(0);
+  const [now, setNow] = useState(Date.now);
 
-  // ─── Clock tick ────────────────────────────────────────────────────────────
+  // Responsive activity count: 10 desktop, 5 tablet, 2 mobile
+  const [visibleActivityCount, setVisibleActivityCount] = useState(() => typeof window === "undefined" ? 10 : window.innerWidth >= 1024 ? 10 : window.innerWidth >= 768 ? 5 : 2);
   useEffect(() => {
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(id);
+    const update = () => { const w = window.innerWidth; setVisibleActivityCount(w >= 1024 ? 10 : w >= 768 ? 5 : 2); };
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
 
-  // ─── Online/offline ────────────────────────────────────────────────────────
-  useEffect(() => {
-    const on = () => setIsOnline(true);
-    const off = () => setIsOnline(false);
-    window.addEventListener("online", on);
-    window.addEventListener("offline", off);
-    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
-  }, []);
+  // Clock
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  // Online
+  useEffect(() => { const on = () => setOnline(true); const off = () => setOnline(false); window.addEventListener("online", on); window.addEventListener("offline", off); return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); }; }, []);
 
-  // ─── Queue telemetry ───────────────────────────────────────────────────────
-  const refreshQueue = useCallback(async () => {
-    const count = await countAttendanceQueueEntries().catch(() => 0);
-    if (mountedRef.current) { setPendingCount(count); setLastSyncAt(readLastAttendanceSyncAt()); }
-    return count;
-  }, []);
+  const refreshQ = useCallback(async () => { const c = await countAttendanceQueueEntries().catch(() => 0); if (mountRef.current) setPending(c); }, []);
+  const clearResume = useCallback(() => { if (resumeRef.current !== null) { clearTimeout(resumeRef.current); resumeRef.current = null; } }, []);
 
-  // ─── Scanner lifecycle ─────────────────────────────────────────────────────
-  const clearResume = useCallback(() => {
-    if (resumeTimerRef.current !== null) { window.clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null; }
-  }, []);
-
-  const redirectToSetup = useCallback(async (msg: string) => {
-    if (bindingRedirectRef.current) return;
-    bindingRedirectRef.current = true;
-    processingRef.current = false;
-    clearResume();
-    writeDeviceSetupNotice(msg || "Reconnect kiosk.");
-    clearStoredLibraryBinding();
-    try { await controllerRef.current?.stop("binding-reset"); } finally { if (mountedRef.current) navigate("/setup-device", { replace: true }); }
+  const goSetup = useCallback(async (msg: string) => {
+    if (redirectRef.current) return; redirectRef.current = true; procRef.current = false; clearResume();
+    writeDeviceSetupNotice(msg); clearStoredLibraryBinding();
+    try { await ctrlRef.current?.stop("reset"); } finally { if (mountRef.current) navigate("/setup-device", { replace: true }); }
   }, [clearResume, navigate]);
 
-  const releaseScanner = useCallback((reason: string) => {
-    processingRef.current = false;
-    if (!mountedRef.current) return;
-    setPhase("idle"); setScanPayload(null);
-    const ctrl = controllerRef.current;
-    if (!ctrl) return;
-    const st = ctrl.getState();
-    if (st.status === "paused" && !document.hidden) { ctrl.resume(reason); return; }
-    if (st.status === "error" || st.status === "stopped") { void ctrl.retry(reason).catch(() => {}); }
+  const release = useCallback(() => {
+    procRef.current = false; if (!mountRef.current) return;
+    setPhase("idle"); setPayload(null);
+    const c = ctrlRef.current; if (!c) return;
+    const s = c.getState();
+    if (s.status === "paused" && !document.hidden) c.resume("release");
+    else if (s.status === "error" || s.status === "stopped") void c.retry("release").catch(() => {});
   }, []);
 
-  const scheduleResume = useCallback((reason: string) => {
-    clearResume();
-    resumeTimerRef.current = window.setTimeout(() => releaseScanner(reason), RESULT_HOLD_MS);
-  }, [clearResume, releaseScanner]);
+  const schedResume = useCallback(() => { clearResume(); resumeRef.current = window.setTimeout(release, HOLD_MS) as unknown as number; }, [clearResume, release]);
 
-  // ─── Heartbeat ─────────────────────────────────────────────────────────────
-  const sendHeartbeat = useCallback(async () => {
-    if (!isOnline || heartbeatRef.current || bindingRedirectRef.current) return true;
-    const libId = readStoredLibraryId();
-    const libKey = readStoredLibraryAccessKey();
-    if (!libId || !libKey) { await redirectToSetup("Reconnect kiosk."); return false; }
-    heartbeatRef.current = true;
+  // Heartbeat
+  const heartbeat = useCallback(async () => {
+    if (!online || hbRef.current || redirectRef.current) return;
+    const lid = readStoredLibraryId(); const lk = readStoredLibraryAccessKey();
+    if (!lid || !lk) { await goSetup("Reconnect kiosk."); return; }
+    hbRef.current = true;
     try {
-      const queueSize = await refreshQueue();
-      const hb = await sendDeviceHeartbeat({
-        apiUrl: DEVICE_HEARTBEAT_API_URL, deviceId: DEVICE_ID, libraryAccessKey: libKey, libraryId: libId,
-        status: { appVersion: APP_VERSION, cameraReady: controllerState.status === "ready", deviceName: DEVICE_NAME, isOnline, lastSyncAt: readLastAttendanceSyncAt(), pendingCount: queueSize, phase },
-      });
-      if (!hb.valid) { await redirectToSetup(hb.message || "Reconnect kiosk."); return false; }
-      return true;
-    } catch { return true; } finally { heartbeatRef.current = false; }
-  }, [controllerState.status, isOnline, phase, redirectToSetup, refreshQueue]);
+      const hb = await sendDeviceHeartbeat({ apiUrl: HEARTBEAT_URL, deviceId: DEVICE_ID, libraryAccessKey: lk, libraryId: lid, status: { appVersion: APP_VERSION, cameraReady: ctrl.status === "ready", deviceName: DEVICE_NAME, isOnline: online, lastSyncAt: readLastAttendanceSyncAt(), pendingCount: pending, phase } });
+      if (!hb.valid) await goSetup(hb.message || "Reconnect.");
+    } catch {} finally { hbRef.current = false; }
+  }, [ctrl.status, goSetup, online, pending, phase]);
 
-  // ─── Queue sync ────────────────────────────────────────────────────────────
-  const syncQueue = useCallback(async () => {
-    if (!isOnline || syncRef.current || bindingRedirectRef.current) return;
-    const count = await countAttendanceQueueEntries().catch(() => 0);
-    if (mountedRef.current) setPendingCount(count);
-    if (count === 0) return;
+  // Sync
+  const sync = useCallback(async () => {
+    if (!online || syncRef.current || redirectRef.current) return;
+    const c = await countAttendanceQueueEntries().catch(() => 0); if (c === 0) return;
     syncRef.current = true;
-    try { await syncQueuedAttendance({ deviceToken: SCAN_DEVICE_TOKEN, scanApiUrl: SCAN_API_URL }); } catch {} finally { syncRef.current = false; void refreshQueue(); }
-  }, [isOnline, refreshQueue]);
+    try { await syncQueuedAttendance({ deviceToken: DEVICE_TOKEN, scanApiUrl: SCAN_API_URL }); } catch {} finally { syncRef.current = false; void refreshQ(); }
+  }, [online, refreshQ]);
 
-  // ─── Process scan ──────────────────────────────────────────────────────────
-  const processScan = useCallback(async (rawValue: string) => {
-    if (processingRef.current) return;
-    const val = trimText(rawValue);
-    if (!val || val.length > MAX_SCAN_VALUE_LENGTH || Date.now() < cooldownRef.current) return;
-
-    processingRef.current = true;
-    clearResume();
-    triggerDetectionHaptic();
-    setPhase("scanning"); setScanPayload(null);
+  // Process scan — use ref to avoid stale closure in scanner callback
+  const processRef = useRef<(raw: string) => void>(() => {});
+  const process = useCallback(async (raw: string) => {
+    if (procRef.current) return;
+    const val = trim(raw); if (!val || val.length > 4096 || Date.now() < coolRef.current) return;
+    procRef.current = true; clearResume(); setPhase("scanning"); setPayload(null);
+    try { if (typeof navigator?.vibrate === "function") navigator.vibrate(20); } catch {}
+    console.log("[scan] QR detected:", val.slice(0, 40));
 
     try {
-      const parsed = await parseStudentQrPayload(val, {
-        allowLegacy: true, expectedLibraryId: readStoredLibraryId(), now: new Date(), publicKeyPem: STUDENT_QR_PUBLIC_KEY,
-      });
-      if (!mountedRef.current) return;
-      if (!parsed || !parsed.valid) {
-        setPhase("error"); setScanPayload({ code: parsed?.code ?? "INVALID_QR", message: parsed?.message ?? "Invalid ID.", status: "error", success: false });
-        scheduleResume("invalid"); cooldownRef.current = Date.now() + SCAN_DEBOUNCE_MS; return;
-      }
+      const parsed = await parseStudentQrPayload(val, { allowLegacy: true, expectedLibraryId: readStoredLibraryId(), now: new Date(), publicKeyPem: QR_PUBLIC_KEY });
+      console.log("[scan] Parse result:", parsed ? { valid: parsed.valid, source: parsed.source, code: parsed.code } : "null");
+      if (!mountRef.current) return;
+      if (!parsed || !parsed.valid) { setPhase("error"); setPayload({ code: parsed?.code ?? "INVALID_QR", message: parsed?.message ?? "Invalid ID", status: "error", success: false }); schedResume(); coolRef.current = Date.now() + DEBOUNCE_MS; return; }
 
-      const libId = readStoredLibraryId(); const libKey = readStoredLibraryAccessKey();
-      if (!libId || !libKey) { await redirectToSetup("Reconnect kiosk."); return; }
+      const lid = readStoredLibraryId(); const lk = readStoredLibraryAccessKey();
+      if (!lid || !lk) { await goSetup("Reconnect."); return; }
+      const sid = parsed.source === "legacy" ? parsed.qrCode : parsed.studentId;
+      if (!sid) { setPhase("error"); setPayload({ code: "INVALID_QR", message: "Invalid ID", status: "error", success: false }); schedResume(); coolRef.current = Date.now() + DEBOUNCE_MS; return; }
+      if (lastRef.current.val === sid && Date.now() - lastRef.current.at < DUP_WINDOW_MS) { setPhase("idle"); schedResume(); coolRef.current = Date.now() + DEBOUNCE_MS; return; }
+      lastRef.current = { at: Date.now(), val: sid };
 
-      const scanId = parsed.source === "legacy" ? parsed.qrCode : parsed.studentId;
-      if (!scanId) { setPhase("error"); setScanPayload({ code: "INVALID_QR", message: "Invalid ID.", status: "error", success: false }); scheduleResume("no-id"); cooldownRef.current = Date.now() + SCAN_DEBOUNCE_MS; return; }
+      const entry = createAttendanceQueueEntry({ deviceId: DEVICE_ID, libraryAccessKey: lk, libraryId: lid, qrCode: parsed.rawValue, studentId: sid, timestamp: new Date().toISOString() });
+      let res: AttendanceScanPayload;
 
-      if (lastScanRef.current.value === scanId && Date.now() - lastScanRef.current.at < DUPLICATE_SCAN_WINDOW_MS) {
-        setPhase("idle"); scheduleResume("dup"); cooldownRef.current = Date.now() + SCAN_DEBOUNCE_MS; return;
-      }
-      lastScanRef.current = { at: Date.now(), value: scanId };
-
-      const entry = createAttendanceQueueEntry({ deviceId: DEVICE_ID, libraryAccessKey: libKey, libraryId: libId, qrCode: parsed.rawValue, studentId: scanId, timestamp: new Date().toISOString() });
-      let payload: AttendanceScanPayload;
-
-      if (isOnline) {
+      if (online) {
         try {
-          payload = await submitAttendanceScan({ deviceToken: SCAN_DEVICE_TOKEN, entry, scanApiUrl: SCAN_API_URL });
-          if (DEVICE_BINDING_RESET_CODES.has(payload.code ?? "")) { await redirectToSetup(payload.message || "Reconnect kiosk."); return; }
-        } catch {
-          await enqueueAttendanceQueueEntry(entry);
-          payload = buildOfflineQueuedPayload({ entry, libraryId: libId, parsedSource: parsed.source, studentId: scanId });
-        }
-      } else {
-        await enqueueAttendanceQueueEntry(entry);
-        payload = buildOfflineQueuedPayload({ entry, libraryId: libId, parsedSource: parsed.source, studentId: scanId });
-      }
+          console.log("[scan] Submitting to API...");
+          res = await submitAttendanceScan({ deviceToken: DEVICE_TOKEN, entry, scanApiUrl: SCAN_API_URL });
+          console.log("[scan] API response:", res.status, res.message);
+          if (BINDING_RESET_CODES.has(res.code ?? "")) { await goSetup(res.message || "Reconnect."); return; }
+        } catch (err) { console.log("[scan] API error, queuing:", err); await enqueueAttendanceQueueEntry(entry); const cached = readOfflineVerifiedStudent({ libraryId: lid, studentId: sid }); res = { status: "queued", message: "Queued.", time: timeFmt(entry.timestamp), entry_id: entry.entry_id, ...(cached ? { verifiedOffline: true, name: cached.name, studentName: cached.name, seat: cached.seat } : {}) }; }
+      } else { await enqueueAttendanceQueueEntry(entry); const cached = readOfflineVerifiedStudent({ libraryId: lid, studentId: sid }); res = { status: "queued", message: "Offline.", time: timeFmt(entry.timestamp), entry_id: entry.entry_id, ...(cached ? { verifiedOffline: true, name: cached.name, studentName: cached.name, seat: cached.seat } : {}) }; }
 
-      if (!mountedRef.current) return;
-      if (payload.status === "success" && !payload.duplicate) { rememberOfflineVerifiedStudent({ libraryId: libId, name: getPayloadDisplayName(payload) ?? scanId, seat: getPayloadSeat(payload), studentId: scanId }); }
+      if (!mountRef.current) return;
+      if (res.status === "success" && !res.duplicate) rememberOfflineVerifiedStudent({ libraryId: lid, name: nameOf(res) ?? sid, seat: seatOf(res), studentId: sid });
+      setPayload(res); setPhase(res.status === "error" ? "error" : res.status === "queued" ? "queued" : "success");
+      startTransition(() => { setHistory(prev => [{ id: uid(), name: nameOf(res) || sid, seat: seatOf(res), tone: toneOf(res), at: new Date().toISOString(), label: res.status === "success" ? (res.duplicate ? "Already Marked" : "Granted") : res.status === "queued" ? "Queued" : "Denied" }, ...prev].slice(0, MAX_HISTORY)); });
+      schedResume(); coolRef.current = Date.now() + DEBOUNCE_MS;
+    } finally { procRef.current = false; void refreshQ(); }
+  }, [clearResume, goSetup, online, refreshQ, schedResume]);
 
-      setScanPayload(payload);
-      setPhase(payload.status === "error" ? "error" : payload.status === "queued" ? "queued" : "success");
+  // Keep ref in sync so scanner callback always calls latest version
+  useEffect(() => { processRef.current = process; }, [process]);
 
-      startTransition(() => {
-        setScanHistory((prev) => [{
-          at: new Date().toISOString(), confidence: getConfidenceFromPayload(payload), detail: describeScanPayload(payload),
-          id: createUiId("scan"), name: getPayloadDisplayName(payload) || scanId, seat: getPayloadSeat(payload),
-          statusLabel: payload.status === "success" ? (payload.duplicate ? "Already Marked" : "Verified") : payload.status === "queued" ? "Queued" : "Rejected",
-          studentKey: scanId, tone: getToneFromPayload(payload),
-        }, ...prev].slice(0, MAX_SCAN_HISTORY));
-      });
-
-      scheduleResume("done");
-      cooldownRef.current = Date.now() + SCAN_DEBOUNCE_MS;
-    } finally { processingRef.current = false; void refreshQueue(); }
-  }, [clearResume, isOnline, redirectToSetup, refreshQueue, scheduleResume]);
-
-  // ─── Scanner controller setup ──────────────────────────────────────────────
-  const handleVideoRef = useCallback((el: HTMLVideoElement | null) => { videoRef.current = el; }, []);
-
+  // Scanner init
   useEffect(() => {
-    mountedRef.current = true;
-    const ctrl = new ScanController({
-      onDetection: (det: ScanDetectionPayload) => { void processScan(det.value); },
-      onLog: () => {},
-      onStateChange: (s: ScanControllerState) => { if (mountedRef.current) setControllerState(s); },
-      preferredFacing: "environment",
-    });
-    controllerRef.current = ctrl;
-    const startScanner = async () => {
-      if (videoRef.current) { try { await ctrl.start(videoRef.current); } catch {} }
-    };
-    const timer = window.setTimeout(startScanner, 400);
+    mountRef.current = true;
+    const sc = new ScanController({ onDetect: (d: ScanDetectionPayload) => { console.log("[scan] onDetect fired:", d.rawValue?.slice(0, 30)); processRef.current(d.rawValue); }, onLog: () => {}, onStateChange: (s: ScanControllerState) => { if (mountRef.current) setCtrl(s); } });
+    ctrlRef.current = sc;
 
-    const hbInterval = window.setInterval(() => { void sendHeartbeat(); }, HEARTBEAT_INTERVAL_MS);
-    const syncInterval = window.setInterval(() => { void syncQueue(); }, SYNC_INTERVAL_MS);
-    void refreshQueue();
-
-    return () => {
-      mountedRef.current = false;
-      window.clearTimeout(timer);
-      window.clearInterval(hbInterval);
-      window.clearInterval(syncInterval);
-      clearResume();
-      void ctrl.stop("unmount");
+    const boot = async () => {
+      // Wait for video element to be available
+      await new Promise<void>(resolve => { const check = () => { if (videoRef.current || !mountRef.current) resolve(); else requestAnimationFrame(check); }; check(); });
+      if (!mountRef.current || !videoRef.current) return;
+      sc.attachVideoElement(videoRef.current);
+      await sc.init();
+      if (!mountRef.current) return;
+      await sc.start("page-load");
+      console.log("[scan] Scanner started, status:", sc.getState().status);
     };
+    void boot().catch((e) => { console.error("[scan] Boot failed:", e); });
+    const hb = setInterval(() => { void heartbeat(); }, HEARTBEAT_MS);
+    const sy = setInterval(() => { void sync(); }, SYNC_MS);
+    void refreshQ();
+    return () => { mountRef.current = false; clearInterval(hb); clearInterval(sy); clearResume(); void sc.stop("unmount"); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Derived UI state ──────────────────────────────────────────────────────
-  const cameraLive = controllerState.status === "ready" || controllerState.status === "paused";
-  const liveState: ScannerLiveState = phase === "scanning" ? "scanning" : scanPayload?.status === "success" ? "matched" : scanPayload?.status === "error" ? "failed" : !isOnline ? "offline" : cameraLive ? "ready" : "ready";
+  // ─── Derived state ─────────────────────────────────────────────────────────
+  const live = ctrl.status === "ready" || ctrl.status === "paused";
+  const tone: ScannerUiTone = ctrl.error || payload?.status === "error" ? "danger" : !online || payload?.status === "queued" ? "info" : payload?.status === "success" ? "success" : "success";
+  const status = payload?.status === "success" ? (payload.duplicate ? "Already Marked" : "Access Granted") : payload?.status === "queued" ? "Saved Offline" : payload?.status === "error" ? "Denied" : phase === "scanning" ? "Verifying..." : ctrl.error ? "Camera Error" : !online ? "Offline Mode" : "Ready to Scan";
+  const checked = history.filter(i => i.tone === "success").length;
+  const denied = history.filter(i => i.tone === "danger").length;
 
-  const tone: ScannerUiTone = useMemo(() => {
-    if (controllerState.error || scanPayload?.status === "error") return "danger";
-    if (!isOnline || scanPayload?.status === "queued") return "info";
-    if (phase === "scanning") return "info";
-    if (scanPayload?.status === "success") return "success";
-    return "success";
-  }, [controllerState.error, isOnline, phase, scanPayload]);
-
-  const statusLabel = useMemo(() => {
-    if (scanPayload?.status === "success") return scanPayload.duplicate ? "Already marked" : "Access granted";
-    if (scanPayload?.status === "queued") return "Saved offline";
-    if (scanPayload?.status === "error") return "Scan failed";
-    if (phase === "scanning") return "Verifying...";
-    if (controllerState.error) return "Camera error";
-    if (!isOnline) return "Offline mode";
-    return "Ready to scan";
-  }, [controllerState.error, isOnline, phase, scanPayload]);
-
-  const statusMessage = useMemo(() => {
-    if (scanPayload) return describeScanPayload(scanPayload);
-    if (controllerState.error) return controllerState.error.detail ?? "Camera needs attention";
-    if (!cameraLive) return "Initializing camera...";
-    if (!isOnline) return "Offline — scans will sync when connected";
-    return "Position QR code 6–10 inches from camera";
-  }, [cameraLive, controllerState.error, isOnline, scanPayload]);
-
-  const timeLabel = useMemo(() => new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(nowMs), [nowMs]);
-  const dateLabel = useMemo(() => new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(nowMs), [nowMs]);
-
-  const checkedIn = scanHistory.filter((i) => i.tone === "success").length;
-  const denied = scanHistory.filter((i) => i.tone === "danger").length;
-  const syncPending = pendingCount + scanHistory.filter((i) => i.tone === "warning" || i.tone === "info").length;
-
-  const lastScan = scanHistory[0] ?? null;
-  const verificationData = lastScan ? {
-    avatarLabel: getInitials(lastScan.name), name: lastScan.name,
-    plan: lastScan.tone === "danger" ? "Retry" : "--", seat: lastScan.seat || "--",
-    statusLabel: lastScan.tone === "success" ? "ACCESS GRANTED" : lastScan.tone === "danger" ? "ACCESS DENIED" : "QUEUED",
-    subtitle: lastScan.detail, tone: lastScan.tone,
-  } : { avatarLabel: "ID", name: "Waiting for scan", plan: "--", seat: "--", statusLabel: "STANDBY", subtitle: "System ready", tone: "success" as ScannerUiTone };
-
-  const activityItems: ActivityRailItem[] = scanHistory.slice(0, 6).map((i) => ({
-    detail: i.tone === "success" ? "Access Granted" : i.tone === "danger" ? "Access Denied" : i.statusLabel,
-    id: i.id, seat: i.seat, timestampLabel: formatClockLabel(i.at), title: i.name, tone: i.tone,
-  }));
+  const toneColor = tone === "danger" ? "text-rose-400" : tone === "info" ? "text-cyan-400" : "text-emerald-400";
+  const toneBg = tone === "danger" ? "bg-rose-500/10 border-rose-500/20" : tone === "info" ? "bg-cyan-500/10 border-cyan-500/20" : "bg-emerald-500/10 border-emerald-500/20";
+  const toneDot = tone === "danger" ? "bg-rose-400" : tone === "info" ? "bg-cyan-400" : "bg-emerald-400";
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-[100dvh] overflow-x-hidden bg-[#030810] text-white">
-      {/* Background effects */}
-      <div className="pointer-events-none fixed inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(6,78,130,0.15),transparent_50%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,rgba(6,95,70,0.08),transparent_40%)]" />
-        <div className="absolute inset-0 opacity-[0.03] [background-image:linear-gradient(rgba(255,255,255,0.5)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.5)_1px,transparent_1px)] [background-size:60px_60px]" />
-      </div>
-
-      <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-[1600px] flex-col">
-        {/* ─── Header ─────────────────────────────────────────────────────── */}
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-4 py-3 sm:px-6 sm:py-4">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl border border-cyan-500/20 bg-cyan-500/5">
-              <QrCode className="h-5 w-5 text-cyan-300" />
-            </div>
-            <div>
-              <h1 className="text-base font-semibold tracking-tight sm:text-lg">Access Gate</h1>
-              <p className="text-[11px] text-white/40">Libriofy Smart Entry</p>
-            </div>
+    <div className="grid h-[100dvh] grid-rows-[auto_1fr_auto] overflow-hidden bg-[#0a0f1a] text-white">
+      {/* ── Header ── */}
+      <header className="flex items-center justify-between border-b border-white/5 px-4 py-2.5 sm:px-6">
+        <div className="flex items-center gap-3">
+          <div className="grid h-9 w-9 place-items-center rounded-lg bg-white/5"><QrCode className="h-4 w-4 text-cyan-400" /></div>
+          <div><p className="text-sm font-semibold">Access Gate</p><p className="text-[10px] text-white/40">Libriofy Smart Entry</p></div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className={cn("flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium", toneBg)}>
+            <span className={cn("h-1.5 w-1.5 rounded-full", toneDot)} />{status}
           </div>
-
-          <div className="flex items-center gap-3">
-            <div className={cn("flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium",
-              isOnline ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300" : "border-amber-500/20 bg-amber-500/5 text-amber-300"
-            )}>
-              {isOnline ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-              {isOnline ? "Live" : "Offline"}
-            </div>
-            <div className="text-right">
-              <p className="text-sm font-semibold tabular-nums">{timeLabel}</p>
-              <p className="text-[11px] text-white/40">{dateLabel}</p>
-            </div>
+          <div className={cn("flex items-center gap-1 rounded-full border px-2 py-1 text-[10px]", online ? "border-emerald-500/20 text-emerald-400" : "border-amber-500/20 text-amber-400")}>
+            {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}{online ? "Live" : "Offline"}
           </div>
-        </header>
+          <div className="hidden text-right sm:block"><p className="text-xs font-medium tabular-nums">{clockFmt(now)}</p><p className="text-[10px] text-white/35">{dateFmt(now)}</p></div>
+        </div>
+      </header>
 
-        {/* ─── Main Content ───────────────────────────────────────────────── */}
-        <main className="flex flex-1 flex-col gap-4 p-4 sm:p-6 lg:flex-row lg:gap-6">
-          {/* Left: Scanner */}
-          <div className="flex flex-col items-center justify-center gap-5 lg:flex-1">
-            {/* Status */}
-            <StatusPulse label={statusLabel} message={statusMessage} online={isOnline} tone={tone} />
-
-            {/* Scanner frame */}
-            <ScannerFrame
-              cameraLive={cameraLive}
-              liveState={liveState}
-              onVideoRef={handleVideoRef}
-              statusLabel={statusLabel}
-              tone={tone}
-            />
-
-            {/* Instruction */}
-            <div className="flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.02] px-4 py-2">
-              <ScanLine className="h-4 w-4 text-cyan-400/60" />
-              <span className="text-xs text-white/50">Position QR 6–10 inches from camera</span>
-            </div>
+      {/* ── Main ── */}
+      <main className="grid min-h-0 grid-cols-1 gap-3 overflow-hidden p-3 sm:p-4 lg:grid-cols-[1fr_320px] xl:grid-cols-[1fr_360px]">
+        {/* Scanner column */}
+        <div className="flex min-h-0 flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border border-white/5 bg-white/[0.02] p-3">
+          {/* Scanner frame */}
+          <div className="relative w-full max-w-[min(100%,clamp(200px,50vh,400px))] aspect-square overflow-hidden rounded-xl border border-white/10 bg-black/40">
+            <video ref={(el) => { videoRef.current = el; }} autoPlay muted playsInline className={cn("absolute inset-0 h-full w-full object-cover transition-opacity duration-500", live ? "opacity-90" : "opacity-0")} />
+            {/* Corners */}
+            <div className="absolute inset-0 flex items-center justify-center"><div className="relative h-[60%] w-[60%]">
+              <div className={cn("absolute left-0 top-0 h-6 w-6 rounded-tl-lg border-l-2 border-t-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
+              <div className={cn("absolute right-0 top-0 h-6 w-6 rounded-tr-lg border-r-2 border-t-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
+              <div className={cn("absolute bottom-0 left-0 h-6 w-6 rounded-bl-lg border-b-2 border-l-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
+              <div className={cn("absolute bottom-0 right-0 h-6 w-6 rounded-br-lg border-b-2 border-r-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
+              {live && <motion.div className={cn("absolute inset-x-2 h-[2px] rounded-full bg-gradient-to-r from-transparent via-current to-transparent", toneColor)} animate={{ top: ["10%", "88%", "10%"] }} transition={{ duration: 2, ease: "linear", repeat: Infinity }} />}
+            </div></div>
+            {/* Idle state */}
+            {!live && <div className="absolute inset-0 z-10 grid place-items-center bg-black/50 backdrop-blur-sm"><p className="text-xs text-white/60">{ctrl.error ? "Camera error" : "Starting camera..."}</p></div>}
           </div>
+          {/* Instruction */}
+          <p className="text-center text-xs text-white/40">Position QR code 6–10 inches from camera</p>
+        </div>
 
-          {/* Right: Info panels */}
-          <div className="flex flex-col gap-4 lg:w-[380px] xl:w-[420px]">
-            {/* Metrics row */}
-            <div className="grid grid-cols-3 gap-3">
-              <MetricCard label="Checked In" tone="success" value={String(checkedIn)} />
-              <MetricCard label="Denied" tone="danger" value={String(denied)} />
-              <MetricCard label="Pending" tone="info" value={String(syncPending)} />
-            </div>
-
-            {/* Last verification */}
-            <VerificationCard {...verificationData} />
-
-            {/* Activity feed */}
-            <div className="flex-1 overflow-hidden rounded-2xl border border-white/5 bg-white/[0.01] p-3">
-              <div className="mb-3 flex items-center justify-between">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-white/40">Live Activity</p>
-                <motion.div
-                  className="h-2 w-2 rounded-full bg-emerald-400"
-                  animate={{ opacity: [0.4, 1, 0.4] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                />
+        {/* Info column */}
+        <div className="flex min-h-0 flex-col gap-2.5 overflow-hidden">
+          {/* Stats row */}
+          <div className="grid shrink-0 grid-cols-3 gap-2">
+            {[{ l: "Checked In", v: checked, c: "text-emerald-400 border-emerald-500/20" }, { l: "Denied", v: denied, c: "text-rose-400 border-rose-500/20" }, { l: "Pending", v: pending, c: "text-cyan-400 border-cyan-500/20" }].map(s => (
+              <div key={s.l} className={cn("rounded-xl border bg-white/[0.02] px-3 py-2", s.c)}>
+                <p className="text-lg font-bold tabular-nums">{s.v}</p>
+                <p className="text-[10px] text-white/40">{s.l}</p>
               </div>
-              <ActivityFeed items={activityItems} />
+            ))}
+          </div>
+
+          {/* Last scan */}
+          <div className="shrink-0 rounded-xl border border-white/5 bg-white/[0.02] p-3">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-white/30">Last Verification</p>
+            {history[0] ? (
+              <div className="mt-2 flex items-center gap-3">
+                <div className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-full border text-sm font-bold", history[0].tone === "danger" ? "border-rose-400/50 text-rose-300" : history[0].tone === "info" ? "border-cyan-400/50 text-cyan-300" : "border-emerald-400/50 text-emerald-300")}>{initials(history[0].name)}</div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{history[0].name}</p>
+                  <div className="flex items-center gap-2 text-[11px] text-white/40">
+                    <span className={cn(history[0].tone === "danger" ? "text-rose-400" : history[0].tone === "info" ? "text-cyan-400" : "text-emerald-400")}>{history[0].label}</span>
+                    {history[0].seat && <span>Seat {history[0].seat}</span>}
+                    <span>{timeFmt(history[0].at)}</span>
+                  </div>
+                </div>
+              </div>
+            ) : <p className="mt-2 text-xs text-white/30">Waiting for first scan...</p>}
+          </div>
+
+          {/* Activity list */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/5 bg-white/[0.02] p-3">
+            <p className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-white/30">Recent Activity</p>
+            <div className="mt-2 flex-1 space-y-1.5 overflow-hidden">
+              {history.length === 0 && <p className="py-4 text-center text-xs text-white/20">Scans will appear here</p>}
+              {history.slice(0, visibleActivityCount).map(item => (
+                <div key={item.id} className="flex items-center gap-2.5 rounded-lg bg-white/[0.02] px-2.5 py-2">
+                  <div className={cn("h-1.5 w-1.5 shrink-0 rounded-full", item.tone === "danger" ? "bg-rose-400" : item.tone === "info" ? "bg-cyan-400" : "bg-emerald-400")} />
+                  {item.tone === "success" ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" /> : item.tone === "danger" ? <CircleX className="h-3.5 w-3.5 shrink-0 text-rose-400" /> : <Clock className="h-3.5 w-3.5 shrink-0 text-cyan-400" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-white/70">{item.name}</p>
+                    <p className="text-[10px] text-white/30">{item.label}{item.seat ? ` · Seat ${item.seat}` : ""}</p>
+                  </div>
+                  <span className="shrink-0 text-[10px] text-white/25">{timeFmt(item.at)}</span>
+                </div>
+              ))}
             </div>
           </div>
-        </main>
+        </div>
+      </main>
 
-        {/* ─── Footer ─────────────────────────────────────────────────────── */}
-        <footer className="border-t border-white/5 px-4 py-3 text-center sm:px-6">
-          <div className="flex items-center justify-center gap-2 text-white/25">
-            <Shield className="h-3.5 w-3.5" />
-            <span className="text-[11px] tracking-wider">Secure · Smart · Seamless</span>
-          </div>
-        </footer>
-      </div>
+      {/* ── Footer ── */}
+      <footer className="flex items-center justify-center gap-2 border-t border-white/5 px-4 py-2">
+        <Shield className="h-3 w-3 text-white/20" />
+        <span className="text-[10px] tracking-wider text-white/20">Secure · Smart · Seamless</span>
+      </footer>
     </div>
   );
 };

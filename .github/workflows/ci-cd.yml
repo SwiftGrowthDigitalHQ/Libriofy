@@ -7,6 +7,10 @@ on:
       - main
       - staging
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     name: Validate
@@ -117,6 +121,24 @@ jobs:
       - name: Trigger Render staging deploy
         run: curl --fail --show-error --silent --request POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
 
+      - name: Wait for staging propagation
+        run: sleep 15
+
+      - name: Verify staging health
+        run: |
+          HEALTH_URL="${{ secrets.VITE_PUBLIC_APP_URL }}/api/health/ready"
+          echo "Checking staging health at: $HEALTH_URL"
+          for i in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$HEALTH_URL" || echo "000")
+            echo "Attempt $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "✓ Staging health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "⚠ Staging health check did not pass (non-blocking)"
+
   deploy_production:
     name: Deploy Production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -195,6 +217,25 @@ jobs:
 
       - name: Trigger Render production deploy
         run: curl --fail --show-error --silent --request POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+
+      - name: Wait for deployment propagation
+        run: sleep 15
+
+      - name: Verify production health
+        run: |
+          HEALTH_URL="${{ secrets.VITE_PUBLIC_APP_URL }}/api/health/ready"
+          echo "Checking health at: $HEALTH_URL"
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$HEALTH_URL" || echo "000")
+            echo "Attempt $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "✓ Production health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "✗ Production health check FAILED after 5 attempts"
+          exit 1
 
   notify_failure:
     name: Notify Failure

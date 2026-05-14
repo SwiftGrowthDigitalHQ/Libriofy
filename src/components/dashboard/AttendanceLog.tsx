@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +24,7 @@ type AttendanceRow = Pick<
 };
 
 const AttendanceLog = ({ libraryId }: AttendanceLogProps) => {
+  const queryClient = useQueryClient();
   const { data: logs = [], isLoading, error } = useQuery({
     queryKey: ["attendance-logs-today", libraryId],
     queryFn: async (): Promise<AttendanceRow[]> => {
@@ -39,8 +41,25 @@ const AttendanceLog = ({ libraryId }: AttendanceLogProps) => {
       return (data ?? []) as AttendanceRow[];
     },
     enabled: !!libraryId,
-    refetchInterval: 10000,
+    refetchInterval: 5000,
   });
+
+  // Realtime subscription for instant updates
+  useEffect(() => {
+    if (!libraryId) return;
+    const channel = supabase
+      .channel(`attendance-logs-${libraryId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance_logs", filter: `library_id=eq.${libraryId}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["attendance-logs-today", libraryId] });
+        },
+      )
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [libraryId, queryClient]);
 
   return (
     <Card>

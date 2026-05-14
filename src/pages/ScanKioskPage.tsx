@@ -1700,7 +1700,7 @@ const ScanKioskPage = () => {
           className="scan-dashboard-shell flex w-full flex-col rounded-[18px] border bg-[rgba(3,9,18,0.9)] shadow-[0_32px_140px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(148,233,255,0.06)] backdrop-blur-2xl sm:rounded-[24px] lg:rounded-[28px]"
           style={{ borderColor: shellBorder }}
         >
-          <header className="grid gap-2 border-b border-cyan-400/14 px-3 py-2.5 sm:gap-3 sm:px-5 sm:py-3.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center lg:grid-cols-[minmax(0,1.1fr)_auto_auto_minmax(0,0.78fr)] lg:gap-3.5 xl:gap-4 xl:px-6 xl:py-4">
+          <header className="grid shrink-0 gap-2 border-b border-cyan-400/14 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-2.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center lg:grid-cols-[minmax(0,1.1fr)_auto_auto_minmax(0,0.78fr)] lg:gap-3 xl:gap-3.5 xl:px-5 xl:py-3">
             <div className="flex min-w-0 items-center gap-3 sm:gap-4 md:col-span-2 lg:col-span-1">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] border border-cyan-400/30 bg-cyan-400/8 shadow-[0_0_36px_rgba(34,211,238,0.14)] sm:h-12 sm:w-12">
                 <div className="grid h-8 w-8 place-items-center rounded-[13px] bg-[linear-gradient(180deg,rgba(34,211,238,0.24),rgba(34,211,238,0.08))] text-cyan-100 sm:h-9 sm:w-9">
@@ -1775,18 +1775,18 @@ const ScanKioskPage = () => {
             </div>
           </header>
 
-          <div className="scan-dashboard-main flex-1 overflow-y-auto overflow-x-hidden px-3 py-2.5 sm:px-3.5 sm:py-3 xl:px-4 xl:py-3.5">
-            <div className="scan-dashboard-top main-layout items-start">
+          <div className="scan-dashboard-main px-2 py-1.5 sm:px-3 sm:py-2 lg:px-3 lg:py-1.5 xl:px-4 xl:py-2">
+            <div className="scan-dashboard-top main-layout lg:h-full">
               <section
-                className="scan-dashboard-primary flex min-h-0 min-w-0 flex-col rounded-[20px] p-3 sm:rounded-[28px] sm:p-4 xl:p-5"
+                className="scan-dashboard-primary flex min-h-0 min-w-0 flex-col rounded-[20px] p-2.5 sm:rounded-[24px] sm:p-3 xl:p-4"
                 style={{
                   background: panelSurfaceBright,
                   border: `1px solid ${panelBorder}`,
                   boxShadow: "inset 0 1px 0 rgba(148,233,255,0.04)",
                 }}
               >
-                <div className="mx-auto max-w-3xl text-center">
-                  <h2 className="font-display text-[clamp(1.5rem,2.8vw,1.75rem)] font-semibold tracking-[-0.05em] text-white">
+                <div className="mx-auto max-w-3xl text-center lg:hidden">
+                  <h2 className="font-display text-[clamp(1.2rem,2.5vw,1.5rem)] font-semibold tracking-[-0.05em] text-white">
                     SCAN YOUR LIBRIOFY ID
                   </h2>
                   <p className="mt-2 text-[clamp(0.86rem,1.75vw,1rem)] text-slate-300">
@@ -1835,7 +1835,7 @@ const ScanKioskPage = () => {
                   ))}
                 </div>
 
-                <div className="scan-dashboard-scanner-wrap mt-4 flex w-full justify-center sm:mt-5">
+                <div className="scan-dashboard-scanner-wrap mt-2 flex w-full flex-1 items-center justify-center sm:mt-3">
                   <div className="scan-dashboard-frame-wrap relative w-full">
                     <div
                       className="scan-dashboard-scanner-shell scanner relative rounded-[24px] border"
@@ -1922,23 +1922,23 @@ const ScanKioskPage = () => {
                   </div>
                 </div>
 
-                <div className="mt-4 flex justify-center sm:mt-5">
-                  <div className="inline-flex w-full max-w-[30rem] items-center justify-center gap-3 rounded-full border border-cyan-400/16 bg-[#071220]/92 px-4 py-2.5 text-center text-[clamp(0.8rem,2vw,1rem)] text-slate-200 shadow-[0_12px_42px_rgba(0,0,0,0.28)]">
-                    <div className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-400/24 bg-cyan-500/10 text-cyan-200">
+                <div className="mt-2 flex justify-center sm:mt-3">
+                  <div className="inline-flex w-full max-w-[28rem] items-center justify-center gap-2 rounded-full border border-cyan-400/16 bg-[#071220]/92 px-3 py-2 text-center text-[clamp(0.72rem,1.8vw,0.9rem)] text-slate-200 shadow-[0_8px_30px_rgba(0,0,0,0.2)]">
+                    <div className="grid h-7 w-7 place-items-center rounded-lg border border-cyan-400/24 bg-cyan-500/10 text-cyan-200">
                       <ScanLine className="h-[1.125rem] w-[1.125rem]" />
                     </div>
                     <span>{frameInstructionLabel}</span>
                   </div>
                 </div>
 
-                <p className="mx-auto mt-2.5 max-w-2xl text-center text-[clamp(0.78rem,1.8vw,0.95rem)] leading-6 text-slate-400">
+                <p className="mx-auto mt-1.5 hidden max-w-xl text-center text-[clamp(0.7rem,1.5vw,0.85rem)] leading-5 text-slate-400 lg:block">
                   {scannerMessage}
                 </p>
               </section>
 
               <div className="scan-dashboard-side right-panel min-w-0">
                 <section
-                  className="scan-dashboard-side-card scan-dashboard-side-status rounded-[20px] p-3 sm:rounded-[28px] sm:p-4 md:col-span-2 lg:col-span-1"
+                  className="scan-dashboard-side-card scan-dashboard-side-status rounded-[20px] p-2.5 sm:rounded-[24px] sm:p-3 md:col-span-2 lg:col-span-1"
                   style={{
                     background:
                       "radial-gradient(circle at top right, rgba(18,53,87,0.22), transparent 34%), linear-gradient(180deg, rgba(3,9,18,0.98), rgba(3,9,18,0.96))",
@@ -2006,7 +2006,7 @@ const ScanKioskPage = () => {
                 </section>
 
                 <section
-                  className="scan-dashboard-side-card scan-dashboard-side-verification rounded-[20px] p-3 sm:rounded-[28px] sm:p-4"
+                  className="scan-dashboard-side-card scan-dashboard-side-verification rounded-[20px] p-2.5 sm:rounded-[24px] sm:p-3"
                   style={{
                     background:
                       "radial-gradient(circle at top left, rgba(20,67,109,0.16), transparent 34%), linear-gradient(180deg, rgba(3,9,18,0.98), rgba(3,9,18,0.96))",
@@ -2107,7 +2107,7 @@ const ScanKioskPage = () => {
                 </section>
 
                 <section
-                  className="scan-dashboard-side-card scan-dashboard-side-summary rounded-[20px] p-3 sm:rounded-[28px] sm:p-4"
+                  className="scan-dashboard-side-card scan-dashboard-side-summary rounded-[20px] p-2.5 sm:rounded-[24px] sm:p-3"
                   style={{
                     background: panelSurface,
                     border: `1px solid ${panelBorder}`,
@@ -2162,7 +2162,7 @@ const ScanKioskPage = () => {
             </div>
 
             <section
-              className="scan-dashboard-activity-section mt-3 rounded-[20px] p-3 sm:mt-4 sm:rounded-[28px] sm:p-4 lg:mt-0 xl:p-5"
+              className="scan-dashboard-activity-section mt-2 rounded-[20px] p-2.5 sm:mt-3 sm:rounded-[24px] sm:p-3 lg:hidden"
               style={{
                 background: panelSurface,
                 border: `1px solid ${panelBorder}`,
@@ -2233,7 +2233,7 @@ const ScanKioskPage = () => {
             </section>
           </div>
 
-          <footer className="border-t border-cyan-400/12 px-4 py-4 text-center sm:px-5 xl:px-6">
+          <footer className="shrink-0 border-t border-cyan-400/12 px-3 py-2 text-center sm:px-4 xl:px-5">
             <div className="inline-flex items-center gap-3 text-slate-400">
               <ShieldCheck className="h-4 w-4" />
               <span className="text-[clamp(0.75rem,2vw,1rem)]">Secure. Smart. Seamless.</span>

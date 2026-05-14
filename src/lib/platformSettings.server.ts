@@ -23,7 +23,7 @@ type SettingsCacheEntry = {
   value: PlatformSettingRecord[];
 };
 
-const SETTINGS_CACHE_TTL_MS = 15_000;
+const SETTINGS_CACHE_TTL_MS = 60_000;
 const settingsCache = new Map<string, SettingsCacheEntry>();
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");

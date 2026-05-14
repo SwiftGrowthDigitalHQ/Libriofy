@@ -97,7 +97,7 @@ const DeviceScanRoute = () => {
     return <Navigate to="/setup-device" replace />;
   }
 
-  return <ScanPage />;
+  return <ScanPageV2 />;
 };
 
 const DeviceSetupRoute = () => {

@@ -450,6 +450,39 @@ export const resolveScanAttendanceRequest = async (
     return buildError("Wrong Library", 403, "WRONG_LIBRARY");
   }
 
+  // Subscription enforcement: verify library has active subscription
+  const { data: subscriptionRecord, error: subscriptionError } = await supabase
+    .from("library_subscriptions")
+    .select("id, status, payment_status, started_at, updated_at")
+    .eq("library_id", resolvedLibraryId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!subscriptionError && subscriptionRecord) {
+    const subStatus = normalizeString(subscriptionRecord.status).toLowerCase();
+    const paymentStatus = normalizeString(subscriptionRecord.payment_status).toLowerCase();
+    if (subStatus === "expired" || subStatus === "cancelled" || paymentStatus === "failed") {
+      await logAttendanceFailure({
+        client: supabase,
+        route,
+        message: "Subscription expired",
+        code: "SUBSCRIPTION_EXPIRED",
+        source: "scan-attendance-server",
+        metadata: {
+          device_id: deviceId,
+          entry_id: entryId,
+          library_id: resolvedLibraryId,
+          subscription_status: subStatus,
+          payment_status: paymentStatus,
+          stage: "subscription_check",
+        },
+      });
+
+      return buildError("Library subscription has expired. Please renew to continue scanning.", 403, "SUBSCRIPTION_EXPIRED");
+    }
+  }
+
   if (device.library_id !== resolvedLibraryId) {
     await logAttendanceFailure({
       client: supabase,

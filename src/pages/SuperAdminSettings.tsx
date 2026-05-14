@@ -82,7 +82,7 @@ const GOVERNANCE_DOMAIN_OPTIONS: Array<{ label: string; value: AdminOperatorGove
   { label: "Platform", value: "platform" },
 ];
 
-const AUTO_REFRESH_MS = 15_000;
+const AUTO_REFRESH_MS = 30_000;
 
 const findSettingValue = (settings: Array<{ key: string; value: unknown }>, key: string) =>
   settings.find((setting) => setting.key === key)?.value;
