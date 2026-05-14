@@ -31,6 +31,7 @@ const navItems = [
   { icon: Bot, label: "Automation", path: "/admin/automation" },
   { icon: Flag, label: "Feature Flags", path: "/admin/feature-flags" },
   { icon: Activity, label: "Observability", path: "/admin/observability" },
+  { icon: Receipt, label: "Coupons", path: "/admin/coupons" },
   { icon: Settings, label: "Settings", path: "/admin/settings" },
 ] as const;
 
