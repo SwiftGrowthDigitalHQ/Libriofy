@@ -932,9 +932,10 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
                     position: "relative",
                     padding: "8px",
                     borderRadius: "22px",
-                    background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.08))",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    boxShadow: "0 16px 34px rgba(2, 10, 24, 0.28), inset 0 1px 0 rgba(255,255,255,0.16)",
+                    background: "linear-gradient(180deg, rgba(198, 223, 255, 0.18), rgba(167, 209, 255, 0.08))",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    boxShadow:
+                      "0 0 25px rgba(0,180,255,0.18), 0 16px 34px rgba(2, 10, 24, 0.28), inset 0 1px 0 rgba(255,255,255,0.16)",
                     backdropFilter: "blur(10px)",
                   }}
                 >
@@ -953,11 +954,20 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
                       position: "relative",
                       padding: "12px",
                       borderRadius: "16px",
-                      background: "linear-gradient(180deg, #fbfdff 0%, #f1f7fb 100%)",
-                      boxShadow: "0 0 0 1px rgba(15,23,42,0.04), inset 0 1px 0 rgba(255,255,255,0.95)",
+                      background: "#a7bfd3",
+                      border: "1px solid rgba(255,255,255,0.18)",
+                      boxShadow:
+                        "0 0 25px rgba(0,180,255,0.16), 0 0 0 1px rgba(15,23,42,0.05), inset 0 1px 0 rgba(255,255,255,0.24)",
+                      backdropFilter: "blur(10px) saturate(135%)",
                     }}
                   >
-                    <QRCodeSVG value={qrValue} size={180} level="H" bgColor="#ffffff" fgColor="#000000" />
+                    <QRCodeSVG
+                      value={qrValue}
+                      size={180}
+                      level="H"
+                      bgColor="#a7bfd3"
+                      fgColor="#000000"
+                    />
                   </div>
                 </div>
 

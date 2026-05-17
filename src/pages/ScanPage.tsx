@@ -216,8 +216,11 @@ const CAMERA_START_TIMEOUT_MS = 5000;
 const CAMERA_START_DELAY_MS = 300;
 const CAMERA_CONTAINER_WAIT_TIMEOUT_MS = 5000;
 const DEVICE_HEARTBEAT_INTERVAL_MS = 30000;
-const RESULT_HOLD_MS = 1200;
-const DUPLICATE_SCAN_WINDOW_MS = 3000;
+const RESULT_HOLD_MS = 700;
+const DUPLICATE_SCAN_WINDOW_MS = 5000;
+const SCAN_PROCESSING_UNLOCK_DELAY_MS = 650;
+const SCAN_SUBMIT_TIMEOUT_MS = 2500;
+const RECENT_SCAN_CACHE_LIMIT = 256;
 const SCAN_ASSIST_INTERVAL_MS = 850;
 const DETECTION_HIGH_FPS_INTERVAL_MS = 32;
 const DETECTION_BALANCED_INTERVAL_MS = 50;
@@ -246,7 +249,13 @@ const SCAN_BOX_VIEWPORT_PADDING = 36;
 const GUIDANCE_ROTATION_MS = 1800;
 const DEFAULT_GUIDANCE_HINT = "Align QR inside frame";
 const GUIDANCE_ROTATION = ["Move closer", "Hold steady", "Adjust angle"] as const;
-const DEVICE_BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY", "DEVICE_BLOCKED"]);
+const DEVICE_BINDING_RESET_CODES = new Set([
+  "INVALID_LIBRARY_ID",
+  "WRONG_LIBRARY",
+  "DEVICE_BLOCKED",
+  "LIBRARY_MISMATCH",
+  "DEVICE_MISMATCH",
+]);
 const WATCHDOG_POLL_INTERVAL_MS = 2000;
 const WATCHDOG_RECOVERY_COOLDOWN_MS = 15000;
 const WATCHDOG_SCAN_VERIFICATION_STALL_MS = 15000;
@@ -274,12 +283,12 @@ const CAMERA_SOURCE_OPTIONS: CameraSourceOption[] = [
 ];
 const CAMERA_PROFILES: CameraProfile[] = [
   {
-    label: "Sharp rear camera",
+    label: "Low-latency rear camera",
     constraints: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 15, max: 24 },
+      width: { ideal: 640, max: 800 },
+      height: { ideal: 480, max: 600 },
+      frameRate: { ideal: 15, max: 15 },
       focusMode: "continuous",
       exposureMode: "continuous",
       whiteBalanceMode: "continuous",
@@ -289,21 +298,21 @@ const CAMERA_PROFILES: CameraProfile[] = [
     label: "Balanced rear camera",
     constraints: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 960 },
-      height: { ideal: 540 },
-      frameRate: { ideal: 12, max: 20 },
+      width: { ideal: 640, max: 640 },
+      height: { ideal: 480, max: 480 },
+      frameRate: { ideal: 12, max: 15 },
       focusMode: "continuous",
       exposureMode: "continuous",
       whiteBalanceMode: "continuous",
     },
   },
   {
-    label: "Performance rear camera",
+    label: "Low-power rear camera",
     constraints: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 640 },
-      height: { ideal: 480 },
-      frameRate: { ideal: 10, max: 15 },
+      width: { ideal: 480, max: 640 },
+      height: { ideal: 360, max: 480 },
+      frameRate: { ideal: 10, max: 12 },
       focusMode: "continuous",
       exposureMode: "continuous",
       whiteBalanceMode: "continuous",
@@ -994,6 +1003,7 @@ const ScanPage = () => {
   const activeScanRunIdRef = useRef(0);
   const lastWatchdogRecoveryAtRef = useRef(0);
   const resetTimerRef = useRef<number | null>(null);
+  const processingUnlockTimerRef = useRef<number | null>(null);
   const resetHoldTimerRef = useRef<number | null>(null);
   const flashTimerRef = useRef<number | null>(null);
   const frameReactionTimerRef = useRef<number | null>(null);
@@ -1026,7 +1036,7 @@ const ScanPage = () => {
   const processingRef = useRef(false);
   const mountedRef = useRef(true);
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
-  const lastAcceptedScanRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
+  const recentAcceptedScansRef = useRef<Map<string, number>>(new Map());
   const audioContextRef = useRef<AudioContext | null>(null);
   const isOnlineRef = useRef(isOnline);
   const syncInFlightRef = useRef(false);
@@ -1189,12 +1199,88 @@ const ScanPage = () => {
     }
   }, []);
 
+  const clearProcessingUnlockTimer = useCallback(() => {
+    if (processingUnlockTimerRef.current !== null) {
+      window.clearTimeout(processingUnlockTimerRef.current);
+      processingUnlockTimerRef.current = null;
+    }
+  }, []);
+
   const clearResetHoldTimer = useCallback(() => {
     if (resetHoldTimerRef.current !== null) {
       window.clearTimeout(resetHoldTimerRef.current);
       resetHoldTimerRef.current = null;
     }
   }, []);
+
+  const pruneRecentAcceptedScans = useCallback((nowTs: number) => {
+    const recentScans = recentAcceptedScansRef.current;
+
+    for (const [scanKey, acceptedAt] of recentScans) {
+      if (nowTs - acceptedAt >= DUPLICATE_SCAN_WINDOW_MS) {
+        recentScans.delete(scanKey);
+      }
+    }
+
+    while (recentScans.size > RECENT_SCAN_CACHE_LIMIT) {
+      const oldestKey = recentScans.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+
+      recentScans.delete(oldestKey);
+    }
+  }, []);
+
+  const wasRecentAcceptedScan = useCallback(
+    (scanKey: string, nowTs: number) => {
+      pruneRecentAcceptedScans(nowTs);
+      const acceptedAt = recentAcceptedScansRef.current.get(scanKey);
+      return typeof acceptedAt === "number" && nowTs - acceptedAt < DUPLICATE_SCAN_WINDOW_MS;
+    },
+    [pruneRecentAcceptedScans],
+  );
+
+  const rememberAcceptedScan = useCallback(
+    (scanKey: string, nowTs: number) => {
+      pruneRecentAcceptedScans(nowTs);
+      recentAcceptedScansRef.current.set(scanKey, nowTs);
+    },
+    [pruneRecentAcceptedScans],
+  );
+
+  const releaseProcessingLock = useCallback(
+    (scanRunId: number, reason: string) => {
+      clearProcessingUnlockTimer();
+
+      if (scanRunId > 0 && activeScanRunIdRef.current !== scanRunId) {
+        return;
+      }
+
+      processingRef.current = false;
+      scanProcessingStartedAtRef.current = 0;
+      logScanInfo("scan-processing-unlocked", {
+        reason,
+        scanRunId: scanRunId || null,
+      });
+    },
+    [clearProcessingUnlockTimer],
+  );
+
+  const scheduleProcessingUnlock = useCallback(
+    (scanRunId: number, reason: string, delayMs = SCAN_PROCESSING_UNLOCK_DELAY_MS) => {
+      clearProcessingUnlockTimer();
+
+      processingUnlockTimerRef.current = window.setTimeout(() => {
+        if (!mountedRef.current) {
+          return;
+        }
+
+        releaseProcessingLock(scanRunId, reason);
+      }, delayMs);
+    },
+    [clearProcessingUnlockTimer, releaseProcessingLock],
+  );
 
   const clearFullscreenRetryTimer = useCallback(() => {
     if (fullscreenRetryTimerRef.current !== null) {
@@ -1218,10 +1304,11 @@ const ScanPage = () => {
   }, []);
 
   const invalidateActiveScan = useCallback((reason: string) => {
+    clearProcessingUnlockTimer();
     activeScanRunIdRef.current += 1;
     scanProcessingStartedAtRef.current = 0;
     logScanInfo("scan-invalidated", { reason, activeScanRunId: activeScanRunIdRef.current });
-  }, []);
+  }, [clearProcessingUnlockTimer]);
 
   useEffect(() => {
     if (cameraInitializing) {
@@ -1597,7 +1684,6 @@ const ScanPage = () => {
         !mountedRef.current ||
         !scannerStartedRef.current ||
         scannerPausedRef.current ||
-        processingRef.current ||
         cameraError
       ) {
         fallbackScanFrameRef.current = null;
@@ -1608,6 +1694,11 @@ const ScanPage = () => {
       if (video && video.currentTime !== lastVideoCurrentTimeRef.current) {
         lastVideoCurrentTimeRef.current = video.currentTime;
         lastFrameSeenAtRef.current = Date.now();
+      }
+
+      if (processingRef.current) {
+        fallbackScanFrameRef.current = window.requestAnimationFrame(loop);
+        return;
       }
 
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -2029,6 +2120,7 @@ const ScanPage = () => {
     scannerRunningRef.current = false;
     isStartingRef.current = false;
     clearCameraRecoveryTimer();
+    clearProcessingUnlockTimer();
     clearFallbackScanFrame();
     fallbackScanAtRef.current = 0;
     workerDecodeInFlightRef.current = false;
@@ -2046,6 +2138,7 @@ const ScanPage = () => {
     lowLightStreakRef.current = 0;
     partialDetectionStreakRef.current = 0;
     recentFrameSignalRef.current = null;
+    recentAcceptedScansRef.current.clear();
     lastDetectionMetaRef.current = null;
     logScanInfo("scanner-stop", {
       reason,
@@ -2105,7 +2198,7 @@ const ScanPage = () => {
     if (mountedRef.current) {
       setCameraReady(false);
     }
-  }, [clearCameraRecoveryTimer, clearFallbackScanFrame, clearScannerRegion, deviceTier]);
+  }, [clearCameraRecoveryTimer, clearFallbackScanFrame, clearProcessingUnlockTimer, clearScannerRegion, deviceTier]);
 
   const buildCameraStartConstraints = useCallback(
     (baseConstraints: MediaTrackConstraints, selectedCameraId: string | null): MediaTrackConstraints => {
@@ -2235,6 +2328,7 @@ const ScanPage = () => {
       scanner.pause(shouldPauseVideo);
       scannerPausedRef.current = true;
       clearFallbackScanFrame();
+      clearProcessingUnlockTimer();
       workerDecodeInFlightRef.current = false;
       workerGenerationRef.current += 1;
       decodeMissStreakRef.current = 0;
@@ -2246,7 +2340,7 @@ const ScanPage = () => {
     } catch {
       // Ignore pause errors and let the next restart recover.
     }
-  }, [clearFallbackScanFrame]);
+  }, [clearFallbackScanFrame, clearProcessingUnlockTimer]);
 
   const applyScannerReadyState = useCallback(
     (scanner: Html5Qrcode, source: "start" | "resume" | "reuse") => {
@@ -2412,7 +2506,7 @@ const ScanPage = () => {
       }
 
       const scanConfig: Html5QrcodeCameraScanConfig = {
-        fps: 2,
+        fps: 1,
         aspectRatio: 1,
         disableFlip: false,
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
@@ -2936,6 +3030,7 @@ const ScanPage = () => {
         entry,
         scanApiUrl: SCAN_API_URL,
         deviceToken: SCAN_DEVICE_TOKEN,
+        timeoutMs: SCAN_SUBMIT_TIMEOUT_MS,
       });
 
       if (payload.status === "queued") {
@@ -3042,7 +3137,6 @@ const ScanPage = () => {
 
       setScanPayload(null);
       setPhase("idle");
-      processingRef.current = false;
 
       if (cameraError) {
         setStatusMessage("Camera unavailable");
@@ -3051,12 +3145,16 @@ const ScanPage = () => {
 
       if (!isOnlineRef.current) {
         setStatusMessage("Offline queue ready");
-        void resumeScanner();
+        if (scannerPausedRef.current) {
+          void resumeScanner("result-hold-complete-offline");
+        }
         return;
       }
 
       setStatusMessage("Ready to scan");
-      void resumeScanner();
+      if (scannerPausedRef.current) {
+        void resumeScanner("result-hold-complete");
+      }
     }, RESULT_HOLD_MS);
   }, [cameraError, clearResetTimer, resumeScanner]);
 
@@ -3130,6 +3228,7 @@ const ScanPage = () => {
 
       if (reason === "scan_verification_stalled") {
         invalidateActiveScan(reason);
+        clearProcessingUnlockTimer();
         processingRef.current = false;
         scanProcessingStartedAtRef.current = 0;
 
@@ -3148,6 +3247,7 @@ const ScanPage = () => {
       }
 
       invalidateActiveScan(reason);
+      clearProcessingUnlockTimer();
       processingRef.current = false;
       scanProcessingStartedAtRef.current = 0;
 
@@ -3165,6 +3265,7 @@ const ScanPage = () => {
       }
     },
     [
+      clearProcessingUnlockTimer,
       invalidateActiveScan,
       phase,
       resetDialogOpen,
@@ -3176,7 +3277,8 @@ const ScanPage = () => {
 
   const handleScanResult = useCallback(
     async (rawValue: string, detectionSource: ScanDetectionSource) => {
-      let scannerResetScheduled = false;
+      let returnToIdleScheduled = false;
+      let processingLockHandled = false;
       let scanRunId = 0;
       const normalizedRawValue = trimText(rawValue);
       const detectionMeta = normalizedRawValue
@@ -3206,6 +3308,24 @@ const ScanPage = () => {
         });
       };
 
+      const isActiveScan = () => scanRunId > 0 && activeScanRunIdRef.current === scanRunId;
+      const releaseScanLockNow = (reason: string) => {
+        if (processingLockHandled || scanRunId === 0) {
+          return;
+        }
+
+        processingLockHandled = true;
+        releaseProcessingLock(scanRunId, reason);
+      };
+      const releaseScanLockSoon = (reason: string, delayMs = SCAN_PROCESSING_UNLOCK_DELAY_MS) => {
+        if (processingLockHandled || scanRunId === 0) {
+          return;
+        }
+
+        processingLockHandled = true;
+        scheduleProcessingUnlock(scanRunId, reason, delayMs);
+      };
+
       try {
         if (processingRef.current) {
           return;
@@ -3215,11 +3335,12 @@ const ScanPage = () => {
           return;
         }
 
+        clearResetTimer();
+        clearProcessingUnlockTimer();
         processingRef.current = true;
         scanRunId = activeScanRunIdRef.current + 1;
         activeScanRunIdRef.current = scanRunId;
         scanProcessingStartedAtRef.current = 0;
-        pauseScanner(true, "scan-processing");
         logScanInfo("scan-processing-start", {
           scanRunId,
           source: detectionSource,
@@ -3227,14 +3348,11 @@ const ScanPage = () => {
           preview: summarizeQrForLog(normalizedRawValue),
         });
 
-        const isActiveScan = () => activeScanRunIdRef.current === scanRunId;
-
         const showScanError = async (code: string, message: string) => {
           if (!isActiveScan() || !mountedRef.current) {
             return;
           }
 
-          scanProcessingStartedAtRef.current = 0;
           setScanPayload({
             status: "error",
             code,
@@ -3252,7 +3370,8 @@ const ScanPage = () => {
           vibrateFeedback([28, 60, 22]);
           await playFeedbackTone("error");
           scheduleReturnToScanner();
-          scannerResetScheduled = true;
+          returnToIdleScheduled = true;
+          releaseScanLockSoon(`scan-error:${code}`);
         };
 
         const parsed = await parseStudentQrPayload(normalizedRawValue, {
@@ -3290,22 +3409,20 @@ const ScanPage = () => {
         }
 
         const nowTs = Date.now();
-        if (
-          lastAcceptedScanRef.current.value === scanIdentifier &&
-          nowTs - lastAcceptedScanRef.current.at < DUPLICATE_SCAN_WINDOW_MS
-        ) {
+        const recentScanKey = `${deviceLibraryId}:${scanIdentifier}`;
+        if (wasRecentAcceptedScan(recentScanKey, nowTs)) {
           logScanInfo("scan-duplicate-ignored", {
             scanRunId,
             source: detectionSource,
             scanIdentifier,
             windowMs: DUPLICATE_SCAN_WINDOW_MS,
           });
-          scanProcessingStartedAtRef.current = 0;
           recordMetric("duplicate", 0);
+          releaseScanLockNow("duplicate-scan");
           return;
         }
 
-        lastAcceptedScanRef.current = { value: scanIdentifier, at: nowTs };
+        rememberAcceptedScan(recentScanKey, nowTs);
         const scanTimestamp = new Date().toISOString();
         const scanEntry = createAttendanceQueueEntry({
           deviceId: DEVICE_ID,
@@ -3319,6 +3436,7 @@ const ScanPage = () => {
         triggerScanFeedback();
         void playFeedbackTone("detect");
         vibrateFeedback(18);
+        setScanPayload(null);
         setPhase("scanning");
         setStatusMessage(isOnlineRef.current ? "Verifying attendance..." : "Saving offline...");
         scanProcessingStartedAtRef.current = Date.now();
@@ -3396,7 +3514,8 @@ const ScanPage = () => {
 
             if (payload.code && DEVICE_BINDING_RESET_CODES.has(payload.code)) {
               shouldReturnToScanner = false;
-              scannerResetScheduled = true;
+              returnToIdleScheduled = true;
+              releaseScanLockNow("device-binding-reset");
               await sleep(900);
 
               if (!isActiveScan()) {
@@ -3413,7 +3532,6 @@ const ScanPage = () => {
             return;
           }
 
-          scanProcessingStartedAtRef.current = 0;
           const message = getReadableError(error);
           setScanPayload({
             status: "error",
@@ -3429,14 +3547,18 @@ const ScanPage = () => {
           recordMetric("error");
           vibrateFeedback([28, 60, 22]);
           await playFeedbackTone("error");
-        } finally {
-          if (shouldReturnToScanner && isActiveScan()) {
-            scheduleReturnToScanner();
-            scannerResetScheduled = true;
-          }
+          scheduleReturnToScanner();
+          returnToIdleScheduled = true;
+          shouldReturnToScanner = false;
+          releaseScanLockSoon("scan-submit-failed");
+        }
+
+        if (shouldReturnToScanner && isActiveScan()) {
+          scheduleReturnToScanner();
+          returnToIdleScheduled = true;
+          releaseScanLockSoon("scan-complete");
         }
       } catch (error) {
-        scanProcessingStartedAtRef.current = 0;
         const message = getReadableError(error);
         setScanPayload({
           status: "error",
@@ -3453,33 +3575,37 @@ const ScanPage = () => {
         vibrateFeedback([28, 60, 22]);
         await playFeedbackTone("error");
         scheduleReturnToScanner();
-        scannerResetScheduled = true;
+        returnToIdleScheduled = true;
+        releaseScanLockSoon("scan-processing-failed");
       } finally {
-        if (!scannerResetScheduled) {
+        if (!processingLockHandled) {
           const scanStillActive = scanRunId > 0 && activeScanRunIdRef.current === scanRunId;
           if (scanStillActive || scanRunId === 0) {
-            scanProcessingStartedAtRef.current = 0;
-            processingRef.current = false;
-            if (scanStillActive) {
-              void resumeScanner("scan-not-completed");
-            }
+            releaseProcessingLock(
+              scanRunId,
+              returnToIdleScheduled ? "scan-cycle-waiting-for-idle-reset" : "scan-cycle-finalized",
+            );
           }
         }
       }
     },
     [
       buildOfflineQueuedPayload,
-      pauseScanner,
+      clearProcessingUnlockTimer,
+      clearResetTimer,
       playFeedbackTone,
       publishScanMetric,
       refreshQueueState,
+      releaseProcessingLock,
       redirectToDeviceSetup,
+      rememberAcceptedScan,
       resolveDetectionMetaForRawValue,
-      resumeScanner,
+      scheduleProcessingUnlock,
       scheduleReturnToScanner,
       submitScan,
       triggerScanFeedback,
       vibrateFeedback,
+      wasRecentAcceptedScan,
     ],
   );
 
@@ -3633,6 +3759,7 @@ const ScanPage = () => {
     return () => {
       mountedRef.current = false;
       clearResetTimer();
+      clearProcessingUnlockTimer();
       clearFeedbackTimers();
       clearScanAssistTimer();
       clearFallbackScanFrame();
@@ -3649,6 +3776,7 @@ const ScanPage = () => {
     clearCameraRecoveryTimer,
     clearFallbackScanFrame,
     clearFullscreenRetryTimer,
+    clearProcessingUnlockTimer,
     clearResetTimer,
     clearScanAssistTimer,
     clearKioskWatchdogTimer,

@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
+import { resolvePublicScanDenial } from "./scanDenial.js";
 import { parseStudentQrPayload } from "./studentQr.js";
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
@@ -51,6 +52,34 @@ type StudentRpcTarget = {
   rpcArgs: Record<string, unknown>;
 };
 
+type StudentQrParseResult = Awaited<ReturnType<typeof parseStudentQrPayload>>;
+
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+type DeviceLookupRecord = {
+  id: string;
+  library_id: string;
+  secret_token_hash: string | null;
+  is_active: boolean | null;
+};
+
+const LIBRARY_ACCESS_KEY_CACHE_TTL_MS = 60_000;
+const DEVICE_LOOKUP_CACHE_TTL_MS = 60_000;
+const STUDENT_QR_PARSE_CACHE_TTL_MS = 45_000;
+const STUDENT_QR_INVALID_CACHE_TTL_MS = 5_000;
+const STUDENT_LOOKUP_CACHE_TTL_MS = 60_000;
+const SUBSCRIPTION_CACHE_TTL_MS = 60_000;
+const CACHE_MAX_ENTRIES = 256;
+
+const libraryAccessKeyCache = new Map<string, CacheEntry<string | null>>();
+const deviceLookupCache = new Map<string, CacheEntry<DeviceLookupRecord | null>>();
+const studentQrParseCache = new Map<string, CacheEntry<StudentQrParseResult>>();
+const studentRpcTargetCache = new Map<string, CacheEntry<StudentRpcTarget>>();
+const subscriptionStateCache = new Map<string, CacheEntry<{ blocked: boolean }>>();
+
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {
     const value = env[name];
@@ -63,6 +92,42 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
 };
 
 const normalizeString = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const getCacheValue = <T>(cache: Map<string, CacheEntry<T>>, key: string) => {
+  const entry = cache.get(key);
+  if (!entry) {
+    return undefined;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return undefined;
+  }
+
+  return entry.value;
+};
+
+const setCacheValue = <T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number) => {
+  if (ttlMs <= 0) {
+    return value;
+  }
+
+  cache.set(key, {
+    expiresAt: Date.now() + ttlMs,
+    value,
+  });
+
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+
+    cache.delete(oldestKey);
+  }
+
+  return value;
+};
 
 const looksLikeUuid = (value: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizeString(value));
@@ -78,32 +143,63 @@ const readStringField = (body: ScanAttendanceRequestBody, ...keys: string[]) => 
   return "";
 };
 
-const buildError = (message: string, statusCode: number, code?: string): ScanAttendanceServiceResponse => ({
-  statusCode,
-  body: {
-    status: "error",
-    success: false,
+const buildError = (message: string, statusCode: number, code?: string): ScanAttendanceServiceResponse => {
+  const publicDenial = resolvePublicScanDenial({
+    code,
     message,
-    ...(code ? { code } : {}),
-  },
-});
+  });
+
+  return {
+    statusCode,
+    body: {
+      status: "error",
+      success: false,
+      code: publicDenial.code,
+      message: publicDenial.message,
+    },
+  };
+};
+
+const resolveStudentQrParseCacheTtlMs = (parsedQr: StudentQrParseResult, now: Date) => {
+  if (!parsedQr) {
+    return STUDENT_QR_INVALID_CACHE_TTL_MS;
+  }
+
+  if (parsedQr.valid && parsedQr.source === "signed") {
+    const remainingMs = parsedQr.exp * 1000 - now.getTime() - 2_000;
+    return Math.max(0, Math.min(STUDENT_QR_PARSE_CACHE_TTL_MS, remainingMs));
+  }
+
+  return parsedQr.valid ? STUDENT_QR_PARSE_CACHE_TTL_MS : STUDENT_QR_INVALID_CACHE_TTL_MS;
+};
 
 const resolveErrorStatusCode = (code?: string) => {
   switch (code) {
     case "EXPIRED":
+    case "TOKEN_EXPIRED":
       return 410;
     case "WRONG_LIBRARY":
     case "INVALID_LIBRARY_ID":
     case "DEVICE_BLOCKED":
+    case "LIBRARY_MISMATCH":
+    case "DEVICE_MISMATCH":
+    case "ACCESS_DENIED":
+    case "SUBSCRIPTION_EXPIRED":
       return 403;
     case "ALREADY_INSIDE":
+    case "ALREADY_CHECKED_IN":
+    case "DUPLICATE_SCAN":
       return 409;
     case "TOO_FREQUENT":
+    case "RATE_LIMITED":
       return 429;
     case "ENTRY_CONFLICT":
       return 409;
     case "SERVER_ERROR":
+    case "INTERNAL_ERROR":
       return 500;
+    case "USER_NOT_FOUND":
+      return 404;
     default:
       return 400;
   }
@@ -158,23 +254,161 @@ const normalizeRpcPayload = (result: unknown): ScanAttendanceResponseBody => {
   }
 
   if (isError) {
+    const publicDenial = resolvePublicScanDenial({
+      code,
+      message,
+    });
+
     return {
       status: "error",
       success: false,
-      message: message || "Invalid ID",
-      ...(code ? { code } : {}),
+      code: publicDenial.code,
+      message: publicDenial.message,
     };
   }
+
+  const publicDenial = resolvePublicScanDenial({
+    code: "SERVER_ERROR",
+    message: "Unexpected scan response",
+  });
 
   return {
     status: "error",
     success: false,
-    message: "Unexpected scan response",
-    code: "SERVER_ERROR",
+    code: publicDenial.code,
+    message: publicDenial.message,
   };
 };
 
-const resolveStudentRpcTarget = async ({
+const resolveLibraryIdFromAccessKey = async ({
+  accessKey,
+  supabase,
+}: {
+  accessKey: string;
+  supabase: any;
+}) => {
+  const cachedLibraryId = getCacheValue(libraryAccessKeyCache, accessKey);
+  if (cachedLibraryId !== undefined) {
+    return cachedLibraryId;
+  }
+
+  const { data, error } = await supabase
+    .from("library_access_keys")
+    .select("library_id")
+    .eq("access_key", accessKey)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return setCacheValue(
+    libraryAccessKeyCache,
+    accessKey,
+    normalizeString(data?.library_id) || null,
+    LIBRARY_ACCESS_KEY_CACHE_TTL_MS,
+  );
+};
+
+const resolveDeviceLookup = async ({
+  deviceId,
+  supabase,
+}: {
+  deviceId: string;
+  supabase: any;
+}) => {
+  const cachedDevice = getCacheValue(deviceLookupCache, deviceId);
+  if (cachedDevice !== undefined) {
+    return cachedDevice;
+  }
+
+  const { data, error } = await supabase
+    .from("entry_devices")
+    .select("id, library_id, secret_token_hash, is_active")
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  const normalizedDevice = data
+    ? ({
+        id: normalizeString(data.id),
+        library_id: normalizeString(data.library_id),
+        secret_token_hash: normalizeString(data.secret_token_hash) || null,
+        is_active: data.is_active === false ? false : Boolean(data.is_active),
+      } satisfies DeviceLookupRecord)
+    : null;
+
+  return setCacheValue(deviceLookupCache, deviceId, normalizedDevice, DEVICE_LOOKUP_CACHE_TTL_MS);
+};
+
+const resolveSubscriptionBlockedState = async ({
+  libraryId,
+  supabase,
+}: {
+  libraryId: string;
+  supabase: any;
+}) => {
+  const cachedState = getCacheValue(subscriptionStateCache, libraryId);
+  if (cachedState !== undefined) {
+    return cachedState.blocked;
+  }
+
+  const { data: subscriptionRecord, error } = await supabase
+    .from("library_subscriptions")
+    .select("status, payment_status, updated_at")
+    .eq("library_id", libraryId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  const subStatus = normalizeString(subscriptionRecord?.status).toLowerCase();
+  const paymentStatus = normalizeString(subscriptionRecord?.payment_status).toLowerCase();
+  const blocked = subStatus === "expired" || subStatus === "cancelled" || paymentStatus === "failed";
+
+  setCacheValue(subscriptionStateCache, libraryId, { blocked }, SUBSCRIPTION_CACHE_TTL_MS);
+  return blocked;
+};
+
+const resolveParsedStudentQr = async ({
+  expectedLibraryId,
+  now,
+  publicKeyPem,
+  rawValue,
+}: {
+  expectedLibraryId: string;
+  now: Date;
+  publicKeyPem?: string;
+  rawValue: string;
+}) => {
+  const cacheKey = `${expectedLibraryId}::${rawValue}`;
+  const cachedParsedQr = getCacheValue(studentQrParseCache, cacheKey);
+  if (cachedParsedQr !== undefined) {
+    return cachedParsedQr;
+  }
+
+  const parsedQr = await parseStudentQrPayload(rawValue, {
+    expectedLibraryId,
+    publicKeyPem,
+    allowLegacy: true,
+    now,
+  });
+
+  const ttlMs = resolveStudentQrParseCacheTtlMs(parsedQr, now);
+  if (ttlMs > 0) {
+    setCacheValue(studentQrParseCache, cacheKey, parsedQr, ttlMs);
+  }
+
+  return parsedQr;
+};
+
+const resolveStudentRpcTargetUncached = async ({
   supabase,
   libraryId,
   parsedQr,
@@ -267,6 +501,34 @@ const resolveStudentRpcTarget = async ({
   };
 };
 
+const resolveStudentRpcTarget = async ({
+  supabase,
+  libraryId,
+  parsedQr,
+}: {
+  supabase: any;
+  libraryId: string;
+  parsedQr: ValidStudentQrPayload;
+}) => {
+  const lookupIdentifier =
+    parsedQr.source === "legacy"
+      ? parsedQr.qrCode
+      : normalizeString("studentId" in parsedQr ? parsedQr.studentId : parsedQr.rawValue) || parsedQr.rawValue;
+  const cacheKey = `${libraryId}::${parsedQr.source}::${lookupIdentifier}`;
+  const cachedTarget = getCacheValue(studentRpcTargetCache, cacheKey);
+  if (cachedTarget !== undefined) {
+    return cachedTarget;
+  }
+
+  const resolvedTarget = await resolveStudentRpcTargetUncached({
+    supabase,
+    libraryId,
+    parsedQr,
+  });
+
+  return setCacheValue(studentRpcTargetCache, cacheKey, resolvedTarget, STUDENT_LOOKUP_CACHE_TTL_MS);
+};
+
 export const resolveScanAttendanceRequest = async (
   env: EnvLike,
   requestBody: unknown,
@@ -340,17 +602,20 @@ export const resolveScanAttendanceRequest = async (
     return buildError("Library ID missing", 403, "INVALID_LIBRARY_ID");
   }
 
-  const { data: libraryAccessKeyRecord, error: libraryAccessKeyError } = await supabase
-    .from("library_access_keys")
-    .select("library_id")
-    .eq("access_key", clientLibraryAccessKey)
-    .maybeSingle();
-
-  if (libraryAccessKeyError) {
+  let resolvedLibraryId = "";
+  try {
+    resolvedLibraryId = (await resolveLibraryIdFromAccessKey({
+      accessKey: clientLibraryAccessKey,
+      supabase,
+    })) ?? "";
+  } catch (libraryAccessKeyError) {
     await logAttendanceFailure({
       client: supabase,
       route,
-      message: libraryAccessKeyError.message || "Unable to validate the Library ID",
+      message:
+        libraryAccessKeyError instanceof Error
+          ? libraryAccessKeyError.message || "Unable to validate the Library ID"
+          : "Unable to validate the Library ID",
       code: "SERVER_ERROR",
       source: "scan-attendance-server",
       metadata: {
@@ -365,7 +630,7 @@ export const resolveScanAttendanceRequest = async (
     return buildError("Unable to validate the Library ID", 500, "SERVER_ERROR");
   }
 
-  if (!libraryAccessKeyRecord?.library_id) {
+  if (!resolvedLibraryId) {
     await logAttendanceFailure({
       client: supabase,
       route,
@@ -384,19 +649,20 @@ export const resolveScanAttendanceRequest = async (
     return buildError("Library ID invalid. Reconnect this device.", 403, "INVALID_LIBRARY_ID");
   }
 
-  const resolvedLibraryId = libraryAccessKeyRecord.library_id;
-
-  const { data: device, error: deviceError } = await supabase
-    .from("entry_devices")
-    .select("id, library_id, secret_token_hash, is_active")
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  if (deviceError) {
+  let device: DeviceLookupRecord | null = null;
+  try {
+    device = await resolveDeviceLookup({
+      deviceId,
+      supabase,
+    });
+  } catch (deviceError) {
     await logAttendanceFailure({
       client: supabase,
       route,
-      message: deviceError.message || "Unable to validate the scanning device",
+      message:
+        deviceError instanceof Error
+          ? deviceError.message || "Unable to validate the scanning device"
+          : "Unable to validate the scanning device",
       code: "SERVER_ERROR",
       source: "scan-attendance-server",
       metadata: {
@@ -450,19 +716,13 @@ export const resolveScanAttendanceRequest = async (
     return buildError("Wrong Library", 403, "WRONG_LIBRARY");
   }
 
-  // Subscription enforcement: verify library has active subscription
-  const { data: subscriptionRecord, error: subscriptionError } = await supabase
-    .from("library_subscriptions")
-    .select("id, status, payment_status, started_at, updated_at")
-    .eq("library_id", resolvedLibraryId)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  try {
+    const subscriptionBlocked = await resolveSubscriptionBlockedState({
+      libraryId: resolvedLibraryId,
+      supabase,
+    });
 
-  if (!subscriptionError && subscriptionRecord) {
-    const subStatus = normalizeString(subscriptionRecord.status).toLowerCase();
-    const paymentStatus = normalizeString(subscriptionRecord.payment_status).toLowerCase();
-    if (subStatus === "expired" || subStatus === "cancelled" || paymentStatus === "failed") {
+    if (subscriptionBlocked) {
       await logAttendanceFailure({
         client: supabase,
         route,
@@ -473,14 +733,14 @@ export const resolveScanAttendanceRequest = async (
           device_id: deviceId,
           entry_id: entryId,
           library_id: resolvedLibraryId,
-          subscription_status: subStatus,
-          payment_status: paymentStatus,
           stage: "subscription_check",
         },
       });
 
       return buildError("Library subscription has expired. Please renew to continue scanning.", 403, "SUBSCRIPTION_EXPIRED");
     }
+  } catch {
+    // Fail open for subscription-cache lookup issues and let scan verification continue.
   }
 
   if (device.library_id !== resolvedLibraryId) {
@@ -549,7 +809,11 @@ export const resolveScanAttendanceRequest = async (
     }
   }
 
-  const parsedQr = await parseStudentQrPayload(qrCode, {
+  const parsedQrNow = new Date(entryTimestamp);
+  const resolvedParsedQrNow = Number.isNaN(parsedQrNow.getTime()) ? new Date() : parsedQrNow;
+
+  const parsedQr = await resolveParsedStudentQr({
+    rawValue: qrCode,
     expectedLibraryId: device.library_id,
     publicKeyPem: readEnv(
       env,
@@ -558,8 +822,7 @@ export const resolveScanAttendanceRequest = async (
       "VITE_STUDENT_QR_PUBLIC_KEY",
       "QR_VERIFY_PUBLIC_KEY",
     ),
-    allowLegacy: true,
-    now: entryTimestamp,
+    now: resolvedParsedQrNow,
   });
 
   if (!parsedQr || !parsedQr.valid) {

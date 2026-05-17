@@ -97,7 +97,13 @@ const SCAN_BOX_DEFAULT_EDGE = 292;
 const SCAN_BOX_MIN_EDGE = 250;
 const SCAN_BOX_MAX_EDGE = 320;
 const SCAN_BOX_PADDING = 42;
-const DEVICE_BINDING_RESET_CODES = new Set(["INVALID_LIBRARY_ID", "WRONG_LIBRARY", "DEVICE_BLOCKED"]);
+const DEVICE_BINDING_RESET_CODES = new Set([
+  "INVALID_LIBRARY_ID",
+  "WRONG_LIBRARY",
+  "DEVICE_BLOCKED",
+  "LIBRARY_MISMATCH",
+  "DEVICE_MISMATCH",
+]);
 const CAMERA_SOURCE_OPTIONS: CameraSourceOption[] = [
   {
     label: "Rear camera",
@@ -236,15 +242,32 @@ const resolveResultTitle = (result: AttendanceScanPayload) => {
 
   switch (result.code) {
     case "WRONG_LIBRARY":
+    case "LIBRARY_MISMATCH":
       return "Wrong Library";
     case "EXPIRED":
+    case "TOKEN_EXPIRED":
       return "Plan Expired";
     case "DEVICE_BLOCKED":
+    case "DEVICE_MISMATCH":
       return "Device Blocked";
     case "INVALID_LIBRARY_ID":
       return "Reconnect Scanner";
     case "TOO_FREQUENT":
+    case "RATE_LIMITED":
       return "Hold A Moment";
+    case "ALREADY_CHECKED_IN":
+    case "DUPLICATE_SCAN":
+      return "Already Checked In";
+    case "USER_NOT_FOUND":
+      return "Student Not Found";
+    case "ACCESS_DENIED":
+      return "Access Denied";
+    case "ENTRY_CONFLICT":
+      return "Entry Conflict";
+    case "SUBSCRIPTION_EXPIRED":
+      return "Subscription Expired";
+    case "INTERNAL_ERROR":
+      return "Verification Failed";
     default:
       return "Invalid QR";
   }

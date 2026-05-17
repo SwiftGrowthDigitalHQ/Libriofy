@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { readStoredLibraryAccessKey } from "@/lib/deviceKiosk";
 import { sanitizeHeaders } from "@/lib/httpHeaders";
 import { logEvent } from "@/lib/observability/eventLogger.client";
+import { resolvePublicScanDenial, sanitizeScanDisplayText } from "@/lib/scanDenial";
 
 export type AttendanceQueueStatus = "pending" | "failed";
 
@@ -241,8 +242,12 @@ const normalizeSuccessPayload = (
       ? (payload as Record<string, unknown>)
       : {};
 
-  const name =
-    trimText(record.name) || trimText(record.student_name) || trimText(record.title) || "Entry";
+  const resolvedName =
+    sanitizeScanDisplayText(record.studentName) ||
+    sanitizeScanDisplayText(record.student_name) ||
+    sanitizeScanDisplayText(record.name) ||
+    sanitizeScanDisplayText(record.title);
+  const name = resolvedName || "Verified Student";
   const seat =
     trimText(record.seat) ||
     trimText(record.seat_number) ||
@@ -261,7 +266,7 @@ const normalizeSuccessPayload = (
     success: true,
     action,
     name,
-    studentName: trimText(record.studentName) || trimText(record.student_name) || name,
+    studentName: resolvedName || name,
     seat,
     time,
     ...(message ? { message } : {}),
@@ -275,12 +280,16 @@ const normalizeErrorPayload = (payload: unknown, fallbackMessage: string): Atten
       ? (payload as Record<string, unknown>)
       : {};
 
-  const message = trimText(record.message) || trimText(record.error) || fallbackMessage;
+  const denial = resolvePublicScanDenial({
+    code: trimText(record.code) || undefined,
+    message: trimText(record.message) || trimText(record.error) || fallbackMessage,
+  });
+
   return {
     status: "error",
     success: false,
-    message,
-    ...(trimText(record.code) ? { code: trimText(record.code) } : {}),
+    code: denial.code,
+    message: denial.message,
   };
 };
 
@@ -609,9 +618,13 @@ export const submitAttendanceScan = async ({
 
     // Keep queue strictly for transport failures; surface server errors immediately.
     if (!isTransportFailureMessage(message)) {
+      const denial = resolvePublicScanDenial({
+        message,
+      });
       return {
         status: "error",
-        message,
+        code: denial.code,
+        message: denial.message,
       };
     }
 
