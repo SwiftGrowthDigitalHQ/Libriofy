@@ -877,14 +877,17 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
                 }}
               />
 
-              <div style={{ position: "absolute", top: "12px", textAlign: "center" }}>
+              <div style={{ position: "absolute", top: "12px", textAlign: "center", zIndex: 2 }}>
                 <div
                   style={{
-                    fontSize: "6.4px",
+                    fontSize: "7.4px",
                     fontWeight: 700,
-                    letterSpacing: "0.22em",
-                    color: "rgba(186, 230, 253, 0.62)",
+                    letterSpacing: "0.16em",
+                    color: "rgba(255,255,255,0.95)",
                     textTransform: "uppercase",
+                    textShadow: "0 0 1px rgba(255,255,255,0.15)",
+                    textRendering: "geometricPrecision",
+                    WebkitFontSmoothing: "antialiased",
                   }}
                 >
                   LIBRIOFY SMART ENTRY
@@ -892,10 +895,12 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
                 <div
                   style={{
                     fontSize: "12.2px",
-                    fontWeight: 800,
+                    fontWeight: 700,
                     letterSpacing: "0.06em",
-                    color: "rgba(255,255,255,0.94)",
+                    color: "rgba(255,255,255,0.98)",
                     marginTop: "4px",
+                    textRendering: "geometricPrecision",
+                    WebkitFontSmoothing: "antialiased",
                   }}
                 >
                   SCAN FOR ATTENDANCE
@@ -979,10 +984,12 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
                 <div
                   style={{
                     fontSize: "6.9px",
-                    fontWeight: 600,
+                    fontWeight: 650,
                     letterSpacing: "0.06em",
-                    color: "rgba(224, 242, 254, 0.62)",
+                    color: "rgba(224, 242, 254, 0.7)",
                     textTransform: "uppercase",
+                    textRendering: "geometricPrecision",
+                    WebkitFontSmoothing: "antialiased",
                   }}
                 >
                   Keep the full QR visible for fast attendance.

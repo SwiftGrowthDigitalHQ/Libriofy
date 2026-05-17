@@ -3,7 +3,7 @@ import jsPDF from "jspdf";
 import JSZip from "jszip";
 
 type IdCardExportOptions = {
-  backgroundColor?: string;
+  backgroundColor?: string | null;
   pixelRatio?: number;
 };
 
@@ -13,8 +13,8 @@ type BulkIdCardExportItem = {
 };
 
 const CARD_WIDTH_MM = 85.6;
-const DEFAULT_EXPORT_PIXEL_RATIO = 2;
-const MAX_EXPORT_PIXEL_RATIO = 2;
+const DEFAULT_EXPORT_PIXEL_RATIO = 3;
+const MAX_EXPORT_PIXEL_RATIO = 3;
 const EXPORT_READY_TIMEOUT_MS = 8_000;
 const EXPORT_RENDER_TIMEOUT_MS = 10_000;
 const EXPORT_BLOB_TIMEOUT_MS = 4_000;
@@ -385,7 +385,7 @@ const renderNodeToBlob = async (node: HTMLElement, options: IdCardExportOptions 
   try {
     canvas = await runWithTimeout(
       toCanvas(node, {
-        backgroundColor: options.backgroundColor,
+        backgroundColor: options.backgroundColor ?? undefined,
         cacheBust: true,
         pixelRatio: resolvePixelRatio(options.pixelRatio),
       }),
