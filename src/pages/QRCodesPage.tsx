@@ -27,6 +27,7 @@ import { buildStudentQrValue } from "@/lib/deviceKiosk";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
+import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { downloadBulkIdCardZip, downloadIdCardPdf, downloadIdCardPng } from "@/lib/idCardExport";
@@ -63,18 +64,20 @@ const QRCodesPage = () => {
   const [showVerifiedBadge, setShowVerifiedBadge] = useState(true);
   const [showWatermark, setShowWatermark] = useState(true);
   const [showLanyard, setShowLanyard] = useState(false);
-  const [exportingId, setExportingId] = useState<string | null>(null);
+  const [activeExport, setActiveExport] = useState<{ format: "pdf" | "png"; studentId: string } | null>(null);
   const [bulkExporting, setBulkExporting] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [bulkStudents, setBulkStudents] = useState<QrPassListItem[]>([]);
   const [bulkQrTokens, setBulkQrTokens] = useState<Record<string, string>>({});
 
   const { user } = useAuth();
+  const { toast } = useToast();
   const { libraryId, isLoading: roleLibraryLoading } = useCurrentLibraryId();
   const { data: subscription } = useLibrarySubscription();
   const debouncedSearch = useDebouncedValue(search, 300);
   const gridTopRef = useRef<HTMLDivElement | null>(null);
   const hasMountedPaginationRef = useRef(false);
+  const exportLockRef = useRef(false);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const bulkRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -198,6 +201,7 @@ const QRCodesPage = () => {
   const pageItems = useMemo(() => buildPageItems(page, totalPages), [page, totalPages]);
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * limit + 1;
   const rangeEnd = totalCount === 0 ? 0 : Math.min(page * limit, totalCount);
+  const isAnyExportRunning = activeExport !== null || bulkExporting;
 
   const resolveSlotLabel = (slotId?: string | null, slotLabel?: string | null) => {
     if (slotId && slotsById.has(slotId)) {
@@ -221,32 +225,65 @@ const QRCodesPage = () => {
     return null;
   };
 
-  const handleDownloadPng = async (studentId: string, studentName: string) => {
+  const resolveCardNode = (studentId: string) => {
     const node = cardRefs.current[studentId];
-    if (!node) return;
-    setExportingId(studentId);
-    try {
-      await downloadIdCardPng(node, `${studentName}-id-card`);
-    } finally {
-      setExportingId(null);
+    if (!node || !node.isConnected) {
+      toast({
+        title: "ID card not ready",
+        description: "The selected student card is still rendering. Please try again.",
+        variant: "destructive",
+      });
+      return null;
     }
+
+    return node;
+  };
+
+  const handleCardExport = async (studentId: string, studentName: string, format: "pdf" | "png") => {
+    if (exportLockRef.current || bulkExporting) return;
+
+    const node = resolveCardNode(studentId);
+    if (!node) return;
+
+    exportLockRef.current = true;
+    setActiveExport({ studentId, format });
+
+    try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      if (format === "png") {
+        await downloadIdCardPng(node, `${studentName}-id-card`);
+      } else {
+        await downloadIdCardPdf(node, `${studentName}-id-card`);
+      }
+    } catch (error) {
+      console.error(`Unable to export ${format.toUpperCase()} ID card.`, error);
+      toast({
+        title: `Unable to export ${format.toUpperCase()}`,
+        description: getSafeErrorMessage(error, "Please try again."),
+        variant: "destructive",
+      });
+    } finally {
+      exportLockRef.current = false;
+      setActiveExport(null);
+    }
+  };
+
+  const handleDownloadPng = async (studentId: string, studentName: string) => {
+    await handleCardExport(studentId, studentName, "png");
   };
 
   const handleDownloadPdf = async (studentId: string, studentName: string) => {
-    const node = cardRefs.current[studentId];
-    if (!node) return;
-    setExportingId(studentId);
-    try {
-      await downloadIdCardPdf(node, `${studentName}-id-card`);
-    } finally {
-      setExportingId(null);
-    }
+    await handleCardExport(studentId, studentName, "pdf");
   };
 
   const handleBulkDownload = async () => {
-    if (!resolvedLibraryId || bulkExporting) return;
+    if (!resolvedLibraryId || bulkExporting || exportLockRef.current) return;
+
+    exportLockRef.current = true;
     setBulkExporting(true);
     setBulkProgress(0);
+
     try {
       const allStudents = await fetchQrPassesAll({
         libraryId: resolvedLibraryId,
@@ -265,7 +302,8 @@ const QRCodesPage = () => {
           name: `${student.full_name}-${student.seat_number || "seat"}`,
           node: bulkRefs.current[student.id],
         }))
-        .filter((item): item is { name: string; node: HTMLDivElement } => !!item.node);
+        .filter((item): item is { name: string; node: HTMLDivElement } => Boolean(item.node && item.node.isConnected));
+
       await downloadBulkIdCardZip({
         items,
         zipName: `${libraryName}-id-cards`,
@@ -273,11 +311,18 @@ const QRCodesPage = () => {
       });
     } catch (error) {
       console.error("Unable to generate signed QR cards for export.", error);
+      toast({
+        title: "Bulk export failed",
+        description: getSafeErrorMessage(error, "Unable to prepare the ZIP right now. Please try again."),
+        variant: "destructive",
+      });
     } finally {
+      exportLockRef.current = false;
       setBulkStudents([]);
       setBulkQrTokens({});
       setBulkProgress(0);
       setBulkExporting(false);
+      bulkRefs.current = {};
     }
   };
 
@@ -375,7 +420,7 @@ const QRCodesPage = () => {
               <Button
                 variant="outline"
                 className="rounded-2xl"
-                disabled={bulkExporting || loading || students.length === 0}
+                disabled={isAnyExportRunning || loading || students.length === 0}
                 onClick={handleBulkDownload}
               >
                 <Download className="mr-2 h-4 w-4" />
@@ -420,7 +465,12 @@ const QRCodesPage = () => {
                 <div key={student.id} className="space-y-3">
                   <StudentIdCard
                     ref={(node) => {
-                      cardRefs.current[student.id] = node;
+                      if (node) {
+                        cardRefs.current[student.id] = node;
+                        return;
+                      }
+
+                      delete cardRefs.current[student.id];
                     }}
                     studentName={student.full_name}
                     libraryName={libraryName}
@@ -445,23 +495,29 @@ const QRCodesPage = () => {
                     variant={cardVariant}
                   />
                   <div className="flex gap-2">
+                    {/*
+                      One export runs at a time globally, but we keep the active card/format
+                      in state so only the selected action shows a loading label.
+                    */}
                     <Button
                       variant="outline"
                       size="sm"
                       className="flex-1 rounded-xl"
-                      disabled={exportingId === student.id}
+                      disabled={isAnyExportRunning}
                       onClick={() => handleDownloadPng(student.id, student.full_name)}
                     >
-                      <Download className="mr-1.5 h-3.5 w-3.5" /> PNG
+                      <Download className="mr-1.5 h-3.5 w-3.5" />{" "}
+                      {activeExport?.studentId === student.id && activeExport.format === "png" ? "Exporting..." : "PNG"}
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       className="flex-1 rounded-xl"
-                      disabled={exportingId === student.id}
+                      disabled={isAnyExportRunning}
                       onClick={() => handleDownloadPdf(student.id, student.full_name)}
                     >
-                      <Download className="mr-1.5 h-3.5 w-3.5" /> PDF
+                      <Download className="mr-1.5 h-3.5 w-3.5" />{" "}
+                      {activeExport?.studentId === student.id && activeExport.format === "pdf" ? "Exporting..." : "PDF"}
                     </Button>
                   </div>
                 </div>
@@ -545,7 +601,12 @@ const QRCodesPage = () => {
             <StudentIdCard
               key={student.id}
               ref={(node) => {
-                bulkRefs.current[student.id] = node;
+                if (node) {
+                  bulkRefs.current[student.id] = node;
+                  return;
+                }
+
+                delete bulkRefs.current[student.id];
               }}
               studentName={student.full_name ?? "Student"}
               libraryName={libraryName}
