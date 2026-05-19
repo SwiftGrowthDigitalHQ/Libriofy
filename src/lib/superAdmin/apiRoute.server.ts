@@ -568,7 +568,15 @@ const buildSuccessBody = <T>(requestId: string, message: string, data: T) => ({
 });
 
 const buildFallbackControlCenterData = () => ({
-  analytics: { activeStudentsToday: 0, conversionRate: 0, dailyActiveLibraries: 0, revenueThisMonth: 0, revenuePreviousMonth: 0, series: [] },
+  analytics: {
+    activeStudentsToday: 0,
+    conversionRate: 0,
+    dailyActiveLibraries: 0,
+    revenueByCity: [],
+    revenueThisMonth: 0,
+    revenuePreviousMonth: 0,
+    series: [],
+  },
   automation: { failedJobs: 0, inactiveLibraries: [], queuedJobs: 0 },
   featureFlags: [],
   incidents: [],
@@ -579,7 +587,7 @@ const buildFallbackControlCenterData = () => ({
   security: { ipWhitelistEnabled: false, suspiciousIps: [], whitelist: [] },
   settings: [],
   statusSignals: [],
-  systemStatus: "unknown",
+  systemStatus: "yellow",
 });
 
 const buildFallbackAnalyticsData = () => ({
@@ -606,6 +614,19 @@ const findStatusSignal = (
   control: SuperAdminControlCenterData,
   label: string,
 ) => control.statusSignals.find((signal) => signal.label.toLowerCase() === label.toLowerCase());
+
+const mergeStatusSignals = (
+  baseSignals: SuperAdminControlCenterData["statusSignals"],
+  overrides: SuperAdminControlCenterData["statusSignals"],
+) => {
+  const merged = new Map(baseSignals.map((signal) => [signal.label.toLowerCase(), signal] as const));
+
+  for (const signal of overrides) {
+    merged.set(signal.label.toLowerCase(), signal);
+  }
+
+  return [...merged.values()];
+};
 
 const readControlSettingNumber = (
   control: SuperAdminControlCenterData,
@@ -1716,10 +1737,15 @@ const buildAnalyticsResponse = async (
       ? billingResult.value.data
       : buildDerivedBillingCenter(control.data);
 
-  const targetCity = normalizeText(filters.city || "Patna");
-  const cityMetrics = control.data.analytics.revenueByCity.filter((point) =>
-    point.city.toLowerCase() === targetCity.toLowerCase(),
-  );
+  const targetCity = normalizeText(filters.city);
+  const cityMetrics = !targetCity
+    ? control.data.analytics.revenueByCity
+    : control.data.analytics.revenueByCity.filter((point) => {
+        const city = point.city.toLowerCase();
+        const state = point.state.toLowerCase();
+        const query = targetCity.toLowerCase();
+        return city.includes(query) || state.includes(query);
+      });
 
   const queueStatus =
     jobs.jobs.some((job) => job.status === "failed")
@@ -1732,6 +1758,27 @@ const buildAnalyticsResponse = async (
   const authStatus =
     security.suspiciousIps.length > 0 || control.data.security.failedLoginAttempts24h > 10 ? "yellow" : "green";
   const failedLogins = security.accessLogs.filter((row) => row.message.toLowerCase().includes("failed")).length;
+  const healthCenter = mergeStatusSignals(control.data.statusSignals, [
+    {
+      detail: `${jobs.summary.queuedJobs} queued jobs, lag ${Math.round(jobs.summary.queueLagMs)}ms`,
+      label: "Queue",
+      status: queueStatus,
+      value: jobs.jobs.some((job) => job.status === "failed") ? "Failed jobs present" : "Flowing normally",
+    },
+    {
+      detail: readEnv(env, "SENTRY_RELEASE", "RELEASE_SHA") || "Release metadata has not been attached yet.",
+      label: "Deployment",
+      status: deploymentStatus,
+      value: readEnv(env, "SENTRY_RELEASE", "RELEASE_SHA") || "Release metadata pending",
+    },
+    {
+      detail: `${control.data.security.failedLoginAttempts24h} failed logins in the last 24h`,
+      label: "Auth",
+      status: authStatus,
+      value: security.suspiciousIps.length > 0 ? `${security.suspiciousIps.length} suspicious IPs` : "No active auth threat",
+    },
+  ]);
+
   const operationalIntelligence = buildOperationalIntelligenceSnapshot({
     billingOperations: billing.operations,
     deadLetters: jobs.deadLetters,
@@ -1758,27 +1805,7 @@ const buildAnalyticsResponse = async (
       generatedAt: control.data.generatedAt,
       governance: control.data.runtimeGovernance,
       governanceAnalytics: security.operatorGovernance?.analytics,
-      healthCenter: [
-        ...control.data.statusSignals,
-        {
-          detail: `${jobs.summary.queuedJobs} queued jobs, lag ${Math.round(jobs.summary.queueLagMs)}ms`,
-          label: "Queue",
-          status: queueStatus,
-          value: jobs.jobs.some((job) => job.status === "failed") ? "Failed jobs present" : "Healthy",
-        },
-        {
-          detail: readEnv(env, "SENTRY_RELEASE", "RELEASE_SHA") || "Release metadata missing",
-          label: "Deployment",
-          status: deploymentStatus,
-          value: readEnv(env, "SENTRY_RELEASE", "RELEASE_SHA") || "Unknown",
-        },
-        {
-          detail: `${control.data.security.failedLoginAttempts24h} failed logins in the last 24h`,
-          label: "Auth",
-          status: authStatus,
-          value: `${security.suspiciousIps.length} suspicious IPs`,
-        },
-      ],
+      healthCenter,
       incidents: {
         critical: incidents.summary.critical,
         unresolved: incidents.summary.unresolved,

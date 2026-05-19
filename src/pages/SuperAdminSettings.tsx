@@ -877,7 +877,7 @@ const SuperAdminSettings = () => {
             </div>
           </ControlPlaneCard>
 
-          <ControlPlaneCard title="Runtime governance">
+          <ControlPlaneCard title="Governance runtime">
             <div className="space-y-4">
               <div className="flex items-center justify-between rounded-lg border border-border p-3">
                 <div>
@@ -1122,9 +1122,9 @@ const SuperAdminSettings = () => {
                 </div>
               </div>
 
-              {activeElevations.length ? (
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-sm font-medium text-foreground">Active elevations</p>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">Active elevations</p>
+                {activeElevations.length ? (
                   <div className="mt-3 space-y-3">
                     {activeElevations.slice(0, 3).map((elevation) => (
                       <div key={elevation.grantId} className="rounded-lg border border-border bg-muted/20 p-3">
@@ -1142,8 +1142,12 @@ const SuperAdminSettings = () => {
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : null}
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No temporary elevations are active right now.
+                  </p>
+                )}
+              </div>
 
               {governanceAlerts.length || governanceConflicts.length ? (
                 <div className="rounded-lg border border-border p-3">

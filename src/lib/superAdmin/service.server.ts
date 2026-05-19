@@ -250,6 +250,7 @@ type AttendanceRow = {
   created_at?: string | null;
   date?: string | null;
   library_id?: string | null;
+  student_id?: string | null;
 };
 
 type LoginLogRow = {
@@ -1010,6 +1011,9 @@ const getRedisClient = (env: EnvLike) => {
     lazyConnect: true,
     maxRetriesPerRequest: null,
   });
+  client.on("error", () => {
+    // Redis health is surfaced through explicit control-plane probes.
+  });
 
   redisClients.set(redisUrl, client);
   return client;
@@ -1024,6 +1028,222 @@ const monthKey = (dateInput: string | Date) => {
   }
 
   return date.toISOString().slice(0, 7);
+};
+
+const APPROVED_REVENUE_STATUSES = new Set(["approved", "captured", "completed", "paid", "success"]);
+
+const toDayKey = (value: string | null | undefined) => {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString().slice(0, 10);
+};
+
+const buildTrailingDayKeys = (dayCount: number) => {
+  const keys: string[] = [];
+  const anchor = new Date();
+  anchor.setUTCHours(0, 0, 0, 0);
+
+  for (let offset = dayCount - 1; offset >= 0; offset -= 1) {
+    const cursor = new Date(anchor);
+    cursor.setUTCDate(anchor.getUTCDate() - offset);
+    keys.push(cursor.toISOString().slice(0, 10));
+  }
+
+  return keys;
+};
+
+const createDailyMetricAccumulator = () => ({
+  activeLibraries: new Set<string>(),
+  activeStudents: new Set<string>(),
+  adjustmentRevenue: 0,
+  newLibraries: 0,
+  paymentRevenue: 0,
+  subscriptionRevenue: 0,
+});
+
+const isApprovedRevenueStatus = (value: string | null | undefined) =>
+  APPROVED_REVENUE_STATUSES.has(normalizeText(value).toLowerCase());
+
+const resolveAttendanceTimestamp = (row: AttendanceRow) =>
+  normalizeNullableText(row.check_in) ??
+  normalizeNullableText(row.created_at) ??
+  normalizeNullableText(row.date);
+
+const resolveLatestTimestamp = (values: Array<string | null | undefined>) => {
+  let latest: string | null = null;
+  let latestTime = Number.NEGATIVE_INFINITY;
+
+  for (const value of values) {
+    const normalized = normalizeNullableText(value);
+    if (!normalized) {
+      continue;
+    }
+
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= latestTime) {
+      continue;
+    }
+
+    latest = normalized;
+    latestTime = parsed.getTime();
+  }
+
+  return latest;
+};
+
+const formatSignalTimestamp = (value: string | null | undefined) => {
+  const normalized = normalizeNullableText(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+  });
+};
+
+const buildLiveDailyMetricsRows = ({
+  attendanceRows,
+  libraries,
+  payments,
+  revenueAdjustments,
+  subscriptionPayments,
+}: {
+  attendanceRows: AttendanceRow[];
+  libraries: LibraryRow[];
+  payments: PaymentRow[];
+  revenueAdjustments: RevenueAdjustmentRow[];
+  subscriptionPayments: SubscriptionPaymentRow[];
+}) => {
+  const dayKeys = buildTrailingDayKeys(DEFAULT_TIME_SERIES_LIMIT);
+  const buckets = new Map(dayKeys.map((day) => [day, createDailyMetricAccumulator()] as const));
+
+  for (const row of attendanceRows) {
+    const day = toDayKey(row.date) ?? toDayKey(row.check_in) ?? toDayKey(row.created_at);
+    if (!day) {
+      continue;
+    }
+
+    const bucket = buckets.get(day);
+    if (!bucket) {
+      continue;
+    }
+
+    const libraryId = normalizeText(row.library_id);
+    const studentId = normalizeText(row.student_id);
+    if (libraryId) {
+      bucket.activeLibraries.add(libraryId);
+    }
+    if (studentId) {
+      bucket.activeStudents.add(studentId);
+    }
+  }
+
+  for (const row of payments) {
+    if (!isApprovedRevenueStatus(row.status)) {
+      continue;
+    }
+
+    const day = toDayKey(row.approved_at) ?? toDayKey(row.created_at);
+    if (!day) {
+      continue;
+    }
+
+    const bucket = buckets.get(day);
+    if (!bucket) {
+      continue;
+    }
+
+    bucket.paymentRevenue += toNumber(row.amount);
+  }
+
+  for (const row of subscriptionPayments) {
+    if (!isApprovedRevenueStatus(row.status)) {
+      continue;
+    }
+
+    const day =
+      toDayKey(row.paid_at) ??
+      toDayKey(row.capture_processed_at) ??
+      toDayKey(row.updated_at) ??
+      toDayKey(row.created_at);
+    if (!day) {
+      continue;
+    }
+
+    const bucket = buckets.get(day);
+    if (!bucket) {
+      continue;
+    }
+
+    bucket.subscriptionRevenue += toNumber(row.amount);
+  }
+
+  for (const row of revenueAdjustments) {
+    const day = toDayKey(row.created_at);
+    if (!day) {
+      continue;
+    }
+
+    const bucket = buckets.get(day);
+    if (!bucket) {
+      continue;
+    }
+
+    bucket.adjustmentRevenue += toNumber(row.amount_delta);
+  }
+
+  for (const row of libraries) {
+    const day = toDayKey(row.created_at);
+    if (!day) {
+      continue;
+    }
+
+    const bucket = buckets.get(day);
+    if (!bucket) {
+      continue;
+    }
+
+    bucket.newLibraries += 1;
+  }
+
+  return dayKeys.map((day) => {
+    const bucket = buckets.get(day) ?? createDailyMetricAccumulator();
+    const paymentRevenue = Number(bucket.paymentRevenue.toFixed(2));
+    const subscriptionRevenue = Number(bucket.subscriptionRevenue.toFixed(2));
+    const adjustmentRevenue = Number(bucket.adjustmentRevenue.toFixed(2));
+
+    return {
+      active_libraries: bucket.activeLibraries.size,
+      active_students: bucket.activeStudents.size,
+      adjustment_revenue: adjustmentRevenue,
+      day,
+      new_libraries: bucket.newLibraries,
+      payment_revenue: paymentRevenue,
+      subscription_revenue: subscriptionRevenue,
+      total_revenue: Number((paymentRevenue + subscriptionRevenue + adjustmentRevenue).toFixed(2)),
+    } satisfies DailyMetricRow;
+  });
 };
 
 const sortNewestFirst = <T extends { createdAt?: string | null }>(rows: T[]) =>
@@ -6093,7 +6313,6 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
   const observabilityClient = createObservabilityServiceClient(env);
   const eventLogClient = observabilityClient ?? client;
   const [
-    dailyMetrics,
     revenueByCity,
     libraries,
     subscriptions,
@@ -6119,14 +6338,8 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
     auditLogs,
     deadLetterRows,
     eventLogs,
+    attendanceRows,
   ] = await Promise.all([
-    readOptionalRows<DailyMetricRow>(
-      client
-        .from("super_admin_daily_metrics")
-        .select("day, active_libraries, active_students, payment_revenue, subscription_revenue, adjustment_revenue, total_revenue, new_libraries")
-        .order("day", { ascending: false })
-        .limit(DEFAULT_TIME_SERIES_LIMIT),
-    ),
     readOptionalRows<RevenueByCityRow>(
       client
         .from("super_admin_revenue_by_city")
@@ -6297,18 +6510,36 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
         .order("created_at", { ascending: false })
         .limit(400),
     ),
+    readOptionalRows<AttendanceRow>(
+      client
+        .from("attendance_logs")
+        .select("library_id, student_id, check_in, date, created_at")
+        .order("check_in", { ascending: false })
+        .limit(5000),
+    ),
   ]);
 
   const settings = await readPlatformSettingsSafely(env);
   const featureFlags = await loadFeatureFlags(env, client);
-  const lastActivityByLibraryId = await loadLastActivityByLibraryId(client);
+  const lastActivityByLibraryId = new Map<string, string>();
+  for (const row of attendanceRows) {
+    const libraryId = normalizeText(row.library_id);
+    if (!libraryId || lastActivityByLibraryId.has(libraryId)) {
+      continue;
+    }
+
+    lastActivityByLibraryId.set(
+      libraryId,
+      normalizeText(row.check_in) || normalizeText(row.created_at) || normalizeText(row.date) || nowIso(),
+    );
+  }
 
   return {
     accountControls,
     activityLogs,
+    attendanceRows,
     broadcasts,
     commissionOverrides,
-    dailyMetrics,
     featureFlags,
     incidentRows,
     invoices,
@@ -6347,7 +6578,7 @@ const buildStatusSignals = async ({
   const statusSignalTimeoutMs = resolveSuperAdminTimeoutMs(
     env,
     ["SUPER_ADMIN_STATUS_SIGNAL_TIMEOUT_MS", "SUPABASE_REQUEST_TIMEOUT_MS"],
-    10_000,
+    4_000,
   );
   const [databaseHealth, readiness, emailRows, apiRows, redisSignal] = await Promise.all([
     withTimeout(
@@ -6388,10 +6619,10 @@ const buildStatusSignals = async ({
       const redis = getRedisClient(env);
       if (!redis) {
         return {
-          detail: "REDIS_URL not configured",
+          detail: "Redis telemetry is bypassed because REDIS_URL is not configured.",
           label: "Redis",
           status: "yellow" as const,
-          value: "Unavailable",
+          value: "Bypassed",
         };
       }
 
@@ -6413,10 +6644,12 @@ const buildStatusSignals = async ({
       }
 
       return {
-        detail: isDependencyCircuitOpen("redis") ? "Circuit breaker open; running in degraded mode" : "Ping failed",
+        detail: isDependencyCircuitOpen("redis")
+          ? "Redis circuit breaker is open, so queues are running with reduced visibility."
+          : "Redis ping failed; background queue telemetry is reconnecting.",
         label: "Redis",
-        status: "red" as const,
-        value: "Error",
+        status: "yellow" as const,
+        value: "Degraded",
       } as const;
     })(),
   ]);
@@ -6454,7 +6687,12 @@ const buildStatusSignals = async ({
     ? {
         label: "Database",
         status: databaseHealth.status === "ok" ? "green" : databaseHealth.status === "degraded" ? "yellow" : "red",
-        value: normalizeText(databaseHealth.status) || "unknown",
+        value:
+          databaseHealth.status === "ok"
+            ? "Healthy"
+            : databaseHealth.status === "degraded"
+              ? "Degraded"
+              : "Unhealthy",
         detail:
           normalizeText(databaseHealth.detail) ||
           (databaseRequestLatency.count > 0 ? `p95 ${databaseRequestLatency.p95}ms` : null),
@@ -6462,11 +6700,11 @@ const buildStatusSignals = async ({
     : {
         label: "Database",
         status: "yellow" as const,
-        value: "Unknown",
+        value: "Telemetry pending",
         detail:
           databaseRequestLatency.count > 0
-            ? `Live database health snapshot unavailable. p95 ${databaseRequestLatency.p95}ms`
-            : "Live database health snapshot unavailable",
+            ? `Live database health snapshot is catching up. p95 ${databaseRequestLatency.p95}ms`
+            : "Live database health snapshot is catching up.",
       };
 
   const readinessSignal = readiness
@@ -6482,7 +6720,7 @@ const buildStatusSignals = async ({
     : {
         label: "API",
         status: "yellow" as const,
-        value: "Unknown",
+        value: "Telemetry pending",
         detail:
           adminRequestLatency.count > 0
             ? `${apiSuccessRate}% success rate, p95 ${adminRequestLatency.p95}ms`
@@ -7918,8 +8156,17 @@ export const getControlCenterData = async (
     ownerProfilesByUserId,
     subscriptionsByLibraryId,
   });
-  const series = buildTimeSeries(core.dailyMetrics.reverse());
+  const series = buildTimeSeries(
+    buildLiveDailyMetricsRows({
+      attendanceRows: core.attendanceRows,
+      libraries: core.libraries,
+      payments: core.payments,
+      revenueAdjustments: core.revenueAdjustments,
+      subscriptionPayments: core.subscriptionPayments,
+    }),
+  );
   const latestPoint = series.at(-1);
+  const previousPoint = series.at(-2);
   const currentMonth = monthKey(new Date());
   const previousMonthDate = new Date();
   previousMonthDate.setUTCMonth(previousMonthDate.getUTCMonth() - 1);
@@ -7931,10 +8178,46 @@ export const getControlCenterData = async (
   const revenuePreviousMonth = series
     .filter((point) => monthKey(point.date) === previousMonth)
     .reduce((sum, point) => sum + point.totalRevenue, 0);
-  const paidLibraries = core.subscriptions.filter((subscription) => {
-    const status = normalizeText(subscription.status).toLowerCase();
+  const activeSubscriptionCount = libraryRows.filter((library) => {
+    const status = normalizeText(library.subscriptionStatus).toLowerCase();
     return status === "active" || status === "trial";
   }).length;
+  const activeLibraryCount = libraryRows.filter((library) => library.enabled && library.controlStatus === "active").length;
+  const trialLibraryCount = libraryRows.filter(
+    (library) => normalizeText(library.subscriptionStatus).toLowerCase() === "trial",
+  ).length;
+  const approvedTransactionsThisMonth =
+    core.payments.filter(
+      (payment) =>
+        isApprovedRevenueStatus(payment.status) &&
+        monthKey(normalizeText(payment.approved_at) || normalizeText(payment.created_at)) === currentMonth,
+    ).length +
+    core.subscriptionPayments.filter(
+      (payment) =>
+        isApprovedRevenueStatus(payment.status) &&
+        monthKey(
+          normalizeText(payment.paid_at) ||
+            normalizeText(payment.capture_processed_at) ||
+            normalizeText(payment.updated_at) ||
+            normalizeText(payment.created_at),
+        ) === currentMonth,
+    ).length;
+  const lastAttendanceAt =
+    core.attendanceRows.map((row) => resolveAttendanceTimestamp(row)).find((value) => Boolean(value)) ?? null;
+  const lastPaymentAt = resolveLatestTimestamp([
+    ...core.payments
+      .filter((payment) => isApprovedRevenueStatus(payment.status))
+      .map((payment) => normalizeNullableText(payment.approved_at) ?? normalizeNullableText(payment.created_at)),
+    ...core.subscriptionPayments
+      .filter((payment) => isApprovedRevenueStatus(payment.status))
+      .map(
+        (payment) =>
+          normalizeNullableText(payment.paid_at) ??
+          normalizeNullableText(payment.capture_processed_at) ??
+          normalizeNullableText(payment.updated_at) ??
+          normalizeNullableText(payment.created_at),
+      ),
+  ]);
 
   const statusData = await buildStatusSignals({
     client,
@@ -7982,6 +8265,21 @@ export const getControlCenterData = async (
   });
 
   const { enabled: ipWhitelistEnabled, whitelist } = await readSuperAdminIpWhitelistStateSafely(env);
+  const attendanceSignal = {
+    detail: lastAttendanceAt
+      ? `Last successful scan ${formatSignalTimestamp(lastAttendanceAt)}`
+      : "Waiting for the first attendance scan to arrive.",
+    label: "Attendance",
+    status: latestPoint?.activeStudents
+      ? "green"
+      : previousPoint?.activeStudents
+        ? "yellow"
+        : "yellow",
+    value: latestPoint?.activeStudents
+      ? `${latestPoint.activeStudents} students today`
+      : "Quiet today",
+  } as const;
+  const controlStatusSignals = [...statusData.signals, attendanceSignal];
 
   await Promise.allSettled(
     operational.alertTraceEvents
@@ -8004,18 +8302,26 @@ export const getControlCenterData = async (
     settings,
     featureFlags: core.featureFlags,
     analytics: {
+      activeLibraryCount,
+      activeStudentsYesterday: previousPoint?.activeStudents ?? 0,
+      activeSubscriptionCount,
       dailyActiveLibraries: latestPoint?.activeLibraries ?? 0,
+      attendanceLibrariesYesterday: previousPoint?.activeLibraries ?? 0,
       activeStudentsToday: latestPoint?.activeStudents ?? 0,
+      approvedTransactionsThisMonth,
       conversionRate: calculateConversionRate({
-        paidLibraries,
+        paidLibraries: activeSubscriptionCount,
         totalLibraries: core.libraries.length,
       }),
+      lastAttendanceAt,
+      lastPaymentAt,
       revenueThisMonth: Number(revenueThisMonth.toFixed(2)),
       revenuePreviousMonth: Number(revenuePreviousMonth.toFixed(2)),
       revenueByCity: core.revenueByCity.map(mapRevenueCity),
       series,
+      trialLibraryCount,
     },
-    statusSignals: statusData.signals,
+    statusSignals: controlStatusSignals,
     incidents: operational.incidentGroups.slice(0, 12),
     libraries: libraryRows.slice(0, 12),
     security: {

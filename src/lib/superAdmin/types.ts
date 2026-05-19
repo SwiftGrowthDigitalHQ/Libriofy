@@ -1608,13 +1608,21 @@ export type SuperAdminControlCenterData = {
   settings: AdminPlatformSetting[];
   featureFlags: AdminFeatureFlag[];
   analytics: {
+    activeLibraryCount?: number;
+    activeStudentsYesterday?: number;
+    activeSubscriptionCount?: number;
     dailyActiveLibraries: number;
+    attendanceLibrariesYesterday?: number;
     activeStudentsToday: number;
+    approvedTransactionsThisMonth?: number;
     conversionRate: number;
+    lastAttendanceAt?: string | null;
+    lastPaymentAt?: string | null;
     revenueThisMonth: number;
     revenuePreviousMonth: number;
     revenueByCity: AdminRevenueCityPoint[];
     series: AdminTimeSeriesPoint[];
+    trialLibraryCount?: number;
   };
   statusSignals: AdminStatusSignal[];
   incidents: AdminIncidentGroup[];

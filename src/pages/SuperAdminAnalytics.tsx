@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useDeferredValue, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
 import { ControlPlaneCard, ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
@@ -7,12 +7,35 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAnalytics, useControlPlane } from "@/hooks/superAdmin";
-import { formatInr, formatNumber, formatPercent, toBadgeVariant } from "@/lib/superAdmin/presentation";
+import {
+  formatInr,
+  formatNumber,
+  formatOperationalTimestamp,
+  formatPercent,
+  toBadgeVariant,
+} from "@/lib/superAdmin/presentation";
+
+const describeSystemStatus = (status?: string | null) => {
+  if (status === "green") {
+    return "Healthy";
+  }
+
+  if (status === "yellow") {
+    return "Degraded";
+  }
+
+  if (status === "red") {
+    return "Critical";
+  }
+
+  return "Telemetry reconnecting";
+};
 
 const SuperAdminAnalytics = () => {
-  const [city, setCity] = useState("Patna");
-  const analyticsQuery = useAnalytics(city);
-  const platformQuery = useControlPlane();
+  const [cityInput, setCityInput] = useState("");
+  const deferredCity = useDeferredValue(cityInput.trim());
+  const analyticsQuery = useAnalytics({ city: deferredCity });
+  const platformQuery = useControlPlane({ enabled: analyticsQuery.isError });
 
   const analytics = analyticsQuery.data;
   const platform = platformQuery.data;
@@ -28,6 +51,28 @@ const SuperAdminAnalytics = () => {
   const systemStatus = analytics?.systemStatus ?? platform?.systemStatus;
   const security = analytics?.security ?? platform?.security;
   const analyticsError = analyticsQuery.error;
+  const revenueRows = cityMetrics.length ? cityMetrics : platform?.analytics.revenueByCity ?? [];
+  const systemStatusLabel = describeSystemStatus(systemStatus);
+  const dailyActiveLibrariesValue = overview
+    ? formatNumber(overview.dailyActiveLibraries)
+    : analyticsQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
+  const studentsTodayValue = overview
+    ? formatNumber(overview.activeStudentsToday)
+    : analyticsQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
+  const conversionValue = overview
+    ? formatPercent(overview.conversionRate, 2)
+    : analyticsQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
+  const securityFailedLoginsValue = security
+    ? formatNumber(security.failedLoginAttempts24h)
+    : analyticsQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
 
   return (
     <SuperAdminLayout>
@@ -49,29 +94,59 @@ const SuperAdminAnalytics = () => {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <ControlPlaneCard title="Daily active libraries">
-            <p className="text-2xl font-bold font-display text-foreground">
-              {overview ? formatNumber(overview.dailyActiveLibraries) : "Unavailable"}
+            <p className="text-2xl font-bold font-display text-foreground">{dailyActiveLibrariesValue}</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {overview
+                ? overview.dailyActiveLibraries > 0
+                  ? `${formatNumber(overview.activeStudentsToday)} students have already scanned today.`
+                  : overview.attendanceLibrariesYesterday && overview.attendanceLibrariesYesterday > 0
+                    ? `${formatNumber(overview.attendanceLibrariesYesterday)} libraries were active yesterday.`
+                    : overview.lastAttendanceAt
+                      ? `Last attendance activity ${formatOperationalTimestamp(overview.lastAttendanceAt)}.`
+                      : "Waiting for the first attendance activity."
+                : "Daily activity telemetry is syncing."}
             </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Students today">
-            <p className="text-2xl font-bold font-display text-foreground">
-              {overview ? formatNumber(overview.activeStudentsToday) : "Unavailable"}
+            <p className="text-2xl font-bold font-display text-foreground">{studentsTodayValue}</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {overview
+                ? overview.activeStudentsToday > 0
+                  ? `${formatNumber(overview.dailyActiveLibraries)} libraries are reporting live attendance today.`
+                  : overview.activeStudentsYesterday && overview.activeStudentsYesterday > 0
+                    ? `${formatNumber(overview.activeStudentsYesterday)} students were seen yesterday.`
+                    : "No student scans have landed today yet."
+                : "Student telemetry is syncing."}
             </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Conversion rate">
-            <p className="text-2xl font-bold font-display text-foreground">
-              {overview ? formatPercent(overview.conversionRate, 2) : "Unavailable"}
+            <p className="text-2xl font-bold font-display text-foreground">{conversionValue}</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {overview
+                ? overview.conversionRate > 0
+                  ? `${formatNumber(overview.activeSubscriptionCount ?? 0)} subscribed libraries out of ${formatNumber(overview.activeLibraryCount ?? 0)} active libraries.`
+                  : "No onboarding conversions have been recorded yet."
+                : "Conversion telemetry is syncing."}
             </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="System status">
-            <Badge variant={toBadgeVariant(systemStatus ?? "warning")}>{systemStatus ?? "Unavailable"}</Badge>
+            <Badge variant={toBadgeVariant(systemStatus ?? "warning")}>{systemStatusLabel}</Badge>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {healthCenter.length > 0
+                ? `${healthCenter.filter((signal) => signal.status === "green").length} healthy signals, ${healthCenter.filter((signal) => signal.status !== "green").length} needing attention.`
+                : "Operational health signals are reconnecting."}
+            </p>
           </ControlPlaneCard>
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_1fr]">
           <ControlPlaneCard title="Revenue by city">
             <div className="space-y-4">
-              <Input onChange={(event) => setCity(event.target.value)} placeholder="City focus for analytics" value={city} />
+              <Input
+                onChange={(event) => setCityInput(event.target.value)}
+                placeholder="Filter by city or state"
+                value={cityInput}
+              />
               <div className="overflow-x-auto rounded-lg border">
                 <Table>
                   <TableHeader>
@@ -84,15 +159,25 @@ const SuperAdminAnalytics = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(cityMetrics.length ? cityMetrics : platformQuery.data?.analytics.revenueByCity ?? []).map((point) => (
-                      <TableRow key={`${point.state}-${point.city}`}>
-                        <TableCell>{point.city}</TableCell>
-                        <TableCell>{point.state}</TableCell>
-                        <TableCell>{formatNumber(point.libraries)}</TableCell>
-                        <TableCell>{formatNumber(point.transactionCount)}</TableCell>
-                        <TableCell>{formatInr(point.totalRevenue)}</TableCell>
+                    {revenueRows.length > 0 ? (
+                      revenueRows.map((point) => (
+                        <TableRow key={`${point.state}-${point.city}`}>
+                          <TableCell>{point.city}</TableCell>
+                          <TableCell>{point.state}</TableCell>
+                          <TableCell>{formatNumber(point.libraries)}</TableCell>
+                          <TableCell>{formatNumber(point.transactionCount)}</TableCell>
+                          <TableCell>{formatInr(point.totalRevenue)}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell className="py-8 text-sm text-muted-foreground" colSpan={5}>
+                          {deferredCity
+                            ? `No live revenue records match "${deferredCity}" yet.`
+                            : "Revenue analytics will appear here after the first approved transactions land."}
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
               </div>
@@ -113,7 +198,9 @@ const SuperAdminAnalytics = () => {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-muted-foreground">Health signals will appear here once live telemetry is available.</p>
+                <p className="text-sm text-muted-foreground">
+                  Telemetry is reconnecting. Database, queue, deployment, and auth health will populate automatically after the next successful sync.
+                </p>
               )}
             </div>
           </ControlPlaneCard>
@@ -141,14 +228,18 @@ const SuperAdminAnalytics = () => {
           <ControlPlaneCard title="Security pulse">
             <div className="space-y-2 text-sm">
               <p className="text-muted-foreground">Failed logins (24h)</p>
-              <p className="text-2xl font-bold font-display text-foreground">
-                {security ? formatNumber(security.failedLoginAttempts24h) : "Unavailable"}
+              <p className="text-2xl font-bold font-display text-foreground">{securityFailedLoginsValue}</p>
+              <p className="text-muted-foreground">
+                {security
+                  ? security.suspiciousIps.length > 0
+                    ? `Suspicious IPs: ${formatNumber(security.suspiciousIps.length)}`
+                    : "No suspicious IPs are elevated right now."
+                  : "Security telemetry is syncing."}
               </p>
               <p className="text-muted-foreground">
-                Suspicious IPs: {security ? formatNumber(security.suspiciousIps.length) : "Unavailable"}
-              </p>
-              <p className="text-muted-foreground">
-                IP whitelist: {security ? (security.ipWhitelistEnabled ? "Enabled" : "Disabled") : "Unavailable"}
+                {security
+                  ? `IP whitelist: ${security.ipWhitelistEnabled ? "Enabled" : "Disabled"}`
+                  : "IP access controls are syncing."}
               </p>
             </div>
           </ControlPlaneCard>

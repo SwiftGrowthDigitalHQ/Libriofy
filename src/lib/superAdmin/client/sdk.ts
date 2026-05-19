@@ -57,7 +57,7 @@ import type {
   AdminRefundRow,
 } from "./types";
 
-const ADMIN_CONTROL_PLANE_TIMEOUT_MS = 20_000;
+const ADMIN_CONTROL_PLANE_TIMEOUT_MS = 30_000;
 
 export const adminClient = {
   getAnalytics: (query?: { city?: string }) =>

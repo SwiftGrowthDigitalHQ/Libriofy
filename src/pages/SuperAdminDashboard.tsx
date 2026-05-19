@@ -7,8 +7,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
-import { useAnalytics, useControlPlane } from "@/hooks/superAdmin";
-import { formatDateTime, formatInr, formatNumber, formatPercent, toBadgeVariant } from "@/lib/superAdmin/presentation";
+import { useControlPlane } from "@/hooks/superAdmin";
+import {
+  formatDateTime,
+  formatInr,
+  formatNumber,
+  formatOperationalTimestamp,
+  formatPercent,
+  toBadgeVariant,
+} from "@/lib/superAdmin/presentation";
 
 const buildMonthlyChartData = (series: Array<{ date: string; totalRevenue: number }>) => {
   const byMonth = new Map<string, number>();
@@ -65,20 +72,34 @@ const buildDailyRevenueData = (
 
 const SuperAdminDashboard = () => {
   const platformQuery = useControlPlane();
-  const analyticsQuery = useAnalytics();
 
   const platform = platformQuery.data;
-  const analytics = analyticsQuery.data;
-  const overview = platform?.analytics ?? analytics?.overview;
-  const systemStatus = platform?.systemStatus ?? analytics?.systemStatus;
-  const statusSignals =
-    analytics?.healthCenter && analytics.healthCenter.length > 0
-      ? analytics.healthCenter
-      : platform?.statusSignals ?? [];
-  const controlPlaneError = platformQuery.error ?? analyticsQuery.error;
+  const overview = platform?.analytics;
+  const statusSignals = platform?.statusSignals ?? [];
+  const controlPlaneError = platformQuery.error;
   const releaseGovernance = platform?.releaseGovernance;
   const evolution = releaseGovernance?.evolution;
   const releaseSimulations = releaseGovernance?.simulations ?? [];
+  const activeLibrariesValue = platform
+    ? formatNumber(overview?.activeLibraryCount ?? overview?.dailyActiveLibraries ?? 0)
+    : platformQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
+  const studentsTodayValue = platform
+    ? formatNumber(overview?.activeStudentsToday ?? 0)
+    : platformQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
+  const revenueThisMonthValue = platform
+    ? formatInr(overview?.revenueThisMonth ?? 0)
+    : platformQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
+  const queuedJobsValue = platform
+    ? formatNumber(platform.automation.queuedJobs)
+    : platformQuery.isLoading
+      ? "Syncing"
+      : "Telemetry reconnecting";
 
   const monthlyRevenueData = useMemo(
     () => buildMonthlyChartData(overview?.series ?? []),
@@ -115,34 +136,80 @@ const SuperAdminDashboard = () => {
           </Alert>
         ) : null}
 
+        {platform && overview?.activeStudentsToday === 0 ? (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Attendance systems are quiet right now</AlertTitle>
+            <AlertDescription>
+              {overview.lastAttendanceAt
+                ? `No student scans have landed today. The last successful attendance activity was ${formatOperationalTimestamp(overview.lastAttendanceAt)}.`
+                : "No attendance activity has been recorded yet. Live student telemetry will appear here automatically after the first scan."}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatsCard
-            change={systemStatus ? `${systemStatus} system` : undefined}
+            change={
+              overview
+                ? overview.activeSubscriptionCount && overview.activeSubscriptionCount > 0
+                  ? `${formatNumber(overview.activeSubscriptionCount)} subscriptions active or trial`
+                  : overview.trialLibraryCount && overview.trialLibraryCount > 0
+                    ? `${formatNumber(overview.trialLibraryCount)} libraries are still in trial`
+                    : "Libraries created through onboarding will appear here automatically"
+                : undefined
+            }
             icon={Building2}
             title="Active Libraries"
             trend="up"
-            value={overview ? formatNumber(overview.dailyActiveLibraries) : "Unavailable"}
+            value={activeLibrariesValue}
           />
           <StatsCard
-            change={overview ? `${formatPercent(overview.conversionRate, 2)} conversion` : undefined}
+            change={
+              overview
+                ? overview.activeStudentsToday > 0
+                  ? `${formatNumber(overview.dailyActiveLibraries)} libraries scanned today`
+                  : overview.activeStudentsYesterday && overview.activeStudentsYesterday > 0
+                    ? `${formatNumber(overview.activeStudentsYesterday)} students scanned yesterday`
+                    : overview.lastAttendanceAt
+                      ? `Last scan ${formatOperationalTimestamp(overview.lastAttendanceAt)}`
+                      : "Waiting for the first attendance scan"
+                : undefined
+            }
             icon={BarChart3}
             title="Students Today"
             trend="up"
-            value={overview ? formatNumber(overview.activeStudentsToday) : "Unavailable"}
+            value={studentsTodayValue}
           />
           <StatsCard
-            change={overview ? `Prev ${formatInr(overview.revenuePreviousMonth)}` : undefined}
+            change={
+              overview
+                ? overview.revenueThisMonth > 0
+                  ? `${formatNumber(overview.approvedTransactionsThisMonth ?? 0)} approved transactions this month`
+                  : overview.lastPaymentAt
+                    ? `Last approved payment ${formatOperationalTimestamp(overview.lastPaymentAt)}`
+                    : "Revenue analytics unlock after the first approved transaction"
+                : undefined
+            }
             icon={ShieldCheck}
             title="Revenue This Month"
             trend="up"
-            value={overview ? formatInr(overview.revenueThisMonth) : "Unavailable"}
+            value={revenueThisMonthValue}
           />
           <StatsCard
-            change={platform ? `${platform.automation.failedJobs} failed jobs` : undefined}
+            change={
+              platform
+                ? platform.automation.failedJobs > 0
+                  ? `${formatNumber(platform.automation.failedJobs)} jobs need intervention`
+                  : platform.automation.queuedJobs > 0
+                    ? "Background automation is flowing normally"
+                    : "Automation queues are clear"
+                : undefined
+            }
             icon={Zap}
             title="Queued Jobs"
             trend="down"
-            value={platform ? formatNumber(platform.automation.queuedJobs) : "Unavailable"}
+            value={queuedJobsValue}
           />
         </div>
 
@@ -171,7 +238,9 @@ const SuperAdminDashboard = () => {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-muted-foreground">Health signals will appear here once live telemetry is available.</p>
+                <p className="text-sm text-muted-foreground">
+                  Telemetry is reconnecting. Live database, auth, queue, and runtime health signals will populate here automatically on the next successful sync.
+                </p>
               )}
             </CardContent>
           </Card>
@@ -517,7 +586,7 @@ const SuperAdminDashboard = () => {
                   <p className="text-sm font-medium">Critical incidents</p>
                 </div>
                 <p className="mt-2 text-2xl font-bold font-display text-foreground">
-                  {analytics?.incidents.critical ?? 0}
+                  {platform?.incidents.filter((incident) => incident.severity === "CRITICAL").length ?? 0}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">Grouped CRITICAL incident families awaiting action.</p>
               </div>

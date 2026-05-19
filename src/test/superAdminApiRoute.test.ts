@@ -390,4 +390,195 @@ describe("centralized super admin API route", () => {
       success: true,
     });
   });
+
+  it("returns all live city metrics when no city filter is provided", async () => {
+    mockedResolveSuperAdminOperatorAccessData.mockResolvedValue({
+      allowedPages: ["analytics"],
+      emergencyAccessActive: false,
+      grants: [],
+      legacyFallbackAccess: false,
+      permissions: ["analytics.read"],
+      readOnlyActive: false,
+      roles: ["read_only_ops"],
+      temporaryElevationActive: false,
+    });
+    mockedGetControlCenterData.mockResolvedValue({
+      data: {
+        analytics: {
+          activeStudentsToday: 14,
+          conversionRate: 12.5,
+          dailyActiveLibraries: 6,
+          revenueByCity: [
+            {
+              city: "Lucknow",
+              libraries: 1,
+              state: "Uttar Pradesh",
+              totalRevenue: 38498,
+              transactionCount: 62,
+            },
+            {
+              city: "Delhi",
+              libraries: 2,
+              state: "Delhi",
+              totalRevenue: 21000,
+              transactionCount: 18,
+            },
+          ],
+          revenuePreviousMonth: 12000,
+          revenueThisMonth: 18000,
+          series: [],
+        },
+        automation: {
+          failedJobs: 0,
+          inactiveLibraries: [],
+          queuedJobs: 2,
+        },
+        featureFlags: [],
+        generatedAt: new Date().toISOString(),
+        incidents: [],
+        libraries: [],
+        maintenanceMode: false,
+        operator: null,
+        releaseGovernance: null,
+        runtimeGovernance: {
+          automationInactiveLibraryAlertEnabled: true,
+          automationPaymentReminderEnabled: true,
+          automationSubscriptionRenewalEnabled: true,
+          billingMutationsEnabled: true,
+          maintenanceEscalationActive: false,
+          maintenanceMode: false,
+          notificationDeliveryEnabled: true,
+          queueProcessingEnabled: true,
+          stripeDependencyEnabled: true,
+        },
+        security: {
+          failedLoginAttempts24h: 1,
+          ipWhitelistEnabled: false,
+          suspiciousIps: [],
+          whitelist: [],
+        },
+        settings: [],
+        statusSignals: [],
+        systemStatus: "green",
+      },
+      errorCode: null,
+      message: "Control center loaded.",
+      success: true,
+    });
+    mockedGetCommunicationCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetIncidentCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetSecurityCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetAutomationCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetBillingCenterData.mockRejectedValue(new Error("timeout"));
+    const { response } = createMockResponse();
+
+    await handleAdminApiRequest(buildRequest({
+      url: "/api/admin/analytics",
+    }), response, {});
+
+    expect(response.statusCode).toBe(200);
+    expect(parseBody(response.body)).toMatchObject({
+      data: {
+        cityMetrics: [
+          expect.objectContaining({ city: "Lucknow" }),
+          expect.objectContaining({ city: "Delhi" }),
+        ],
+      },
+      success: true,
+    });
+  });
+
+  it("filters city metrics by partial city and state matches", async () => {
+    mockedResolveSuperAdminOperatorAccessData.mockResolvedValue({
+      allowedPages: ["analytics"],
+      emergencyAccessActive: false,
+      grants: [],
+      legacyFallbackAccess: false,
+      permissions: ["analytics.read"],
+      readOnlyActive: false,
+      roles: ["read_only_ops"],
+      temporaryElevationActive: false,
+    });
+    mockedGetControlCenterData.mockResolvedValue({
+      data: {
+        analytics: {
+          activeStudentsToday: 14,
+          conversionRate: 12.5,
+          dailyActiveLibraries: 6,
+          revenueByCity: [
+            {
+              city: "Lucknow",
+              libraries: 1,
+              state: "Uttar Pradesh",
+              totalRevenue: 38498,
+              transactionCount: 62,
+            },
+            {
+              city: "Delhi",
+              libraries: 2,
+              state: "Delhi",
+              totalRevenue: 21000,
+              transactionCount: 18,
+            },
+          ],
+          revenuePreviousMonth: 12000,
+          revenueThisMonth: 18000,
+          series: [],
+        },
+        automation: {
+          failedJobs: 0,
+          inactiveLibraries: [],
+          queuedJobs: 2,
+        },
+        featureFlags: [],
+        generatedAt: new Date().toISOString(),
+        incidents: [],
+        libraries: [],
+        maintenanceMode: false,
+        operator: null,
+        releaseGovernance: null,
+        runtimeGovernance: {
+          automationInactiveLibraryAlertEnabled: true,
+          automationPaymentReminderEnabled: true,
+          automationSubscriptionRenewalEnabled: true,
+          billingMutationsEnabled: true,
+          maintenanceEscalationActive: false,
+          maintenanceMode: false,
+          notificationDeliveryEnabled: true,
+          queueProcessingEnabled: true,
+          stripeDependencyEnabled: true,
+        },
+        security: {
+          failedLoginAttempts24h: 1,
+          ipWhitelistEnabled: false,
+          suspiciousIps: [],
+          whitelist: [],
+        },
+        settings: [],
+        statusSignals: [],
+        systemStatus: "green",
+      },
+      errorCode: null,
+      message: "Control center loaded.",
+      success: true,
+    });
+    mockedGetCommunicationCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetIncidentCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetSecurityCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetAutomationCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetBillingCenterData.mockRejectedValue(new Error("timeout"));
+    const { response } = createMockResponse();
+
+    await handleAdminApiRequest(buildRequest({
+      url: "/api/admin/analytics?city=uttar",
+    }), response, {});
+
+    expect(response.statusCode).toBe(200);
+    expect(parseBody(response.body)).toMatchObject({
+      data: {
+        cityMetrics: [expect.objectContaining({ city: "Lucknow" })],
+      },
+      success: true,
+    });
+  });
 });

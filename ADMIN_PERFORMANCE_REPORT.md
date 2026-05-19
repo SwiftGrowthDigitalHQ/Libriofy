@@ -2,108 +2,94 @@
 
 Date validated: May 19, 2026
 
-## Before
+## Key findings
 
-The Libraries page had two structural performance problems.
+1. The dashboard was paying for the control plane twice.
+   - `SuperAdminDashboard` loaded both `/api/admin/platform` and `/api/admin/analytics`.
+   - That doubled wide admin reads without adding unique dashboard data.
 
-1. Duplicate wide control-plane reads
-   - the page loaded both `/api/admin/libraries` and `/api/admin/users` immediately
-   - both routes rebuilt the same full `getLibraryCenterData()` payload
-   - the old loader depended on `loadCoreAdminData()`, which fans out into billing, payouts, invoices, jobs, dead letters, event logs, feature flags, platform settings, analytics snapshots, and more
+2. The control center was blocking too long on secondary health work.
+   - status checks had a 10s timeout budget
+   - under degraded Supabase conditions the route could run past the browser timeout window
 
-2. Silent degradation to empty arrays
-   - optional reads swallowed Supabase errors
-   - operationally incomplete payloads still rendered as successful zero states
+3. The analytics page could hide live data behind a default city filter.
+   - not a latency problem by itself, but it caused expensive loads to end in an apparently empty table
 
-## After
+## Shipped optimizations
 
-The Libraries control plane now uses a dedicated library-center loader and lazy user loading.
+- removed the redundant analytics fetch from the dashboard
+- made analytics load the platform fallback only when the analytics request actually fails
+- added shared scoped realtime invalidation instead of periodic full refetches
+- replaced hardcoded city filtering with:
+  - no default city
+  - partial city/state matching
+- rebuilt overview metrics from raw tables already needed by the control plane
+- reduced status-signal timeout pressure from `10000ms` to `4000ms`
+- increased browser control-plane timeout headroom from `20000ms` to `30000ms`
+- moved attendance aggregation into the main control-center fanout instead of a later extra query
 
-### Shipped optimizations
+## Live measurements
 
-- replaced the Libraries page backend read path with a focused loader
-- stopped initial page load from fetching Users-tab data until that tab is opened
-- deduplicated in-flight library-center server loads so concurrent Libraries and Users refetches can share one backend build
-- added debounced realtime invalidation instead of polling
-- moved summary counts to the server payload instead of deriving them from the current page slice
-- deferred search input before query execution
-- improved empty and failure states so degraded data does not masquerade as healthy zeroes
+Service-role control-plane probe from this workspace on May 19, 2026:
 
-## Current measured behavior
+- pre-hardening degraded run observed during investigation: `22622ms`
+- post-timeout hardening degraded run: `16081ms`
+- post-hardening follow-up run: `11406ms`
 
-Live service-role measurement from this workspace on May 19, 2026:
+Live post-patch metrics returned by `getControlCenterData()`:
 
-- first `getLibraryCenterData()` call after module load: `2265ms`
-- second `getLibraryCenterData()` call: `769ms`
+- active libraries: `6`
+- students today: `0`
+- students yesterday: `11`
+- approved transactions this month: `44`
+- revenue this month: `17401`
+- system status: `yellow`
 
-Live dataset at validation time:
+## Current IO profile
 
-- libraries: `6`
-- operational users: `10`
-- recent activity items: `20`
-
-## Supabase IO profile
-
-### Old Libraries page path
-
-Used a full control-plane preload, including unrelated reads such as:
-
-- `super_admin_daily_metrics`
-- `super_admin_revenue_by_city`
-- `revenue_adjustments`
-- `library_payout_queue`
-- `subscription_plans`
-- `payments`
-- `subscription_payments`
-- `super_admin_event_groups`
-- `platform_metric_snapshots`
-- `platform_broadcasts`
-- `communication_templates`
-- `platform_invoices`
-- `billing_refunds`
-- `platform_job_queue`
-- `super_admin_audit_logs`
-- `platform_job_dead_letters`
-- `app_event_logs`
-- platform settings
-- feature flags
-
-### New Libraries page path
-
-Reads only:
+The dashboard and analytics now rely on these high-signal sources:
 
 - `libraries`
 - `library_subscriptions`
-- `user_roles`
-- `login_logs`
-- `platform_account_controls`
-- `library_control_overrides`
 - `attendance_logs`
-- `platform_activity_logs`
-- `super_admin_impersonation_sessions`
-- targeted `profiles` chunks
+- `payments`
+- `subscription_payments`
+- `revenue_adjustments`
+- `platform_job_queue`
+- `platform_job_dead_letters`
+- `login_logs`
+- `app_event_logs`
+- `platform_metric_snapshots`
+- `super_admin_revenue_by_city`
 
-## Rerender and query hotspots addressed
+The platform still reads additional governance, billing, incident, and configuration tables, but those are now better isolated behind graceful degradation.
 
-- removed unconditional Users-tab query from first render
-- reduced summary-card recomputation from paginated slice data
-- added deferred search to avoid request bursts while typing
-- debounced realtime invalidation to prevent duplicate refetch storms
+## Rerender and refetch hotspots addressed
 
-## Residual risks
+- removed duplicate dashboard query fanout
+- added debounced realtime invalidation at `600ms`
+- stopped analytics fallback platform reads unless analytics actually errors
+- used deferred city input on the analytics page to avoid firing a request on every keystroke
 
-1. In-memory filtering remains in the centralized API route for this page.
-   - Fine at the current live size.
-   - Move search and pagination fully into SQL if the library fleet grows into the high hundreds or beyond.
+## Remaining risks
 
-2. `attendance_logs` last-activity derivation still scans up to `5000` recent rows.
-   - Fine for current usage.
-   - Future optimization: materialized latest-library-activity table or indexed `DISTINCT ON`.
+1. `/api/admin/platform` is still a wide aggregation route.
+   - It is safer now, but it remains the main candidate for future endpoint splitting.
 
-3. Realtime uses invalidation rather than granular cache patching.
-   - This is safer for correctness.
-   - If admin traffic increases, row-level cache updates could further reduce IO.
+2. Some optional Supabase reads still hit the server fetch timeout and degrade to empty arrays.
+   - The dashboard survives this now.
+   - It still means deep secondary sections can be partially incomplete on a bad minute.
+
+3. Redis is degraded in this local environment.
+   - The UI now reports this as degraded instead of unavailable.
+   - Connection refusal still exists outside the UI path.
 
 ## Recommended next step
 
-If library count grows materially, split `getLibraryCenterData()` into fully query-aware list loaders so search, counts, and pagination are all pushed into SQL without changing the page contract.
+Split the control-plane monolith into:
+
+- a lightweight dashboard overview route
+- a separate health route
+- deeper per-center detail routes
+
+That would reduce first-paint latency further without changing the operator-facing behavior shipped here.

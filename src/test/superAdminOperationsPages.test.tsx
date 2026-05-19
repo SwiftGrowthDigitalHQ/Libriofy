@@ -1282,6 +1282,65 @@ describe("super admin operations pages", () => {
     expect(screen.getByText("17")).toBeInTheDocument();
   });
 
+  it("uses live library counts and quiet-attendance messaging on the dashboard", () => {
+    mockUseControlPlane.mockReturnValue({
+      data: {
+        analytics: {
+          activeLibraryCount: 6,
+          activeStudentsToday: 0,
+          activeStudentsYesterday: 11,
+          activeSubscriptionCount: 4,
+          attendanceLibrariesYesterday: 1,
+          conversionRate: 12.5,
+          dailyActiveLibraries: 0,
+          lastAttendanceAt: "2026-05-18T05:41:27.245Z",
+          revenueByCity: [],
+          revenuePreviousMonth: 12000,
+          revenueThisMonth: 18000,
+          series: [],
+          trialLibraryCount: 2,
+        },
+        automation: {
+          failedJobs: 0,
+          inactiveLibraries: [],
+          queuedJobs: 0,
+        },
+        featureFlags: [],
+        generatedAt: "2026-05-19T10:00:00.000Z",
+        incidents: [],
+        libraries: [],
+        maintenanceMode: false,
+        releaseGovernance: null,
+        runtimeGovernance: {
+          automationInactiveLibraryAlertEnabled: true,
+          automationPaymentReminderEnabled: true,
+          automationSubscriptionRenewalEnabled: true,
+          billingMutationsEnabled: true,
+          maintenanceMode: false,
+          queueProcessingEnabled: true,
+        },
+        security: {
+          failedLoginAttempts24h: 0,
+          ipWhitelistEnabled: false,
+          suspiciousIps: [],
+          whitelist: [],
+        },
+        settings: [],
+        statusSignals: [],
+        systemStatus: "green",
+      },
+      error: undefined,
+      isLoading: false,
+      refetch: vi.fn(),
+    });
+
+    render(<SuperAdminDashboard />);
+
+    expect(screen.getByText("Attendance systems are quiet right now")).toBeInTheDocument();
+    expect(screen.getByText("6")).toBeInTheDocument();
+    expect(screen.getByText("4 subscriptions active or trial")).toBeInTheDocument();
+  });
+
   it("replays dead-letter jobs from the automation operations table", async () => {
     render(<SuperAdminAutomation />);
 
