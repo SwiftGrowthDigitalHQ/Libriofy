@@ -50,6 +50,7 @@ import {
   isAllowedLibriofyRequestHost,
   isAllowedLibriofyRequestOrigin,
   resolveLibriofyAppUrl,
+  resolveLibriofyCookieDomain,
   resolveLibriofyEmailFrom,
 } from "./libriofyConfig.js";
 import {
@@ -631,10 +632,13 @@ const ensureApprovedAuthOrigin = (
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-const buildSessionCookie = (env: EnvLike, value: string, maxAgeSeconds: number) =>
-  [
+const buildSessionCookie = (env: EnvLike, value: string, maxAgeSeconds: number) => {
+  const cookieDomain = isNonProductionAuthEnv(env) ? "" : resolveLibriofyCookieDomain(resolvePublicAppUrl(env));
+
+  return [
     `${AUTH_REFRESH_COOKIE_NAME}=${encodeURIComponent(value)}`,
     "Path=/",
+    cookieDomain ? `Domain=${cookieDomain}` : "",
     "HttpOnly",
     "SameSite=Lax",
     `Max-Age=${Math.max(0, maxAgeSeconds)}`,
@@ -642,6 +646,7 @@ const buildSessionCookie = (env: EnvLike, value: string, maxAgeSeconds: number) 
   ]
     .filter(Boolean)
     .join("; ");
+};
 
 const buildClearedSessionCookie = (env: EnvLike) => buildSessionCookie(env, "", 0);
 

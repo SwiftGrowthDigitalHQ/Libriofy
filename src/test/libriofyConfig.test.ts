@@ -8,6 +8,7 @@ import {
   isLibriofyAppUrl,
   isLibriofyAuthEmail,
   resolveLibriofyAppUrl,
+  resolveLibriofyCookieDomain,
   resolveLibriofyEmailFrom,
 } from "@/lib/libriofyConfig";
 
@@ -34,5 +35,12 @@ describe("libriofyConfig", () => {
     expect(isAllowedLibriofyRequestHost("www.libriofy.com")).toBe(true);
     expect(isAllowedLibriofyRequestHost("localhost:3000", { allowLocalhost: true })).toBe(true);
     expect(isAllowedLibriofyRequestHost("evil.example")).toBe(false);
+  });
+
+  it("resolves a shared production cookie domain for both public Libriofy hosts", () => {
+    expect(resolveLibriofyCookieDomain("https://www.libriofy.com/admin/revenue")).toBe("libriofy.com");
+    expect(resolveLibriofyCookieDomain("https://libriofy.com/super-admin-dashboard")).toBe("libriofy.com");
+    expect(resolveLibriofyCookieDomain("localhost:5173")).toBe("");
+    expect(resolveLibriofyCookieDomain("https://preview.invalid")).toBe("");
   });
 });

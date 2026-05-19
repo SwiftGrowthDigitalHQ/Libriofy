@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
 import { ControlPlaneCard, ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +14,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useControlPlane, useRevenue, useRevenueMutations } from "@/hooks/superAdmin";
 import { formatDateTime, formatInr, formatNumber, toBadgeVariant } from "@/lib/superAdmin/presentation";
+
+const readErrorStatus = (error: unknown) =>
+  typeof error === "object" && error !== null && "status" in error && typeof (error as { status?: unknown }).status === "number"
+    ? (error as { status: number }).status
+    : null;
 
 const SuperAdminRevenue = () => {
   const { toast } = useToast();
@@ -24,14 +31,22 @@ const SuperAdminRevenue = () => {
 
   const platformQuery = useControlPlane();
   const overviewQuery = useRevenue();
-  const payoutsQuery = useRevenue({ query: { page: 1, pageSize: 8, scope: "payouts", search } });
-  const adjustmentsQuery = useRevenue({ query: { page: 1, pageSize: 8, scope: "adjustments", search } });
-  const commissionsQuery = useRevenue({ query: { page: 1, pageSize: 8, scope: "commissions", search } });
-  const paymentsQuery = useRevenue({ query: { page: 1, pageSize: 8, scope: "payments", search } });
-  const plansQuery = useRevenue({ query: { page: 1, pageSize: 8, scope: "plans", search } });
+  const payoutsQuery = useRevenue({ enabled: activeTab === "payouts", query: { page: 1, pageSize: 8, scope: "payouts", search } });
+  const adjustmentsQuery = useRevenue({ enabled: activeTab === "adjustments", query: { page: 1, pageSize: 8, scope: "adjustments", search } });
+  const commissionsQuery = useRevenue({ enabled: activeTab === "commissions", query: { page: 1, pageSize: 8, scope: "commissions", search } });
+  const paymentsQuery = useRevenue({ enabled: activeTab === "payments", query: { page: 1, pageSize: 8, scope: "payments", search } });
+  const plansQuery = useRevenue({ enabled: activeTab === "plans", query: { page: 1, pageSize: 8, scope: "plans", search } });
   const { approveOrRejectPayout, saveCommission, saveRevenueAdjustment } = useRevenueMutations();
 
   const overview = "data" in (overviewQuery.data ?? {}) ? overviewQuery.data.data : overviewQuery.data;
+  const pageError = platformQuery.error ?? overviewQuery.error;
+  const hasAuthFailure = readErrorStatus(pageError) === 401;
+  const isSummaryLoading = platformQuery.isLoading || overviewQuery.isLoading;
+  const summaryFallbackValue = isSummaryLoading
+    ? "Syncing"
+    : hasAuthFailure
+      ? "Session check required"
+      : "Telemetry reconnecting";
   const dailyRevenueData = useMemo(
     () =>
       (platformQuery.data?.analytics.series ?? []).map((point) => ({
@@ -120,21 +135,43 @@ const SuperAdminRevenue = () => {
           title="Revenue"
         />
 
+        {pageError && !overview ? (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>
+              {hasAuthFailure ? "Super admin verification is required" : "Revenue telemetry is temporarily unavailable"}
+            </AlertTitle>
+            <AlertDescription>
+              {pageError.message}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <ControlPlaneCard title="Total revenue">
-            <p className="text-2xl font-bold font-display text-foreground">{formatInr(overview?.summary.totalRevenue ?? 0)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatInr(overview.summary.totalRevenue) : summaryFallbackValue}
+            </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Student payments">
-            <p className="text-2xl font-bold font-display text-foreground">{formatInr(overview?.summary.studentRevenue ?? 0)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatInr(overview.summary.studentRevenue) : summaryFallbackValue}
+            </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Subscriptions">
-            <p className="text-2xl font-bold font-display text-foreground">{formatInr(overview?.summary.subscriptionRevenue ?? 0)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatInr(overview.summary.subscriptionRevenue) : summaryFallbackValue}
+            </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Adjustments">
-            <p className="text-2xl font-bold font-display text-foreground">{formatInr(overview?.summary.adjustmentRevenue ?? 0)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatInr(overview.summary.adjustmentRevenue) : summaryFallbackValue}
+            </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Queued payouts">
-            <p className="text-2xl font-bold font-display text-foreground">{formatInr(overview?.summary.queuedPayoutAmount ?? 0)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatInr(overview.summary.queuedPayoutAmount) : summaryFallbackValue}
+            </p>
           </ControlPlaneCard>
         </div>
 
