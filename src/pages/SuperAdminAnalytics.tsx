@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
 import { ControlPlaneCard, ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -13,11 +15,19 @@ const SuperAdminAnalytics = () => {
   const platformQuery = useControlPlane();
 
   const analytics = analyticsQuery.data;
-  const overview = analytics?.overview;
+  const platform = platformQuery.data;
+  const overview = analytics?.overview ?? platform?.analytics;
   const cityMetrics = analytics?.cityMetrics ?? [];
+  const healthCenter =
+    analytics?.healthCenter && analytics.healthCenter.length > 0
+      ? analytics.healthCenter
+      : platform?.statusSignals ?? [];
   const governanceAnalytics = analytics?.governanceAnalytics;
   const incidentCoordination = analytics?.incidentCoordination;
   const operationalIntelligence = analytics?.operationalIntelligence;
+  const systemStatus = analytics?.systemStatus ?? platform?.systemStatus;
+  const security = analytics?.security ?? platform?.security;
+  const analyticsError = analyticsQuery.error;
 
   return (
     <SuperAdminLayout>
@@ -27,18 +37,34 @@ const SuperAdminAnalytics = () => {
           title="Analytics"
         />
 
+        {analyticsError ? (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Analytics aggregation is temporarily degraded</AlertTitle>
+            <AlertDescription>
+              {analyticsError.message}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <ControlPlaneCard title="Daily active libraries">
-            <p className="text-2xl font-bold font-display text-foreground">{formatNumber(overview?.dailyActiveLibraries ?? 0)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatNumber(overview.dailyActiveLibraries) : "Unavailable"}
+            </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Students today">
-            <p className="text-2xl font-bold font-display text-foreground">{formatNumber(overview?.activeStudentsToday ?? 0)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatNumber(overview.activeStudentsToday) : "Unavailable"}
+            </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="Conversion rate">
-            <p className="text-2xl font-bold font-display text-foreground">{formatPercent(overview?.conversionRate ?? 0, 2)}</p>
+            <p className="text-2xl font-bold font-display text-foreground">
+              {overview ? formatPercent(overview.conversionRate, 2) : "Unavailable"}
+            </p>
           </ControlPlaneCard>
           <ControlPlaneCard title="System status">
-            <Badge variant={toBadgeVariant(analytics?.systemStatus)}>{analytics?.systemStatus ?? "unknown"}</Badge>
+            <Badge variant={toBadgeVariant(systemStatus ?? "warning")}>{systemStatus ?? "Unavailable"}</Badge>
           </ControlPlaneCard>
         </div>
 
@@ -75,16 +101,20 @@ const SuperAdminAnalytics = () => {
 
           <ControlPlaneCard title="Health center">
             <div className="space-y-3">
-              {(analytics?.healthCenter ?? []).map((signal) => (
-                <div key={signal.label} className="rounded-lg border border-border p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-foreground">{signal.label}</p>
-                    <Badge variant={toBadgeVariant(signal.status)}>{signal.status}</Badge>
+              {healthCenter.length > 0 ? (
+                healthCenter.map((signal) => (
+                  <div key={signal.label} className="rounded-lg border border-border p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-foreground">{signal.label}</p>
+                      <Badge variant={toBadgeVariant(signal.status)}>{signal.status}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-foreground">{signal.value}</p>
+                    {signal.detail ? <p className="mt-1 text-xs text-muted-foreground">{signal.detail}</p> : null}
                   </div>
-                  <p className="mt-2 text-sm text-foreground">{signal.value}</p>
-                  {signal.detail ? <p className="mt-1 text-xs text-muted-foreground">{signal.detail}</p> : null}
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">Health signals will appear here once live telemetry is available.</p>
+              )}
             </div>
           </ControlPlaneCard>
         </div>
@@ -111,9 +141,15 @@ const SuperAdminAnalytics = () => {
           <ControlPlaneCard title="Security pulse">
             <div className="space-y-2 text-sm">
               <p className="text-muted-foreground">Failed logins (24h)</p>
-              <p className="text-2xl font-bold font-display text-foreground">{formatNumber(analytics?.security.failedLoginAttempts24h ?? 0)}</p>
-              <p className="text-muted-foreground">Suspicious IPs: {formatNumber(analytics?.security.suspiciousIps.length ?? 0)}</p>
-              <p className="text-muted-foreground">IP whitelist: {analytics?.security.ipWhitelistEnabled ? "Enabled" : "Disabled"}</p>
+              <p className="text-2xl font-bold font-display text-foreground">
+                {security ? formatNumber(security.failedLoginAttempts24h) : "Unavailable"}
+              </p>
+              <p className="text-muted-foreground">
+                Suspicious IPs: {security ? formatNumber(security.suspiciousIps.length) : "Unavailable"}
+              </p>
+              <p className="text-muted-foreground">
+                IP whitelist: {security ? (security.ipWhitelistEnabled ? "Enabled" : "Disabled") : "Unavailable"}
+              </p>
             </div>
           </ControlPlaneCard>
         </div>

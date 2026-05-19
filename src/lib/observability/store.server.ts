@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../../integrations/supabase/types.js";
 import { withRequestTraceMetadata } from "./requestContext.server.js";
 import { sanitizeObservabilityMetadata } from "./logSanitizer.js";
+import { createInstrumentedServerSupabaseFetch } from "./serverSupabaseFetch.server.js";
 import { SUPABASE_OBSERVABILITY_SKIP_HEADER, SUPABASE_OBSERVABILITY_SKIP_VALUE } from "./supabaseRequestDetails.js";
 import type { AlertSeverity, EventLogInput, RecentObservabilitySignal } from "./types.js";
 import {
@@ -71,6 +72,7 @@ export const createObservabilityServiceClient = (env: EnvLike = process.env) => 
       persistSession: false,
     },
     global: {
+      fetch: createInstrumentedServerSupabaseFetch("observability_service"),
       headers: {
         [SUPABASE_OBSERVABILITY_SKIP_HEADER]: SUPABASE_OBSERVABILITY_SKIP_VALUE,
       },

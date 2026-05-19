@@ -777,6 +777,37 @@ const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, errorMes
   }
 };
 
+const resolveSuperAdminTimeoutMs = (
+  env: EnvLike,
+  names: string[],
+  fallback: number,
+) => {
+  const parsed = Number(readEnv(env, ...names));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const readPlatformSettingsSafely = async (env: EnvLike, keys?: string[]) => {
+  try {
+    return await getPlatformSettings(env, keys);
+  } catch {
+    return [] as Awaited<ReturnType<typeof getPlatformSettings>>;
+  }
+};
+
+const readPlatformSettingsMapSafely = async (env: EnvLike, keys?: string[]) =>
+  new Map((await readPlatformSettingsSafely(env, keys)).map((setting) => [setting.key, setting]));
+
+const readSuperAdminIpWhitelistStateSafely = async (env: EnvLike) => {
+  try {
+    return await getSuperAdminIpWhitelistState(env);
+  } catch {
+    return {
+      enabled: false,
+      whitelist: [] as string[],
+    };
+  }
+};
+
 const runRedisOperation = async <T>(
   env: EnvLike,
   operationName: string,
@@ -5858,7 +5889,7 @@ const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
     ),
   ]);
 
-  const settings = await getPlatformSettings(env);
+  const settings = await readPlatformSettingsSafely(env);
   const featureFlags = await loadFeatureFlags(env, client);
   const lastActivityByLibraryId = await loadLastActivityByLibraryId(client);
 
@@ -5903,14 +5934,27 @@ const buildStatusSignals = async ({
   env: EnvLike;
 }) => {
   const observabilityClient = createObservabilityServiceClient(env);
+  const statusSignalTimeoutMs = resolveSuperAdminTimeoutMs(
+    env,
+    ["SUPER_ADMIN_STATUS_SIGNAL_TIMEOUT_MS", "SUPABASE_REQUEST_TIMEOUT_MS"],
+    10_000,
+  );
   const [databaseHealth, readiness, emailRows, apiRows, redisSignal] = await Promise.all([
-    getCriticalDatabaseHealth(env, {
-      forceRefresh: false,
-      phase: "super_admin_dashboard",
-    }).catch(() => null),
-    buildServerReadiness(env, {
-      hasDist: true,
-    }).catch(() => null),
+    withTimeout(
+      getCriticalDatabaseHealth(env, {
+        forceRefresh: false,
+        phase: "super_admin_dashboard",
+      }),
+      statusSignalTimeoutMs,
+      "Critical database health check timed out.",
+    ).catch(() => null),
+    withTimeout(
+      buildServerReadiness(env, {
+        hasDist: true,
+      }),
+      statusSignalTimeoutMs,
+      "Server readiness check timed out.",
+    ).catch(() => null),
     observabilityClient
       ? readOptionalRows<AppEventLogRow>(
           observabilityClient
@@ -6265,6 +6309,14 @@ const ensureDefaultAutomationJobs = async (client: UntypedClient, actorUserId: s
   }
 
   await client.from("platform_job_queue").insert(jobsToInsert);
+};
+
+const ensureDefaultAutomationJobsSafely = async (client: UntypedClient, actorUserId: string) => {
+  try {
+    await ensureDefaultAutomationJobs(client, actorUserId);
+  } catch {
+    // Queue seeding is optional bootstrap data and should not block admin visibility.
+  }
 };
 
 const buildResetPasswordRedirect = (env: EnvLike) => {
@@ -7433,7 +7485,7 @@ export const getControlCenterData = async (
   actor: SuperAdminActorContext,
 ): Promise<StructuredApiResponse<SuperAdminControlCenterData>> => {
   const client = buildServiceClient(env);
-  await ensureDefaultAutomationJobs(client, actor.actorUserId);
+  await ensureDefaultAutomationJobsSafely(client, actor.actorUserId);
 
   const core = await loadCoreAdminData(env, client);
   const settingsMap = new Map(core.settings.map((setting) => [setting.key, setting]));
@@ -7519,7 +7571,7 @@ export const getControlCenterData = async (
     libraries: core.libraries,
   });
 
-  const { enabled: ipWhitelistEnabled, whitelist } = await getSuperAdminIpWhitelistState(env);
+  const { enabled: ipWhitelistEnabled, whitelist } = await readSuperAdminIpWhitelistStateSafely(env);
 
   await Promise.allSettled(
     operational.alertTraceEvents
@@ -7668,17 +7720,22 @@ export const getIncidentCenterData = async (
     settingsMap,
     statusData,
   });
-  const operatorGovernance = await loadOperatorGovernanceSnapshot(client, operational.incidentGroups);
+  const operatorGovernance = await loadOperatorGovernanceSnapshot(client, operational.incidentGroups).catch(() => null);
+  const coordination = operatorGovernance?.coordination ?? buildGovernanceCoordination({
+    grants: [],
+    incidents: operational.incidentGroups,
+    requests: [],
+  });
 
   return buildApiSuccess("Super Admin incident center loaded.", {
     analytics: {
-      afterHoursEscalations: operatorGovernance.coordination.followTheSun.afterHoursEscalations,
-      crossTeamEscalations: operatorGovernance.coordination.escalationLineage.length,
-      delegatedRemediations: operatorGovernance.forensics.summary.delegatedRemediations,
-      regionalFailovers: operatorGovernance.coordination.regionalFailovers.length,
-      unresolvedOwnership: operatorGovernance.coordination.ownershipGaps.length,
+      afterHoursEscalations: coordination.followTheSun.afterHoursEscalations,
+      crossTeamEscalations: coordination.escalationLineage.length,
+      delegatedRemediations: operatorGovernance?.forensics.summary.delegatedRemediations ?? 0,
+      regionalFailovers: coordination.regionalFailovers.length,
+      unresolvedOwnership: coordination.ownershipGaps.length,
     },
-    coordination: operatorGovernance.coordination,
+    coordination,
     generatedAt: nowIso(),
     groups: operational.incidentGroups,
     snapshots: core.metricSnapshots.map((row) => ({
@@ -8008,11 +8065,13 @@ export const getSecurityCenterData = async (
     settingsMap,
     statusData,
   });
-  const { enabled: ipWhitelistEnabled, whitelist } = await getSuperAdminIpWhitelistState(env);
-  const operatorGovernanceSnapshot = await loadOperatorGovernanceSnapshot(client, operational.incidentGroups);
-  const operatorGovernance = actor
-    ? filterOperatorGovernanceSnapshotForActor(operatorGovernanceSnapshot, actor)
-    : operatorGovernanceSnapshot;
+  const { enabled: ipWhitelistEnabled, whitelist } = await readSuperAdminIpWhitelistStateSafely(env);
+  const operatorGovernanceSnapshot = await loadOperatorGovernanceSnapshot(client, operational.incidentGroups).catch(() => null);
+  const operatorGovernance = operatorGovernanceSnapshot
+    ? actor
+      ? filterOperatorGovernanceSnapshotForActor(operatorGovernanceSnapshot, actor)
+      : operatorGovernanceSnapshot
+    : undefined;
   const accessLogs: AdminActivityLog[] = core.loginRows
     .filter((row) => normalizeText(row.login_step) === "otp" || normalizeText(row.login_step) === "email")
     .map((row) => ({
@@ -8135,7 +8194,7 @@ export const getAutomationCenterData = async (
   actor: SuperAdminActorContext,
 ): Promise<StructuredApiResponse<SuperAdminAutomationCenterData>> => {
   const client = buildServiceClient(env);
-  await ensureDefaultAutomationJobs(client, actor.actorUserId);
+  await ensureDefaultAutomationJobsSafely(client, actor.actorUserId);
   const core = await loadCoreAdminData(env, client);
   const settingsMap = new Map(core.settings.map((setting) => [setting.key, setting]));
   const statusData = await buildStatusSignals({

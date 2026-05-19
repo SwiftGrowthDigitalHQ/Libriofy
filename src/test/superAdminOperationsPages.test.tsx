@@ -1105,6 +1105,183 @@ describe("super admin operations pages", () => {
     expect(screen.getByText("Replay simulation")).toBeInTheDocument();
   });
 
+  it("falls back to platform health signals on the dashboard when analytics health is empty", () => {
+    mockUseAnalytics.mockReturnValue({
+      data: {
+        automation: { failedJobs: 1, inactiveLibraries: [], queuedJobs: 4 },
+        billing: { gstRatePercent: 18, invoices: 3, refunds: 1 },
+        cityMetrics: [],
+        communication: { emailSuccessRate: 96, failedNotifications: 1, queuedNotifications: 0 },
+        generatedAt: "2026-05-07T10:00:00.000Z",
+        governance: {
+          automationInactiveLibraryAlertEnabled: true,
+          automationPaymentReminderEnabled: true,
+          automationSubscriptionRenewalEnabled: true,
+          billingMutationsEnabled: true,
+          maintenanceMode: false,
+          queueProcessingEnabled: true,
+        },
+        healthCenter: [],
+        incidents: { critical: 1, unresolved: 2 },
+        operationalIntelligence: null,
+        overview: {
+          activeStudentsToday: 7,
+          conversionRate: 12.5,
+          dailyActiveLibraries: 3,
+          revenueByCity: [],
+          revenuePreviousMonth: 12000,
+          revenueThisMonth: 18000,
+          series: [],
+        },
+        runtimeVisibility: {
+          activeWorkers: 0,
+          apiLatencyP95Ms: 0,
+          deadLetterJobs: 0,
+          emailFailureRate: 0,
+          incidentSeverityCounts: { critical: 0, error: 0, info: 0, warning: 0 },
+          otpDeliveryFailures: 0,
+          paymentRetryRate: 0,
+          queueLagMs: 0,
+          queueLatencyP95Ms: 0,
+          redisDegraded: false,
+          retryCount: 0,
+          slowRequests: 0,
+        },
+        security: {
+          failedLoginAttempts24h: 1,
+          ipWhitelistEnabled: false,
+          suspiciousIps: [],
+          whitelist: [],
+        },
+        systemStatus: "yellow",
+      },
+      error: undefined,
+      refetch: vi.fn(),
+    });
+
+    mockUseControlPlane.mockReturnValue({
+      data: {
+        analytics: {
+          activeStudentsToday: 7,
+          conversionRate: 12.5,
+          dailyActiveLibraries: 3,
+          revenueByCity: [],
+          revenuePreviousMonth: 12000,
+          revenueThisMonth: 18000,
+          series: [],
+        },
+        automation: {
+          failedJobs: 1,
+          inactiveLibraries: [],
+          queuedJobs: 4,
+        },
+        featureFlags: [],
+        generatedAt: "2026-05-07T10:00:00.000Z",
+        incidents: [],
+        libraries: [],
+        maintenanceMode: false,
+        releaseGovernance: null,
+        runtimeGovernance: {
+          automationInactiveLibraryAlertEnabled: true,
+          automationPaymentReminderEnabled: true,
+          automationSubscriptionRenewalEnabled: true,
+          billingMutationsEnabled: true,
+          maintenanceMode: false,
+          queueProcessingEnabled: true,
+        },
+        security: {
+          failedLoginAttempts24h: 1,
+          ipWhitelistEnabled: false,
+          suspiciousIps: [],
+          whitelist: [],
+        },
+        settings: [],
+        statusSignals: [
+          {
+            detail: "Primary region healthy.",
+            label: "Storage",
+            status: "green",
+            value: "Online",
+          },
+        ],
+        systemStatus: "green",
+      },
+      error: undefined,
+      refetch: vi.fn(),
+    });
+
+    render(<SuperAdminDashboard />);
+
+    expect(screen.getByText("Storage")).toBeInTheDocument();
+    expect(screen.getByText("Online")).toBeInTheDocument();
+  });
+
+  it("falls back to platform analytics when the aggregated analytics query is unavailable", () => {
+    mockUseAnalytics.mockReturnValue({
+      data: undefined,
+      error: new Error("Analytics center is temporarily unavailable."),
+      refetch: vi.fn(),
+    });
+
+    mockUseControlPlane.mockReturnValue({
+      data: {
+        analytics: {
+          activeStudentsToday: 17,
+          conversionRate: 8.75,
+          dailyActiveLibraries: 9,
+          revenueByCity: [],
+          revenuePreviousMonth: 22000,
+          revenueThisMonth: 26000,
+          series: [],
+        },
+        automation: {
+          failedJobs: 0,
+          inactiveLibraries: [],
+          queuedJobs: 2,
+        },
+        featureFlags: [],
+        generatedAt: "2026-05-07T10:00:00.000Z",
+        incidents: [],
+        libraries: [],
+        maintenanceMode: false,
+        releaseGovernance: null,
+        runtimeGovernance: {
+          automationInactiveLibraryAlertEnabled: true,
+          automationPaymentReminderEnabled: true,
+          automationSubscriptionRenewalEnabled: true,
+          billingMutationsEnabled: true,
+          maintenanceMode: false,
+          queueProcessingEnabled: true,
+        },
+        security: {
+          failedLoginAttempts24h: 3,
+          ipWhitelistEnabled: true,
+          suspiciousIps: [{ failures: 2, ip: "198.51.100.44" }],
+          whitelist: ["198.51.100.10"],
+        },
+        settings: [],
+        statusSignals: [
+          {
+            detail: "Live platform fallback.",
+            label: "Storage",
+            status: "green",
+            value: "Online",
+          },
+        ],
+        systemStatus: "green",
+      },
+      error: undefined,
+      refetch: vi.fn(),
+    });
+
+    render(<SuperAdminAnalytics />);
+
+    expect(screen.getByText("Analytics aggregation is temporarily degraded")).toBeInTheDocument();
+    expect(screen.getByText("Storage")).toBeInTheDocument();
+    expect(screen.getByText("Online")).toBeInTheDocument();
+    expect(screen.getByText("17")).toBeInTheDocument();
+  });
+
   it("replays dead-letter jobs from the automation operations table", async () => {
     render(<SuperAdminAutomation />);
 

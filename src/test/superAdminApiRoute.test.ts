@@ -61,14 +61,24 @@ import { evaluateMaintenanceRequest } from "@/lib/maintenanceGuard.server";
 import { resolveSuperAdminSessionRequest } from "@/lib/otpAuth.server";
 import { isSuperAdminIpAllowed } from "@/lib/platformSettings.server";
 import {
+  getAutomationCenterData,
+  getBillingCenterData,
+  getCommunicationCenterData,
   getControlCenterData,
+  getIncidentCenterData,
+  getSecurityCenterData,
   resolveSuperAdminOperatorAccessData,
 } from "@/lib/superAdmin/service.server";
 
 const mockedEvaluateMaintenanceRequest = vi.mocked(evaluateMaintenanceRequest);
 const mockedResolveSuperAdminSessionRequest = vi.mocked(resolveSuperAdminSessionRequest);
 const mockedIsSuperAdminIpAllowed = vi.mocked(isSuperAdminIpAllowed);
+const mockedGetAutomationCenterData = vi.mocked(getAutomationCenterData);
+const mockedGetBillingCenterData = vi.mocked(getBillingCenterData);
+const mockedGetCommunicationCenterData = vi.mocked(getCommunicationCenterData);
 const mockedGetControlCenterData = vi.mocked(getControlCenterData);
+const mockedGetIncidentCenterData = vi.mocked(getIncidentCenterData);
+const mockedGetSecurityCenterData = vi.mocked(getSecurityCenterData);
 const mockedResolveSuperAdminOperatorAccessData = vi.mocked(resolveSuperAdminOperatorAccessData);
 
 const createMockResponse = () => {
@@ -282,6 +292,102 @@ describe("centralized super admin API route", () => {
       errorCode: "RATE_LIMITED",
       message: "Too many admin requests. Please slow down.",
       success: false,
+    });
+  });
+
+  it("keeps analytics available from control-plane data when a secondary center fails", async () => {
+    mockedResolveSuperAdminOperatorAccessData.mockResolvedValue({
+      allowedPages: ["analytics"],
+      emergencyAccessActive: false,
+      grants: [],
+      legacyFallbackAccess: false,
+      permissions: ["analytics.read"],
+      readOnlyActive: false,
+      roles: ["read_only_ops"],
+      temporaryElevationActive: false,
+    });
+    mockedGetControlCenterData.mockResolvedValue({
+      data: {
+        analytics: {
+          activeStudentsToday: 14,
+          conversionRate: 12.5,
+          dailyActiveLibraries: 6,
+          revenueByCity: [],
+          revenuePreviousMonth: 12000,
+          revenueThisMonth: 18000,
+          series: [],
+        },
+        automation: {
+          failedJobs: 0,
+          inactiveLibraries: [],
+          queuedJobs: 2,
+        },
+        featureFlags: [],
+        generatedAt: new Date().toISOString(),
+        incidents: [],
+        libraries: [],
+        maintenanceMode: false,
+        operator: null,
+        releaseGovernance: null,
+        runtimeGovernance: {
+          automationInactiveLibraryAlertEnabled: true,
+          automationPaymentReminderEnabled: true,
+          automationSubscriptionRenewalEnabled: true,
+          billingMutationsEnabled: true,
+          maintenanceEscalationActive: false,
+          maintenanceMode: false,
+          notificationDeliveryEnabled: true,
+          queueProcessingEnabled: true,
+          stripeDependencyEnabled: true,
+        },
+        security: {
+          failedLoginAttempts24h: 1,
+          ipWhitelistEnabled: false,
+          suspiciousIps: [],
+          whitelist: [],
+        },
+        settings: [],
+        statusSignals: [
+          {
+            detail: "Primary platform telemetry is healthy.",
+            label: "Storage",
+            status: "green",
+            value: "Online",
+          },
+        ],
+        systemStatus: "green",
+      },
+      errorCode: null,
+      message: "Control center loaded.",
+      success: true,
+    });
+    mockedGetCommunicationCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetIncidentCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetSecurityCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetAutomationCenterData.mockRejectedValue(new Error("timeout"));
+    mockedGetBillingCenterData.mockRejectedValue(new Error("timeout"));
+    const { response } = createMockResponse();
+
+    await handleAdminApiRequest(buildRequest({
+      url: "/api/admin/analytics?city=Patna",
+    }), response, {});
+
+    expect(response.statusCode).toBe(200);
+    expect(parseBody(response.body)).toMatchObject({
+      data: {
+        healthCenter: expect.arrayContaining([
+          expect.objectContaining({
+            label: "Storage",
+            value: "Online",
+          }),
+        ]),
+        overview: expect.objectContaining({
+          activeStudentsToday: 14,
+          dailyActiveLibraries: 6,
+        }),
+        systemStatus: "green",
+      },
+      success: true,
     });
   });
 });

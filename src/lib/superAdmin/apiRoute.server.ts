@@ -588,6 +588,170 @@ const buildFallbackAnalyticsData = () => ({
   operationalIntelligence: null,
 });
 
+const extractNumericValue = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/-?\d+(?:\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const findStatusSignal = (
+  control: SuperAdminControlCenterData,
+  label: string,
+) => control.statusSignals.find((signal) => signal.label.toLowerCase() === label.toLowerCase());
+
+const readControlSettingNumber = (
+  control: SuperAdminControlCenterData,
+  key: string,
+  fallback: number,
+) => {
+  const setting = control.settings.find((candidate) => candidate.key === key);
+  const parsed =
+    typeof setting?.value === "number"
+      ? setting.value
+      : typeof setting?.value === "string"
+        ? Number(setting.value)
+        : null;
+
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const buildDerivedRuntimeVisibility = (
+  control: SuperAdminControlCenterData,
+): SuperAdminSecurityCenterData["runtimeVisibility"] => {
+  const emailSignal = findStatusSignal(control, "Email");
+  const latencySignal = findStatusSignal(control, "Latency");
+  const redisSignal = findStatusSignal(control, "Redis");
+
+  return {
+    activeWorkers: 0,
+    apiLatencyP95Ms: extractNumericValue(latencySignal?.value) ?? 0,
+    deadLetterJobs: 0,
+    emailFailureRate: Math.max(0, 100 - (extractNumericValue(emailSignal?.value) ?? 0)),
+    incidentSeverityCounts: {
+      critical: control.incidents.filter((incident) => incident.severity === "CRITICAL").length,
+      error: control.incidents.filter((incident) => incident.severity === "ERROR").length,
+      info: control.incidents.filter((incident) => incident.severity === "INFO").length,
+      warning: control.incidents.filter((incident) => incident.severity === "WARNING").length,
+    },
+    otpDeliveryFailures: 0,
+    paymentRetryRate: 0,
+    queueLagMs: 0,
+    queueLatencyP95Ms: 0,
+    redisDegraded: redisSignal ? redisSignal.status !== "green" : false,
+    retryCount: 0,
+    slowRequests: 0,
+  };
+};
+
+const buildDerivedCommunicationHealth = (
+  control: SuperAdminControlCenterData,
+): SuperAdminCommunicationCenterData["deliveryHealth"] => ({
+  emailSuccessRate: extractNumericValue(findStatusSignal(control, "Email")?.value) ?? 0,
+  failedNotifications: 0,
+  queuedNotifications: 0,
+});
+
+const buildDerivedIncidentCenter = (
+  control: SuperAdminControlCenterData,
+): SuperAdminIncidentCenterData => ({
+  analytics: {
+    afterHoursEscalations: 0,
+    crossTeamEscalations: 0,
+    delegatedRemediations: 0,
+    regionalFailovers: 0,
+    unresolvedOwnership: 0,
+  },
+  coordination: {
+    escalationLineage: [],
+    followTheSun: {
+      afterHoursEscalations: 0,
+      regions: [],
+      transitions: [],
+    },
+    handoffs: [],
+    ownershipGaps: [],
+    regionalFailovers: [],
+  },
+  generatedAt: control.generatedAt,
+  groups: control.incidents,
+  snapshots: [],
+  summary: {
+    acknowledged: control.incidents.filter((incident) => Boolean(incident.acknowledgedAt)).length,
+    critical: control.incidents.filter((incident) => incident.severity === "CRITICAL").length,
+    error: control.incidents.filter((incident) => incident.severity === "ERROR").length,
+    escalated: control.incidents.filter((incident) => incident.escalationLevel > 0).length,
+    info: control.incidents.filter((incident) => incident.severity === "INFO").length,
+    unresolved: control.incidents.reduce((sum, incident) => sum + incident.unresolvedCount, 0),
+    warning: control.incidents.filter((incident) => incident.severity === "WARNING").length,
+  },
+});
+
+const buildDerivedSecurityCenter = (
+  control: SuperAdminControlCenterData,
+): SuperAdminSecurityCenterData => ({
+  accessLogs: [],
+  auditLogs: [],
+  eventLogs: [],
+  generatedAt: control.generatedAt,
+  ipWhitelistEnabled: control.security.ipWhitelistEnabled,
+  suspiciousIps: control.security.suspiciousIps,
+  runtimeVisibility: buildDerivedRuntimeVisibility(control),
+  whitelist: control.security.whitelist,
+});
+
+const buildDerivedAutomationCenter = (
+  control: SuperAdminControlCenterData,
+): SuperAdminAutomationCenterData => ({
+  deadLetters: [],
+  generatedAt: control.generatedAt,
+  jobs: [],
+  settings: {
+    automationInactiveLibraryAlertEnabled: control.runtimeGovernance.automationInactiveLibraryAlertEnabled,
+    automationPaymentReminderEnabled: control.runtimeGovernance.automationPaymentReminderEnabled,
+    automationSubscriptionRenewalEnabled: control.runtimeGovernance.automationSubscriptionRenewalEnabled,
+    inactiveLibraryDays: readControlSettingNumber(control, "inactive_library_days", 14),
+  },
+  summary: {
+    activeWorkers: 0,
+    deadLetterJobs: 0,
+    paused: !control.runtimeGovernance.queueProcessingEnabled,
+    queueLagMs: 0,
+    queueLatencyP95Ms: 0,
+    queuedJobs: control.automation.queuedJobs,
+    redisDegraded: findStatusSignal(control, "Redis")?.status !== "green",
+    retryCount: 0,
+    runningJobs: 0,
+  },
+});
+
+const buildDerivedBillingCenter = (
+  control: SuperAdminControlCenterData,
+): SuperAdminBillingCenterData => ({
+  generatedAt: control.generatedAt,
+  gstRatePercent: readControlSettingNumber(control, "gst_rate_percent", 18),
+  invoices: [],
+  operations: {
+    billingMutationsEnabled: control.runtimeGovernance.billingMutationsEnabled,
+    duplicatePayments: 0,
+    manualReviewPayments: 0,
+    paymentRetryRate: 0,
+    reconciledPayments: 0,
+    stuckPayments: 0,
+    verificationRetries: 0,
+    webhookRetries: 0,
+  },
+  paymentHistory: [] as AdminBillingPaymentRow[],
+  refunds: [],
+});
+
 const buildFallbackSecurityData = () => ({
   auditLogs: [],
   ipWhitelistEnabled: false,
@@ -1502,7 +1666,7 @@ const buildAnalyticsResponse = async (
   actor: SuperAdminActorContext,
   filters: z.infer<typeof analyticsFiltersSchema>,
 ) => {
-  const [control, communication, incidents, security, jobs, billing] = await Promise.all([
+  const [controlResult, communicationResult, incidentsResult, securityResult, jobsResult, billingResult] = await Promise.allSettled([
     getControlCenterData(env, actor),
     getCommunicationCenterData(env),
     getIncidentCenterData(env),
@@ -1511,24 +1675,44 @@ const buildAnalyticsResponse = async (
     getBillingCenterData(env),
   ]);
 
+  if (controlResult.status !== "fulfilled") {
+    throw controlResult.reason;
+  }
+
+  const control = controlResult.value;
   if (!control.success || !control.data) {
     return control;
   }
-  if (!communication.success || !communication.data) {
-    return communication;
-  }
-  if (!incidents.success || !incidents.data) {
-    return incidents;
-  }
-  if (!security.success || !security.data) {
-    return security;
-  }
-  if (!jobs.success || !jobs.data) {
-    return jobs;
-  }
-  if (!billing.success || !billing.data) {
-    return billing;
-  }
+
+  const communication =
+    communicationResult.status === "fulfilled" && communicationResult.value.success && communicationResult.value.data
+      ? communicationResult.value.data
+      : {
+          broadcasts: [],
+          deliveryHealth: buildDerivedCommunicationHealth(control.data),
+          generatedAt: control.data.generatedAt,
+          templates: [],
+        } satisfies SuperAdminCommunicationCenterData;
+
+  const incidents =
+    incidentsResult.status === "fulfilled" && incidentsResult.value.success && incidentsResult.value.data
+      ? incidentsResult.value.data
+      : buildDerivedIncidentCenter(control.data);
+
+  const security =
+    securityResult.status === "fulfilled" && securityResult.value.success && securityResult.value.data
+      ? securityResult.value.data
+      : buildDerivedSecurityCenter(control.data);
+
+  const jobs =
+    jobsResult.status === "fulfilled" && jobsResult.value.success && jobsResult.value.data
+      ? jobsResult.value.data
+      : buildDerivedAutomationCenter(control.data);
+
+  const billing =
+    billingResult.status === "fulfilled" && billingResult.value.success && billingResult.value.data
+      ? billingResult.value.data
+      : buildDerivedBillingCenter(control.data);
 
   const targetCity = normalizeText(filters.city || "Patna");
   const cityMetrics = control.data.analytics.revenueByCity.filter((point) =>
@@ -1536,48 +1720,49 @@ const buildAnalyticsResponse = async (
   );
 
   const queueStatus =
-    jobs.data.jobs.some((job) => job.status === "failed")
+    jobs.jobs.some((job) => job.status === "failed")
       ? "red"
-      : jobs.data.jobs.filter((job) => job.status === "queued").length > 25
+      : jobs.jobs.filter((job) => job.status === "queued").length > 25
         ? "yellow"
         : "green";
 
   const deploymentStatus = readEnv(env, "SENTRY_RELEASE", "RELEASE_SHA") ? "green" : "yellow";
   const authStatus =
-    security.data.suspiciousIps.length > 0 || control.data.security.failedLoginAttempts24h > 10 ? "yellow" : "green";
+    security.suspiciousIps.length > 0 || control.data.security.failedLoginAttempts24h > 10 ? "yellow" : "green";
+  const failedLogins = security.accessLogs.filter((row) => row.message.toLowerCase().includes("failed")).length;
   const operationalIntelligence = buildOperationalIntelligenceSnapshot({
-    billingOperations: billing.data.operations,
-    deadLetters: jobs.data.deadLetters,
-    failedLoginCount: security.data.failedLogins,
+    billingOperations: billing.operations,
+    deadLetters: jobs.deadLetters,
+    failedLoginCount: failedLogins,
     generatedAt: control.data.generatedAt,
-    incidents: incidents.data.groups,
-    jobs: jobs.data.jobs,
-    operatorGovernance: security.data.operatorGovernance,
+    incidents: incidents.groups,
+    jobs: jobs.jobs,
+    operatorGovernance: security.operatorGovernance,
     runtimeGovernance: control.data.runtimeGovernance,
-    runtimeVisibility: security.data.runtimeVisibility,
-    suspiciousIps: security.data.suspiciousIps,
+    runtimeVisibility: security.runtimeVisibility,
+    suspiciousIps: security.suspiciousIps,
   });
 
   return {
     data: {
       automation: control.data.automation,
       billing: {
-        gstRatePercent: billing.data.gstRatePercent,
-        invoices: billing.data.invoices.length,
-        refunds: billing.data.refunds.length,
+        gstRatePercent: billing.gstRatePercent,
+        invoices: billing.invoices.length,
+        refunds: billing.refunds.length,
       },
       cityMetrics,
-      communication: communication.data.deliveryHealth,
+      communication: communication.deliveryHealth,
       generatedAt: control.data.generatedAt,
       governance: control.data.runtimeGovernance,
-      governanceAnalytics: security.data.operatorGovernance?.analytics,
+      governanceAnalytics: security.operatorGovernance?.analytics,
       healthCenter: [
         ...control.data.statusSignals,
         {
-          detail: `${jobs.data.summary.queuedJobs} queued jobs, lag ${Math.round(jobs.data.summary.queueLagMs)}ms`,
+          detail: `${jobs.summary.queuedJobs} queued jobs, lag ${Math.round(jobs.summary.queueLagMs)}ms`,
           label: "Queue",
           status: queueStatus,
-          value: jobs.data.jobs.some((job) => job.status === "failed") ? "Failed jobs present" : "Healthy",
+          value: jobs.jobs.some((job) => job.status === "failed") ? "Failed jobs present" : "Healthy",
         },
         {
           detail: readEnv(env, "SENTRY_RELEASE", "RELEASE_SHA") || "Release metadata missing",
@@ -1589,17 +1774,17 @@ const buildAnalyticsResponse = async (
           detail: `${control.data.security.failedLoginAttempts24h} failed logins in the last 24h`,
           label: "Auth",
           status: authStatus,
-          value: `${security.data.suspiciousIps.length} suspicious IPs`,
+          value: `${security.suspiciousIps.length} suspicious IPs`,
         },
       ],
       incidents: {
-        critical: incidents.data.summary.critical,
-        unresolved: incidents.data.summary.unresolved,
+        critical: incidents.summary.critical,
+        unresolved: incidents.summary.unresolved,
       },
-      incidentCoordination: incidents.data.analytics,
+      incidentCoordination: incidents.analytics,
       operationalIntelligence,
       overview: control.data.analytics,
-      runtimeVisibility: security.data.runtimeVisibility,
+      runtimeVisibility: security.runtimeVisibility,
       security: control.data.security,
       systemStatus: control.data.systemStatus,
     },
@@ -2123,7 +2308,11 @@ export const handleAdminApiRequest = async (
           const result = await getControlCenterData(env, actor);
           sendServiceResponse(res, requestId, result);
         } catch (error) {
-          sendJson(res, 200, buildSuccessBody(requestId, "Platform data partially loaded.", buildFallbackControlCenterData()));
+          sendJson(
+            res,
+            503,
+            buildErrorBody(requestId, "Platform control-plane data is temporarily unavailable.", "PLATFORM_DATA_UNAVAILABLE"),
+          );
         }
         return;
       }
@@ -2245,8 +2434,16 @@ export const handleAdminApiRequest = async (
           return;
         }
 
-        const result = await buildAnalyticsResponse(env, actor, filtersParse.data).catch(() => buildApiSuccess("Analytics partially loaded.", buildFallbackAnalyticsData()));
-        sendServiceResponse(res, requestId, result);
+        try {
+          const result = await buildAnalyticsResponse(env, actor, filtersParse.data);
+          sendServiceResponse(res, requestId, result);
+        } catch (error) {
+          sendJson(
+            res,
+            503,
+            buildErrorBody(requestId, "Analytics center is temporarily unavailable.", "ANALYTICS_UNAVAILABLE"),
+          );
+        }
         return;
       }
       case "/api/admin/billing": {

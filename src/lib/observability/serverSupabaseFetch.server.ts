@@ -3,6 +3,15 @@ import { logEvent } from "./eventLogger.server.js";
 import { recordRuntimeLatency, incrementRuntimeMetric } from "./runtimeMetrics.server.js";
 import { getSupabaseRequestDetails, parseSupabaseErrorResponse } from "./supabaseRequestDetails.js";
 
+const DEFAULT_SUPABASE_REQUEST_TIMEOUT_MS = 10_000;
+
+const resolveSupabaseRequestTimeoutMs = () => {
+  const parsed = Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || "");
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_SUPABASE_REQUEST_TIMEOUT_MS;
+};
+
 const buildServerQueryFailureMessage = (
   queryName: string | null,
   queryType: "other" | "rest" | "rpc",
@@ -20,9 +29,29 @@ const buildServerQueryFailureMessage = (
 export const createInstrumentedServerSupabaseFetch = (source: string): typeof fetch => {
   const baseFetch = globalThis.fetch.bind(globalThis);
   const slowQueryThresholdMs = Math.max(250, Number(process.env.SLOW_DB_QUERY_THRESHOLD_MS || "800"));
+  const requestTimeoutMs = resolveSupabaseRequestTimeoutMs();
 
   return async (input, init) => {
-    const customInit = { ...init, cache: "no-store" as RequestCache };
+    const controller = new AbortController();
+    const customInit = {
+      ...init,
+      cache: "no-store" as RequestCache,
+    };
+    const requestSignal = customInit.signal
+      ? AbortSignal.any([customInit.signal, controller.signal])
+      : controller.signal;
+    const onAbort = () => controller.abort(customInit.signal?.reason);
+    if (customInit.signal) {
+      if (customInit.signal.aborted) {
+        controller.abort(customInit.signal.reason);
+      } else {
+        customInit.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+    const timeout = setTimeout(() => {
+      controller.abort(new Error(`Supabase request timed out after ${requestTimeoutMs}ms.`));
+    }, requestTimeoutMs);
+    customInit.signal = requestSignal;
     const details = getSupabaseRequestDetails(input, customInit);
     const startedAt = Date.now();
 
@@ -176,6 +205,11 @@ export const createInstrumentedServerSupabaseFetch = (source: string): typeof fe
       }
 
       throw error;
+    } finally {
+      clearTimeout(timeout);
+      if (customInit.signal && init?.signal) {
+        init.signal.removeEventListener("abort", onAbort);
+      }
     }
   };
 };

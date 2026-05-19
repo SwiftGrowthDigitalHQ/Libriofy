@@ -3,6 +3,7 @@ import { AlertTriangle, BarChart3, Building2, Flag, ShieldCheck, Zap } from "luc
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import StatsCard from "@/components/dashboard/StatsCard";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
@@ -68,17 +69,24 @@ const SuperAdminDashboard = () => {
 
   const platform = platformQuery.data;
   const analytics = analyticsQuery.data;
+  const overview = platform?.analytics ?? analytics?.overview;
+  const systemStatus = platform?.systemStatus ?? analytics?.systemStatus;
+  const statusSignals =
+    analytics?.healthCenter && analytics.healthCenter.length > 0
+      ? analytics.healthCenter
+      : platform?.statusSignals ?? [];
+  const controlPlaneError = platformQuery.error ?? analyticsQuery.error;
   const releaseGovernance = platform?.releaseGovernance;
   const evolution = releaseGovernance?.evolution;
   const releaseSimulations = releaseGovernance?.simulations ?? [];
 
   const monthlyRevenueData = useMemo(
-    () => buildMonthlyChartData(platform?.analytics.series ?? []),
-    [platform?.analytics.series],
+    () => buildMonthlyChartData(overview?.series ?? []),
+    [overview?.series],
   );
   const dailyRevenueData = useMemo(
-    () => buildDailyRevenueData(platform?.analytics.series ?? []),
-    [platform?.analytics.series],
+    () => buildDailyRevenueData(overview?.series ?? []),
+    [overview?.series],
   );
 
   const topLibraries = useMemo(
@@ -97,34 +105,44 @@ const SuperAdminDashboard = () => {
           title="Control Plane Dashboard"
         />
 
+        {controlPlaneError && !platform ? (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Control-plane telemetry is temporarily unavailable</AlertTitle>
+            <AlertDescription>
+              {controlPlaneError.message}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatsCard
-            change={`${platform?.systemStatus ?? "unknown"} system`}
+            change={systemStatus ? `${systemStatus} system` : undefined}
             icon={Building2}
             title="Active Libraries"
             trend="up"
-            value={formatNumber(platform?.analytics.dailyActiveLibraries ?? 0)}
+            value={overview ? formatNumber(overview.dailyActiveLibraries) : "Unavailable"}
           />
           <StatsCard
-            change={`${formatPercent(platform?.analytics.conversionRate ?? 0, 2)} conversion`}
+            change={overview ? `${formatPercent(overview.conversionRate, 2)} conversion` : undefined}
             icon={BarChart3}
             title="Students Today"
             trend="up"
-            value={formatNumber(platform?.analytics.activeStudentsToday ?? 0)}
+            value={overview ? formatNumber(overview.activeStudentsToday) : "Unavailable"}
           />
           <StatsCard
-            change={`Prev ${formatInr(platform?.analytics.revenuePreviousMonth ?? 0)}`}
+            change={overview ? `Prev ${formatInr(overview.revenuePreviousMonth)}` : undefined}
             icon={ShieldCheck}
             title="Revenue This Month"
             trend="up"
-            value={formatInr(platform?.analytics.revenueThisMonth ?? 0)}
+            value={overview ? formatInr(overview.revenueThisMonth) : "Unavailable"}
           />
           <StatsCard
-            change={`${platform?.automation.failedJobs ?? 0} failed jobs`}
+            change={platform ? `${platform.automation.failedJobs} failed jobs` : undefined}
             icon={Zap}
             title="Queued Jobs"
             trend="down"
-            value={formatNumber(platform?.automation.queuedJobs ?? 0)}
+            value={platform ? formatNumber(platform.automation.queuedJobs) : "Unavailable"}
           />
         </div>
 
@@ -141,16 +159,20 @@ const SuperAdminDashboard = () => {
               <CardTitle className="text-lg font-display">Health Center</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {(analytics?.healthCenter ?? platform?.statusSignals ?? []).map((signal) => (
-                <div key={signal.label} className="rounded-lg border border-border p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-foreground">{signal.label}</p>
-                    <Badge variant={toBadgeVariant(signal.status)}>{signal.status}</Badge>
+              {statusSignals.length > 0 ? (
+                statusSignals.map((signal) => (
+                  <div key={signal.label} className="rounded-lg border border-border p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-foreground">{signal.label}</p>
+                      <Badge variant={toBadgeVariant(signal.status)}>{signal.status}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-foreground">{signal.value}</p>
+                    {signal.detail ? <p className="mt-1 text-xs text-muted-foreground">{signal.detail}</p> : null}
                   </div>
-                  <p className="mt-2 text-sm text-foreground">{signal.value}</p>
-                  {signal.detail ? <p className="mt-1 text-xs text-muted-foreground">{signal.detail}</p> : null}
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">Health signals will appear here once live telemetry is available.</p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -160,13 +182,15 @@ const SuperAdminDashboard = () => {
             <CardTitle className="text-lg font-display">Release Operations</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {releaseGovernance ? (
+              <>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={toBadgeVariant(releaseGovernance?.health.status ?? "warning")}>
-                {releaseGovernance?.health.status ?? "unknown"} health
+                {releaseGovernance.health.status} health
               </Badge>
-              <Badge variant="outline">{releaseGovernance?.lineage.releaseId ?? "Untracked release"}</Badge>
-              <Badge variant="outline">{releaseGovernance?.lineage.phase ?? "rolling"}</Badge>
-              <Badge variant="outline">{releaseGovernance?.lineage.channel ?? "development"}</Badge>
+              <Badge variant="outline">{releaseGovernance.lineage.releaseId ?? "Untracked release"}</Badge>
+              <Badge variant="outline">{releaseGovernance.lineage.phase ?? "rolling"}</Badge>
+              <Badge variant="outline">{releaseGovernance.lineage.channel ?? "development"}</Badge>
             </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
@@ -227,7 +251,7 @@ const SuperAdminDashboard = () => {
                   {formatNumber(evolution?.tenants.promotionReadyTenants ?? 0)} ready for promotion | readiness {formatNumber(evolution?.tenants.averageReadinessScore ?? 0)}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {formatNumber(evolution?.tenants.activeTenants ?? 0)} active • {formatNumber(evolution?.tenants.blockedTenants ?? 0)} blocked
+                  {formatNumber(evolution?.tenants.activeTenants ?? 0)} active | {formatNumber(evolution?.tenants.blockedTenants ?? 0)} blocked
                 </p>
               </div>
               <div className="rounded-lg border border-border p-3">
@@ -236,7 +260,7 @@ const SuperAdminDashboard = () => {
                   {evolution?.canary.lifecycle ?? "idle"}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Health {formatNumber(evolution?.canary.healthScore ?? 0)} • anomalies {formatNumber(evolution?.canary.anomalyCount ?? 0)}
+                  Health {formatNumber(evolution?.canary.healthScore ?? 0)} | anomalies {formatNumber(evolution?.canary.anomalyCount ?? 0)}
                 </p>
               </div>
               <div className="rounded-lg border border-border p-3">
@@ -289,7 +313,7 @@ const SuperAdminDashboard = () => {
                 <p className="text-sm font-medium text-foreground">Active release tracks</p>
                 <div className="mt-3 space-y-2">
                   {(evolution?.activeReleases ?? []).slice(0, 5).map((track) => (
-                    <div key={`${track.role}-${track.releaseId ?? "unknown"}`} className="rounded-lg border border-border bg-muted/20 p-3">
+                    <div key={`${track.role}-${track.releaseId ?? "untracked"}`} className="rounded-lg border border-border bg-muted/20 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-medium text-foreground">{track.role.replaceAll("_", " ")}</p>
                         <Badge variant={track.status === "incompatible" ? "destructive" : track.status === "warning" ? "secondary" : "outline"}>
@@ -297,7 +321,7 @@ const SuperAdminDashboard = () => {
                         </Badge>
                       </div>
                       <p className="mt-2 text-xs text-muted-foreground">
-                        {track.releaseId ?? "untracked"} • runtime {track.runtimeVersion ?? "n/a"} • schema {track.schemaVersion ?? "n/a"}
+                        {track.releaseId ?? "untracked"} | runtime {track.runtimeVersion ?? "n/a"} | schema {track.schemaVersion ?? "n/a"}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">{track.summary}</p>
                     </div>
@@ -318,10 +342,10 @@ const SuperAdminDashboard = () => {
                           <Badge variant={toBadgeVariant(tenant.healthStatus)}>{tenant.healthStatus}</Badge>
                         </div>
                         <p className="mt-2 text-xs text-muted-foreground">
-                          {tenant.stage.replaceAll("_", " ")} • {formatPercent(tenant.rolloutPercentage, 2)} • {tenant.releaseId ?? "pending"}
+                          {tenant.stage.replaceAll("_", " ")} | {formatPercent(tenant.rolloutPercentage, 2)} | {tenant.releaseId ?? "pending"}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {tenant.region ?? "No region"} • rollback {tenant.rollbackIsolated ? "isolated" : "shared"}
+                          {tenant.region ?? "No region"} | rollback {tenant.rollbackIsolated ? "isolated" : "shared"}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
                           {tenant.progressionStatus.replaceAll("_", " ")} | compatibility {formatNumber(tenant.compatibilityScore)} | readiness {formatNumber(tenant.readinessScore)}
@@ -389,6 +413,12 @@ const SuperAdminDashboard = () => {
                 </div>
               </div>
             </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Release governance telemetry is unavailable right now, so rollback and rollout diagnostics are temporarily hidden.
+              </p>
+            )}
           </CardContent>
         </Card>
 
