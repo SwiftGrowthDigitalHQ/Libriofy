@@ -1227,6 +1227,7 @@ const buildFilteredLibrariesResponse = (
     generatedAt: payload.generatedAt,
     libraries: paginateItems(filtered, query.page, query.pageSize),
     recentActivity: payload.activityLogs.slice(0, 20),
+    summary: payload.summary,
   };
 };
 
@@ -1250,6 +1251,7 @@ const buildFilteredUsersResponse = (
 
   return {
     generatedAt: payload.generatedAt,
+    summary: payload.summary,
     users: paginateItems(filtered, query.page, query.pageSize),
   };
 };

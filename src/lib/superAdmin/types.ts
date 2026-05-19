@@ -727,6 +727,20 @@ export type AdminLibraryControlRow = {
   controlReason: string | null;
 };
 
+export type AdminLibraryCenterSummary = {
+  activeImpersonationCount: number;
+  activeLibraryCount: number;
+  controlledLibraryCount: number;
+  controlledUserCount: number;
+  disabledLibraryCount: number;
+  forcedLogoutCount: number;
+  passwordResetCount: number;
+  pendingLibraryCount: number;
+  totalLibraryCount: number;
+  trialLibraryCount: number;
+  verificationRequiredCount: number;
+};
+
 export type AdminUserControlRow = {
   userId: string;
   email: string | null;
@@ -741,6 +755,10 @@ export type AdminUserControlRow = {
   controlStatus: "active" | "suspended" | "banned";
   controlUntilAt: string | null;
   controlReason: string | null;
+  clearSessionsAfter: string | null;
+  passwordResetRequired: boolean;
+  activeImpersonationId: string | null;
+  activeImpersonationStartedAt: string | null;
 };
 
 export type AdminActivityLog = {
@@ -1638,6 +1656,7 @@ export type SuperAdminLibraryCenterData = {
   libraries: AdminLibraryControlRow[];
   users: AdminUserControlRow[];
   activityLogs: AdminActivityLog[];
+  summary: AdminLibraryCenterSummary;
 };
 
 export type SuperAdminIncidentCenterData = {

@@ -6,6 +6,7 @@ import type {
   AdminBillingPaymentRow,
   AdminBroadcastInput,
   AdminBroadcastRow,
+  AdminLibraryCenterSummary,
   AdminFeatureFlag,
   AdminFeatureFlagInput,
   AdminIncidentGroup,
@@ -142,10 +143,12 @@ export type AdminLibrariesListResponse = {
   generatedAt: string;
   libraries: AdminPaginatedItems<AdminLibraryControlRow>;
   recentActivity: AdminActivityLog[];
+  summary: AdminLibraryCenterSummary;
 };
 
 export type AdminUsersListResponse = {
   generatedAt: string;
+  summary: AdminLibraryCenterSummary;
   users: AdminPaginatedItems<AdminUserControlRow>;
 };
 

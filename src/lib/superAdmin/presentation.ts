@@ -1,3 +1,5 @@
+import { format, formatDistanceToNowStrict, isToday, isYesterday } from "date-fns";
+
 export const formatInr = (value: number) =>
   new Intl.NumberFormat("en-IN", {
     currency: "INR",
@@ -41,6 +43,32 @@ export const formatDate = (value?: string | null) => {
     month: "short",
     year: "numeric",
   });
+};
+
+export const formatOperationalTimestamp = (value?: string | null) => {
+  if (!value) {
+    return "Waiting for first activity";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Waiting for first activity";
+  }
+
+  const diffMs = Math.abs(Date.now() - parsed.getTime());
+  if (diffMs < 60 * 60 * 1000) {
+    return formatDistanceToNowStrict(parsed, { addSuffix: true });
+  }
+
+  if (isToday(parsed)) {
+    return `Today at ${format(parsed, "h:mm a")}`;
+  }
+
+  if (isYesterday(parsed)) {
+    return `Yesterday at ${format(parsed, "h:mm a")}`;
+  }
+
+  return format(parsed, "dd MMM yyyy, h:mm a");
 };
 
 export const toBadgeVariant = (

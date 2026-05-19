@@ -1,4 +1,7 @@
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type {
+  AdminLibraryCenterSummary,
   AdminLibrariesListResponse,
   AdminLibrariesWorkflowMutation,
   AdminListQuery,
@@ -7,6 +10,7 @@ import type {
   AdminUserWorkflowMutation,
 } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
+import { supabase } from "@/integrations/supabase/client";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -111,13 +115,16 @@ const applyUserActionOptimistically = (
 
 export const useLibraries = ({
   enabled = true,
+  enableUsers = true,
   query,
   userQuery,
 }: {
   enabled?: boolean;
+  enableUsers?: boolean;
   query?: AdminListQuery;
   userQuery?: AdminListQuery;
 } = {}) => {
+  const queryClient = useQueryClient();
   const librariesQuery = useAdminQuery({
     enabled,
     queryFn: () => adminClient.getLibraries(query),
@@ -126,11 +133,49 @@ export const useLibraries = ({
   });
 
   const usersQuery = useAdminQuery({
-    enabled,
+    enabled: enabled && enableUsers,
     queryFn: () => adminClient.getUsers(userQuery),
     queryKey: ["admin-users", userQuery ?? {}],
     staleTime: 20_000,
   });
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    let timeoutId: number | null = null;
+    const scheduleRefresh = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+
+      timeoutId = window.setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["admin-libraries"] });
+        if (enableUsers) {
+          queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+        }
+      }, 600);
+    };
+
+    const channel = supabase
+      .channel("super-admin-library-center")
+      .on("postgres_changes", { event: "*", schema: "public", table: "libraries" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "library_subscriptions" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "library_control_overrides" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "platform_account_controls" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "platform_activity_logs" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance_logs" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "login_logs" }, scheduleRefresh)
+      .subscribe();
+
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [enableUsers, enabled, queryClient]);
 
   const libraryAction = useAdminMutation<Record<string, unknown>, AdminLibrariesWorkflowMutation, AdminLibrariesListResponse>({
     invalidateQueryKeys: [["admin-libraries"], ["admin-users"], ["admin-platform"], ["admin-security"]],
@@ -163,6 +208,21 @@ export const useLibraries = ({
     librariesQuery,
     libraryAction,
     recentActivity: librariesQuery.data?.recentActivity ?? [],
+    summary:
+      librariesQuery.data?.summary ??
+      ({
+        activeImpersonationCount: 0,
+        activeLibraryCount: 0,
+        controlledLibraryCount: 0,
+        controlledUserCount: 0,
+        disabledLibraryCount: 0,
+        forcedLogoutCount: 0,
+        passwordResetCount: 0,
+        pendingLibraryCount: 0,
+        totalLibraryCount: 0,
+        trialLibraryCount: 0,
+        verificationRequiredCount: 0,
+      } satisfies AdminLibraryCenterSummary),
     userAction,
     users: usersQuery.data?.users.items ?? [],
     usersPagination: usersQuery.data?.users.pagination,

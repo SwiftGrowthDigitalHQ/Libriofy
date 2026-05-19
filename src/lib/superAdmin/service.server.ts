@@ -281,6 +281,16 @@ type AccountControlRow = {
   user_id?: string | null;
 };
 
+type ImpersonationSessionRow = {
+  ended_at?: string | null;
+  expires_at?: string | null;
+  id?: string | null;
+  revoked_at?: string | null;
+  started_at?: string | null;
+  target_library_id?: string | null;
+  target_user_id?: string | null;
+};
+
 type RevenueAdjustmentRow = {
   amount_delta?: number | null;
   created_at?: string | null;
@@ -1307,12 +1317,14 @@ const buildLibraryControlRows = ({
 
 const buildUserControlRows = ({
   accountControls,
+  activeImpersonationsByUserId,
   libraries,
   loginRows,
   profiles,
   userRoles,
 }: {
   accountControls: Map<string, AccountControlRow>;
+  activeImpersonationsByUserId: Map<string, ImpersonationSessionRow>;
   libraries: LibraryRow[];
   loginRows: LoginLogRow[];
   profiles: ProfileRow[];
@@ -1357,20 +1369,61 @@ const buildUserControlRows = ({
     }
   }
 
-  return profiles
-    .map((profile) => {
-      const userId = normalizeText(profile.user_id);
+  const profileByUserId = new Map(profiles.map((profile) => [normalizeText(profile.user_id), profile] as const));
+  const trackedUserIds = new Set<string>();
+
+  for (const userId of rolesByUserId.keys()) {
+    if (userId) {
+      trackedUserIds.add(userId);
+    }
+  }
+
+  for (const userId of failedLoginsByUserId.keys()) {
+    if (userId) {
+      trackedUserIds.add(userId);
+    }
+  }
+
+  for (const userId of lastLoginByUserId.keys()) {
+    if (userId) {
+      trackedUserIds.add(userId);
+    }
+  }
+
+  for (const userId of accountControls.keys()) {
+    if (userId) {
+      trackedUserIds.add(userId);
+    }
+  }
+
+  for (const userId of activeImpersonationsByUserId.keys()) {
+    if (userId) {
+      trackedUserIds.add(userId);
+    }
+  }
+
+  for (const library of libraries) {
+    const ownerId = normalizeText(library.owner_id);
+    if (ownerId) {
+      trackedUserIds.add(ownerId);
+    }
+  }
+
+  return [...trackedUserIds]
+    .map((userId) => {
+      const profile = profileByUserId.get(userId);
       const roles = rolesByUserId.get(userId) ?? [];
       const accountControl = accountControls.get(userId);
+      const activeImpersonation = activeImpersonationsByUserId.get(userId);
       const isControlled = isControlWindowActive(accountControl?.status, accountControl?.until_at);
       const library = libraryByOwnerId.get(userId);
       const primaryRole = roles[0] ?? null;
 
       return {
         userId,
-        email: normalizeNullableText(profile.email),
-        fullName: normalizeNullableText(profile.full_name),
-        phone: normalizeNullableText(profile.phone_number),
+        email: normalizeNullableText(profile?.email),
+        fullName: normalizeNullableText(profile?.full_name),
+        phone: normalizeNullableText(profile?.phone_number),
         primaryRole,
         roles,
         libraryId: normalizeNullableText(library?.id) ?? normalizeNullableText(accountControl?.library_id),
@@ -1384,9 +1437,206 @@ const buildUserControlRows = ({
           : "active",
         controlUntilAt: isControlled ? normalizeNullableText(accountControl?.until_at) : null,
         controlReason: isControlled ? normalizeNullableText(accountControl?.reason) : null,
+        clearSessionsAfter: normalizeNullableText(accountControl?.clear_sessions_after),
+        passwordResetRequired: toBoolean(accountControl?.password_reset_required, false),
+        activeImpersonationId: normalizeNullableText(activeImpersonation?.id),
+        activeImpersonationStartedAt: normalizeNullableText(activeImpersonation?.started_at),
       };
     })
-    .sort((left, right) => left.fullName?.localeCompare(right.fullName || "") || left.userId.localeCompare(right.userId));
+    .sort((left, right) => {
+      const severityDelta =
+        Number(Boolean(right.activeImpersonationId || right.passwordResetRequired || right.clearSessionsAfter || right.controlStatus !== "active")) -
+        Number(Boolean(left.activeImpersonationId || left.passwordResetRequired || left.clearSessionsAfter || left.controlStatus !== "active"));
+
+      if (severityDelta !== 0) {
+        return severityDelta;
+      }
+
+      return left.fullName?.localeCompare(right.fullName || "") || left.userId.localeCompare(right.userId);
+    });
+};
+
+const isSubscriptionTrialStatus = (value: string | null | undefined) =>
+  ["trial", "trialing"].includes(normalizeText(value).toLowerCase());
+
+const isSubscriptionPendingStatus = (value: string | null | undefined) =>
+  ["incomplete", "incomplete_expired", "past_due", "pending", "unpaid"].includes(
+    normalizeText(value).toLowerCase(),
+  );
+
+const isOpenImpersonationSession = (row: ImpersonationSessionRow) => {
+  if (normalizeText(row.ended_at) || normalizeText(row.revoked_at)) {
+    return false;
+  }
+
+  const expiresAt = Date.parse(normalizeText(row.expires_at));
+  return !Number.isFinite(expiresAt) || expiresAt > Date.now();
+};
+
+const buildLibraryCenterSummary = ({
+  accountControls,
+  libraries,
+  controlsByLibraryId,
+  ownerProfilesByUserId,
+  subscriptionsByLibraryId,
+  activeImpersonationsByUserId,
+}: {
+  accountControls: AccountControlRow[];
+  activeImpersonationsByUserId: Map<string, ImpersonationSessionRow>;
+  libraries: LibraryRow[];
+  controlsByLibraryId: Map<string, LibraryControlRow>;
+  ownerProfilesByUserId: Map<string, ProfileRow>;
+  subscriptionsByLibraryId: Map<string, SubscriptionRow>;
+}) => {
+  let activeLibraryCount = 0;
+  let controlledLibraryCount = 0;
+  let disabledLibraryCount = 0;
+  let pendingLibraryCount = 0;
+  let trialLibraryCount = 0;
+  let verificationRequiredCount = 0;
+
+  for (const library of libraries) {
+    const libraryId = normalizeText(library.id);
+    const ownerId = normalizeText(library.owner_id);
+    const ownerProfile = ownerProfilesByUserId.get(ownerId);
+    const subscription = subscriptionsByLibraryId.get(libraryId);
+    const enabled = toBoolean(library.enabled, true);
+    const hasControl = isControlWindowActive(
+      controlsByLibraryId.get(libraryId)?.status,
+      controlsByLibraryId.get(libraryId)?.until_at,
+    );
+    const isTrial =
+      isSubscriptionTrialStatus(subscription?.status) || isSubscriptionTrialStatus(subscription?.payment_status);
+    const isPending =
+      isSubscriptionPendingStatus(subscription?.status) || isSubscriptionPendingStatus(subscription?.payment_status);
+    const needsVerification = !ownerId || !normalizeText(ownerProfile?.email);
+
+    if (enabled && !hasControl) {
+      activeLibraryCount += 1;
+    }
+    if (!enabled) {
+      disabledLibraryCount += 1;
+    }
+    if (!enabled || hasControl) {
+      controlledLibraryCount += 1;
+    }
+    if (isTrial) {
+      trialLibraryCount += 1;
+    }
+    if (isPending) {
+      pendingLibraryCount += 1;
+    }
+    if (needsVerification) {
+      verificationRequiredCount += 1;
+    }
+  }
+
+  const controlledUserIds = new Set<string>();
+  let forcedLogoutCount = 0;
+  let passwordResetCount = 0;
+
+  for (const control of accountControls) {
+    const userId = normalizeText(control.user_id);
+    if (!userId) {
+      continue;
+    }
+
+    const isControlled = isControlWindowActive(control.status, control.until_at);
+    if (isControlled) {
+      controlledUserIds.add(userId);
+    }
+
+    if (normalizeText(control.clear_sessions_after)) {
+      forcedLogoutCount += 1;
+      controlledUserIds.add(userId);
+    }
+
+    if (toBoolean(control.password_reset_required, false)) {
+      passwordResetCount += 1;
+      controlledUserIds.add(userId);
+    }
+  }
+
+  for (const userId of activeImpersonationsByUserId.keys()) {
+    controlledUserIds.add(userId);
+  }
+
+  return {
+    activeImpersonationCount: activeImpersonationsByUserId.size,
+    activeLibraryCount,
+    controlledLibraryCount,
+    controlledUserCount: controlledUserIds.size,
+    disabledLibraryCount,
+    forcedLogoutCount,
+    passwordResetCount,
+    pendingLibraryCount,
+    totalLibraryCount: libraries.length,
+    trialLibraryCount,
+    verificationRequiredCount,
+  };
+};
+
+const mapLibraryCenterActivityFeed = ({
+  attendanceRows,
+  librariesById,
+  loginRows,
+  platformActivityLogs,
+}: {
+  attendanceRows: AttendanceRow[];
+  librariesById: Map<string, LibraryRow>;
+  loginRows: LoginLogRow[];
+  platformActivityLogs: ActivityLogRow[];
+}): AdminActivityLog[] => {
+  const activity = [
+    ...platformActivityLogs.map(mapActivityLog),
+    ...attendanceRows.slice(0, 20).map((row, index) => {
+      const libraryId = normalizeNullableText(row.library_id);
+      const libraryName = libraryId ? normalizeText(librariesById.get(libraryId)?.name) : "";
+      const occurredAt =
+        normalizeText(row.check_in) || normalizeText(row.created_at) || normalizeText(row.date) || nowIso();
+
+      return {
+        actorUserId: null,
+        activityType: "attendance_scan",
+        createdAt: occurredAt,
+        id: `attendance:${libraryId ?? "unknown"}:${occurredAt}:${index}`,
+        libraryId,
+        message: `${libraryName || "A library"} recorded an attendance scan.`,
+        metadata: {
+          source: "attendance_logs",
+        },
+        userId: null,
+      } satisfies AdminActivityLog;
+    }),
+    ...loginRows.slice(0, 12).map((row, index) => {
+      const occurredAt = normalizeText(row.login_time) || nowIso();
+      const email = normalizeText(row.email) || "An operator";
+      const status = normalizeText(row.status).toLowerCase();
+
+      return {
+        actorUserId: normalizeNullableText(row.user_id),
+        activityType: status === "failed" ? "operator_login_failed" : "operator_login_succeeded",
+        createdAt: occurredAt,
+        id: `login:${normalizeText(row.id) || index}:${occurredAt}`,
+        libraryId: null,
+        message:
+          status === "failed"
+            ? `${email} had a failed admin login attempt.`
+            : `${email} signed in to the control plane.`,
+        metadata: {
+          device: normalizeNullableText(row.device),
+          login_step: normalizeNullableText(row.login_step),
+          source: "login_logs",
+          status,
+        },
+        userId: normalizeNullableText(row.user_id),
+      } satisfies AdminActivityLog;
+    }),
+  ];
+
+  return activity
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, 20);
 };
 
 const mapCommissionOverrides = ({
@@ -2742,6 +2992,8 @@ const normalizeGovernanceDomainInput = (value: unknown): AdminOperatorGovernance
   STORED_GOVERNANCE_DOMAIN_VALUES.includes(value as AdminOperatorGovernanceDomain)
     ? (value as AdminOperatorGovernanceDomain)
     : null;
+
+let inflightLibraryCenterRequest: Promise<StructuredApiResponse<SuperAdminLibraryCenterData>> | null = null;
 
 const toBoundaryRecord = (value: unknown) =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -5679,6 +5931,164 @@ const loadLastActivityByLibraryId = async (client: UntypedClient) => {
   return lastActivityByLibraryId;
 };
 
+const loadProfilesByUserIds = async (client: UntypedClient, userIds: string[]) => {
+  if (!userIds.length) {
+    return [] as ProfileRow[];
+  }
+
+  const rows: ProfileRow[] = [];
+  for (let index = 0; index < userIds.length; index += 100) {
+    const chunk = userIds.slice(index, index + 100);
+    rows.push(
+      ...(
+        await readOptionalRows<ProfileRow>(
+          client
+            .from("profiles")
+            .select("user_id, email, full_name, phone_number")
+            .in("user_id", chunk),
+        )
+      ),
+    );
+  }
+
+  return rows;
+};
+
+const loadLibraryCenterCoreData = async (client: UntypedClient) => {
+  const [
+    libraries,
+    subscriptions,
+    userRoles,
+    loginRows,
+    accountControls,
+    libraryControls,
+    attendanceRows,
+    activityLogs,
+    impersonationRows,
+  ] = await Promise.all([
+    readOptionalRows<LibraryRow>(
+      client
+        .from("libraries")
+        .select("id, name, city, state, owner_id, enabled, active_students, total_seats, monthly_revenue, updated_at, created_at")
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ),
+    readOptionalRows<SubscriptionRow>(
+      client
+        .from("library_subscriptions")
+        .select("id, library_id, plan_name, plan_price, price, status, payment_status, started_at, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(500),
+    ),
+    readOptionalRows<UserRoleRow>(
+      client
+        .from("user_roles")
+        .select("user_id, role")
+        .limit(1500),
+    ),
+    readOptionalRows<LoginLogRow>(
+      client
+        .from("login_logs")
+        .select("id, user_id, email, ip_address, status, reason, login_step, login_time, device")
+        .order("login_time", { ascending: false })
+        .limit(400),
+    ),
+    readOptionalRows<AccountControlRow>(
+      client
+        .from("platform_account_controls")
+        .select("user_id, library_id, status, reason, until_at, clear_sessions_after, password_reset_required")
+        .limit(500),
+    ),
+    readOptionalRows<LibraryControlRow>(
+      client
+        .from("library_control_overrides")
+        .select("library_id, status, reason, until_at")
+        .limit(500),
+    ),
+    readOptionalRows<AttendanceRow>(
+      client
+        .from("attendance_logs")
+        .select("library_id, check_in, date, created_at")
+        .order("check_in", { ascending: false })
+        .limit(5000),
+    ),
+    readOptionalRows<ActivityLogRow>(
+      client
+        .from("platform_activity_logs")
+        .select("id, created_at, activity_type, message, library_id, user_id, actor_user_id, metadata")
+        .order("created_at", { ascending: false })
+        .limit(100),
+    ),
+    readOptionalRows<ImpersonationSessionRow>(
+      client
+        .from("super_admin_impersonation_sessions")
+        .select("id, target_user_id, target_library_id, started_at, expires_at, ended_at, revoked_at")
+        .order("started_at", { ascending: false })
+        .limit(200),
+    ),
+  ]);
+
+  const relevantUserIds = new Set<string>();
+  for (const library of libraries) {
+    const ownerId = normalizeText(library.owner_id);
+    if (ownerId) {
+      relevantUserIds.add(ownerId);
+    }
+  }
+  for (const row of userRoles) {
+    const userId = normalizeText(row.user_id);
+    if (userId) {
+      relevantUserIds.add(userId);
+    }
+  }
+  for (const row of loginRows) {
+    const userId = normalizeText(row.user_id);
+    if (userId) {
+      relevantUserIds.add(userId);
+    }
+  }
+  for (const row of accountControls) {
+    const userId = normalizeText(row.user_id);
+    if (userId) {
+      relevantUserIds.add(userId);
+    }
+  }
+  for (const row of impersonationRows) {
+    const userId = normalizeText(row.target_user_id);
+    if (userId) {
+      relevantUserIds.add(userId);
+    }
+  }
+
+  const profiles = await loadProfilesByUserIds(client, [...relevantUserIds]);
+  const lastActivityByLibraryId = new Map<string, string>();
+  for (const row of attendanceRows) {
+    const libraryId = normalizeText(row.library_id);
+    if (!libraryId || lastActivityByLibraryId.has(libraryId)) {
+      continue;
+    }
+
+    lastActivityByLibraryId.set(
+      libraryId,
+      normalizeText(row.check_in) || normalizeText(row.created_at) || normalizeText(row.date) || nowIso(),
+    );
+  }
+
+  return {
+    accountControls,
+    activityLogs,
+    attendanceRows,
+    lastActivityByLibraryId,
+    libraries,
+    libraryControls,
+    loginRows,
+    profiles,
+    subscriptions,
+    userRoles,
+    impersonationRows: impersonationRows.filter(isOpenImpersonationSession),
+  };
+};
+
 const loadCoreAdminData = async (env: EnvLike, client: UntypedClient) => {
   const observabilityClient = createObservabilityServiceClient(env);
   const eventLogClient = observabilityClient ?? client;
@@ -7681,27 +8091,69 @@ export const getRevenueCenterData = async (
 export const getLibraryCenterData = async (
   env: EnvLike,
 ): Promise<StructuredApiResponse<SuperAdminLibraryCenterData>> => {
-  const client = buildServiceClient(env);
-  const core = await loadCoreAdminData(env, client);
+  if (inflightLibraryCenterRequest) {
+    return await inflightLibraryCenterRequest;
+  }
 
-  return buildApiSuccess("Super Admin library center loaded.", {
-    generatedAt: nowIso(),
-    libraries: buildLibraryControlRows({
-      controls: new Map(core.libraryControls.map((row) => [normalizeText(row.library_id), row] as const)),
-      lastActivityByLibraryId: core.lastActivityByLibraryId,
-      libraries: core.libraries,
-      ownerProfilesByUserId: new Map(core.profiles.map((profile) => [normalizeText(profile.user_id), profile] as const)),
-      subscriptionsByLibraryId: new Map(core.subscriptions.map((row) => [normalizeText(row.library_id), row] as const)),
-    }),
-    users: buildUserControlRows({
-      accountControls: new Map(core.accountControls.map((row) => [normalizeText(row.user_id), row] as const)),
-      libraries: core.libraries,
-      loginRows: core.loginRows,
-      profiles: core.profiles,
-      userRoles: core.userRoles,
-    }),
-    activityLogs: core.activityLogs.map(mapActivityLog),
-  });
+  const request = (async () => {
+    const client = buildServiceClient(env);
+    const core = await loadLibraryCenterCoreData(client);
+    const controlsByLibraryId = new Map(
+      core.libraryControls.map((row) => [normalizeText(row.library_id), row] as const),
+    );
+    const subscriptionsByLibraryId = new Map(
+      core.subscriptions.map((row) => [normalizeText(row.library_id), row] as const),
+    );
+    const ownerProfilesByUserId = new Map(
+      core.profiles.map((profile) => [normalizeText(profile.user_id), profile] as const),
+    );
+    const activeImpersonationsByUserId = new Map(
+      core.impersonationRows.map((row) => [normalizeText(row.target_user_id), row] as const),
+    );
+    const librariesById = new Map(core.libraries.map((library) => [normalizeText(library.id), library] as const));
+
+    return buildApiSuccess("Super Admin library center loaded.", {
+      generatedAt: nowIso(),
+      libraries: buildLibraryControlRows({
+        controls: controlsByLibraryId,
+        lastActivityByLibraryId: core.lastActivityByLibraryId,
+        libraries: core.libraries,
+        ownerProfilesByUserId,
+        subscriptionsByLibraryId,
+      }),
+      users: buildUserControlRows({
+        accountControls: new Map(core.accountControls.map((row) => [normalizeText(row.user_id), row] as const)),
+        activeImpersonationsByUserId,
+        libraries: core.libraries,
+        loginRows: core.loginRows,
+        profiles: core.profiles,
+        userRoles: core.userRoles,
+      }),
+      activityLogs: mapLibraryCenterActivityFeed({
+        attendanceRows: core.attendanceRows,
+        librariesById,
+        loginRows: core.loginRows,
+        platformActivityLogs: core.activityLogs,
+      }),
+      summary: buildLibraryCenterSummary({
+        accountControls: core.accountControls,
+        activeImpersonationsByUserId,
+        controlsByLibraryId,
+        libraries: core.libraries,
+        ownerProfilesByUserId,
+        subscriptionsByLibraryId,
+      }),
+    });
+  })();
+
+  inflightLibraryCenterRequest = request;
+  try {
+    return await request;
+  } finally {
+    if (inflightLibraryCenterRequest === request) {
+      inflightLibraryCenterRequest = null;
+    }
+  }
 };
 
 export const getIncidentCenterData = async (
