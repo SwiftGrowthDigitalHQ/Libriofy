@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { maskPhoneNumber, normalizePhoneNumber } from "@/lib/auth.shared";
+import { DEFAULT_AUTH_LOGIN_VIEW, ENABLE_MOBILE_OTP_AUTH, type AuthLoginView } from "@/lib/authUiConfig";
 import { SUPER_ADMIN_DASHBOARD_ROUTE } from "@/lib/superAdminPaths";
 import { supabase, supabaseAuth } from "@/integrations/supabase/client";
 
@@ -139,8 +140,8 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
           : "login";
 
   const [mode, setMode] = useState<AuthMode>(initialAuthMode);
-  const [loginView, setLoginView] = useState<"phone" | "email">("phone");
-  const [phone, setPhone] = useState("+91");
+  const [loginView, setLoginView] = useState<AuthLoginView>(DEFAULT_AUTH_LOGIN_VIEW);
+  const [phone, setPhone] = useState(ENABLE_MOBILE_OTP_AUTH ? "+91" : "");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [deliveryChannel, setDeliveryChannel] = useState<"whatsapp" | "sms" | null>(null);
@@ -155,7 +156,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const [signupName, setSignupName] = useState("");
-  const [signupPhone, setSignupPhone] = useState("+91");
+  const [signupPhone, setSignupPhone] = useState(ENABLE_MOBILE_OTP_AUTH ? "+91" : "");
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [checkingRecovery, setCheckingRecovery] = useState(initialAuthMode === "reset-password");
@@ -168,6 +169,8 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
     const params = new URLSearchParams(location.search);
     return params.get("ref")?.trim() || params.get("affiliate")?.trim() || null;
   }, [location.search]);
+  const showOtpChallenge = ENABLE_MOBILE_OTP_AUTH && otpSent;
+  const showPhoneLogin = ENABLE_MOBILE_OTP_AUTH && loginView === "phone";
 
   const finishLogin = useCallback(async () => {
     const currentSession = await getCurrentSession();
@@ -450,7 +453,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
         description: "Check your inbox to confirm the account, then sign in.",
       });
       setMode("login");
-      setLoginView("phone");
+      setLoginView(DEFAULT_AUTH_LOGIN_VIEW);
     } catch (error) {
       toast({
         title: "Signup failed",
@@ -659,7 +662,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
                 type="button"
                 onClick={() => {
                   setMode("login");
-                  setLoginView("phone");
+                  setLoginView(DEFAULT_AUTH_LOGIN_VIEW);
                 }}
                 className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-slate-800"
               >
@@ -688,15 +691,17 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
                   required
                 />
               </div>
-              <div className="space-y-2">
-                <Label className="text-slate-700">Mobile number</Label>
-                <Input
-                  value={signupPhone}
-                  onChange={(event) => setSignupPhone(event.target.value)}
-                  className="h-12 rounded-xl border-slate-200 bg-white text-slate-950 placeholder:text-slate-400"
-                  placeholder="+919876543210"
-                />
-              </div>
+              {ENABLE_MOBILE_OTP_AUTH ? (
+                <div className="space-y-2">
+                  <Label className="text-slate-700">Mobile number</Label>
+                  <Input
+                    value={signupPhone}
+                    onChange={(event) => setSignupPhone(event.target.value)}
+                    className="h-12 rounded-xl border-slate-200 bg-white text-slate-950 placeholder:text-slate-400"
+                    placeholder="+919876543210"
+                  />
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label className="text-slate-700">Email</Label>
                 <Input
@@ -754,7 +759,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
           </div>
 
           <AnimatePresence mode="wait">
-            {!otpSent ? (
+            {!showOtpChallenge ? (
               <motion.div
                 key="phone-form"
                 initial={{ opacity: 0, y: 16 }}
@@ -762,23 +767,25 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
                 exit={{ opacity: 0, y: -12 }}
                 className="space-y-5"
               >
-                <div className="grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1">
-                  <LoginMethodButton
-                    active={loginView === "email"}
-                    icon={<Mail className="h-4 w-4" />}
-                    label="Email"
-                    onClick={() => setLoginView("email")}
-                  />
-                  <LoginMethodButton
-                    active={loginView === "phone"}
-                    icon={<Smartphone className="h-4 w-4" />}
-                    label="Mobile OTP"
-                    onClick={() => setLoginView("phone")}
-                  />
-                </div>
+                {ENABLE_MOBILE_OTP_AUTH ? (
+                  <div className="grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1">
+                    <LoginMethodButton
+                      active={loginView === "email"}
+                      icon={<Mail className="h-4 w-4" />}
+                      label="Email"
+                      onClick={() => setLoginView("email")}
+                    />
+                    <LoginMethodButton
+                      active={loginView === "phone"}
+                      icon={<Smartphone className="h-4 w-4" />}
+                      label="Mobile OTP"
+                      onClick={() => setLoginView("phone")}
+                    />
+                  </div>
+                ) : null}
 
                 <AnimatePresence mode="wait" initial={false}>
-                  {loginView === "phone" ? (
+                  {showPhoneLogin ? (
                     <motion.div
                       key="mobile-login"
                       initial={{ opacity: 0, y: 10 }}
@@ -790,7 +797,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
                         <Label htmlFor="phone-login" className="text-sm font-medium text-slate-700">Mobile number</Label>
                         <Input
                           id="phone-login"
-                          autoFocus
+                          autoFocus={showPhoneLogin}
                           inputMode="tel"
                           value={phone}
                           onChange={(event) => setPhone(event.target.value)}
@@ -824,6 +831,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
                         <Input
                           id="email-login"
                           type="email"
+                          autoFocus={!showPhoneLogin}
                           value={email}
                           onChange={(event) => setEmail(event.target.value)}
                           className="h-12 rounded-xl border-slate-200 bg-white text-slate-950 placeholder:text-slate-400"
@@ -898,7 +906,7 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
                       setOtpSent(false);
                       setOtp("");
                       setBusyAction(null);
-                      setLoginView("phone");
+                      setLoginView(DEFAULT_AUTH_LOGIN_VIEW);
                     }}
                     className="mb-5 inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-slate-800"
                   >
