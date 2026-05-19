@@ -1,5 +1,6 @@
 import type { AdminIncidentScope, AdminListQuery } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -19,7 +20,7 @@ export const useIncidents = <TScope extends AdminIncidentScope = "overview">({
     queryFn: () => adminClient.getIncidents<TScope>(query),
     queryKey: ["admin-incidents", query?.scope ?? "overview", query ?? {}],
     refetchInterval: refetchIntervalMs,
-    staleTime: 15_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
 export const useResolveIncident = () =>

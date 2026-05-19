@@ -10,8 +10,14 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
 import { useToast } from "@/hooks/use-toast";
-import { useAnalytics, useIncidents, useResolveIncident, useSecurity } from "@/hooks/superAdmin";
+import { useIncidents, useResolveIncident, useSecurity } from "@/hooks/superAdmin";
+import {
+  SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED,
+  SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED,
+  resolveSuperAdminSnapshotRefresh,
+} from "@/lib/superAdmin/lightweightMode";
 import {
   buildPriorOperatorActions,
   buildRuntimeDependencyStatus,
@@ -23,10 +29,13 @@ import {
   type OperatorActionContextSection,
 } from "@/lib/superAdmin/operatorSafety";
 import { formatDateTime, formatNumber, toBadgeVariant } from "@/lib/superAdmin/presentation";
-import type { AdminIncidentGroup } from "@/lib/superAdmin/types";
+import type {
+  AdminAdaptiveRoutingRecommendation,
+  AdminIncidentGroup,
+  AdminOperationalPrediction,
+} from "@/lib/superAdmin/types";
 
 const STALE_INCIDENT_MS = 24 * 60 * 60 * 1000;
-const AUTO_REFRESH_MS = 15_000;
 
 const resolveIncidentWorkflowState = (incident: AdminIncidentGroup) => {
   if (incident.unresolvedCount <= 0) {
@@ -46,14 +55,15 @@ const resolveIncidentWorkflowState = (incident: AdminIncidentGroup) => {
 
 const SuperAdminIncidents = () => {
   const { toast } = useToast();
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED);
+  const [activeTab, setActiveTab] = useState("groups");
   const [actionDialog, setActionDialog] = useState<OperatorActionDialogConfig | null>(null);
   const [search, setSearch] = useState("");
   const [severity, setSeverity] = useState("");
   const [resolutionNote, setResolutionNote] = useState("");
   const [assignmentEmail, setAssignmentEmail] = useState("");
   const [selectedIncident, setSelectedIncident] = useState<AdminIncidentGroup | null>(null);
-  const refetchIntervalMs = autoRefreshEnabled ? AUTO_REFRESH_MS : false;
+  const refetchIntervalMs = resolveSuperAdminSnapshotRefresh(autoRefreshEnabled);
 
   const groupsQuery = useIncidents({
     query: {
@@ -66,6 +76,7 @@ const SuperAdminIncidents = () => {
     refetchIntervalMs,
   });
   const snapshotsQuery = useIncidents({
+    enabled: activeTab === "snapshots",
     query: {
       page: 1,
       pageSize: 20,
@@ -75,9 +86,7 @@ const SuperAdminIncidents = () => {
     refetchIntervalMs,
   });
   const resolveIncident = useResolveIncident();
-  const analyticsQuery = useAnalytics("Patna", refetchIntervalMs);
   const securityQuery = useSecurity({ refetchIntervalMs });
-  const operationalIntelligence = analyticsQuery.data?.operationalIntelligence;
   const runtimeVisibility = securityQuery.data?.runtimeVisibility;
 
   const staleGroups = useMemo(
@@ -90,21 +99,8 @@ const SuperAdminIncidents = () => {
         : []),
     [groupsQuery.data],
   );
-  const selectedPrediction = useMemo(
-    () =>
-      operationalIntelligence?.predictions.find(
-        (prediction) =>
-          prediction.impactedEntityType === "incident" && prediction.impactedEntityId === selectedIncident?.incidentKey,
-      ) ?? null,
-    [operationalIntelligence?.predictions, selectedIncident?.incidentKey],
-  );
-  const selectedRoutingRecommendation = useMemo(
-    () =>
-      operationalIntelligence?.routingRecommendations.find(
-        (recommendation) => recommendation.incidentKey === selectedIncident?.incidentKey,
-      ) ?? null,
-    [operationalIntelligence?.routingRecommendations, selectedIncident?.incidentKey],
-  );
+  const selectedPrediction: AdminOperationalPrediction | null = null;
+  const selectedRoutingRecommendation: AdminAdaptiveRoutingRecommendation | null = null;
 
   const handleResolve = async (incidentKey: string, note?: string) => {
     try {
@@ -316,6 +312,16 @@ const SuperAdminIncidents = () => {
     });
   };
 
+  const handleRefresh = async () => {
+    const refreshes: Array<Promise<unknown>> = [groupsQuery.refetch(), securityQuery.refetch()];
+
+    if (activeTab === "snapshots") {
+      refreshes.push(snapshotsQuery.refetch());
+    }
+
+    await Promise.all(refreshes);
+  };
+
   return (
     <SuperAdminLayout>
       <div className="space-y-6">
@@ -326,6 +332,9 @@ const SuperAdminIncidents = () => {
                 <span className="text-muted-foreground">Auto-refresh</span>
                 <Switch checked={autoRefreshEnabled} onCheckedChange={setAutoRefreshEnabled} />
               </div>
+              <Button onClick={() => void handleRefresh()} variant="outline">
+                Refresh snapshot
+              </Button>
               <Button disabled={staleGroups.length === 0 || resolveIncident.isPending} onClick={handleAutoResolveStale} variant="outline">
                 Auto-resolve stale ({staleGroups.length})
               </Button>
@@ -333,6 +342,13 @@ const SuperAdminIncidents = () => {
           }
           description="Incident ownership, acknowledgement, escalation, note capture, linked traces, and retry-from-incident operations."
           title="Incidents"
+        />
+
+        <SuperAdminSnapshotNotice
+          description="Incident coordination snapshots refresh periodically while live attendance subscriptions stay isolated from admin troubleshooting traffic."
+          generatedAt={securityQuery.data?.generatedAt}
+          refreshIntervalMs={refetchIntervalMs}
+          title="Live governance monitoring temporarily reduced."
         />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -368,7 +384,7 @@ const SuperAdminIncidents = () => {
               />
             </div>
 
-            <Tabs defaultValue="groups">
+            <Tabs onValueChange={setActiveTab} value={activeTab}>
               <TabsList>
                 <TabsTrigger value="groups">Incident Groups</TabsTrigger>
                 <TabsTrigger value="snapshots">Metric Snapshots</TabsTrigger>
@@ -638,6 +654,13 @@ const SuperAdminIncidents = () => {
                         </p>
                       </div>
                     </div>
+                  </div>
+                ) : SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED ? (
+                  <div className="rounded-lg border border-border p-4">
+                    <p className="text-sm font-medium text-foreground">Adaptive guidance</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Predictive incident routing is paused in lightweight mode. Use manual operator review for escalations.
+                    </p>
                   </div>
                 ) : null}
 

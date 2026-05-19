@@ -8,11 +8,14 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAnalytics, useAutomationJobs, useControlPlane, useSecurity } from "@/hooks/superAdmin";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
+import { useAutomationJobs, useControlPlane, useSecurity } from "@/hooks/superAdmin";
+import {
+  SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED,
+  resolveSuperAdminSnapshotRefresh,
+} from "@/lib/superAdmin/lightweightMode";
 import { formatDateTime, formatNumber, formatPercent, toBadgeVariant } from "@/lib/superAdmin/presentation";
 import type { AdminRuntimeTraceEvent } from "@/lib/superAdmin/types";
-
-const AUTO_REFRESH_MS = 15_000;
 
 const matchesTraceSearch = (event: AdminRuntimeTraceEvent, search: string) => {
   const normalizedSearch = search.trim().toLowerCase();
@@ -39,14 +42,13 @@ const matchesTraceSearch = (event: AdminRuntimeTraceEvent, search: string) => {
 };
 
 const SuperAdminObservability = () => {
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED);
   const [search, setSearch] = useState("");
   const [selectedTrace, setSelectedTrace] = useState<AdminRuntimeTraceEvent | null>(null);
 
-  const refetchIntervalMs = autoRefreshEnabled ? AUTO_REFRESH_MS : false;
-  const analyticsQuery = useAnalytics("Patna", refetchIntervalMs);
+  const refetchIntervalMs = resolveSuperAdminSnapshotRefresh(autoRefreshEnabled);
   const securityQuery = useSecurity({ refetchIntervalMs });
-  const jobsQuery = useAutomationJobs({ refetchIntervalMs });
+  const jobsQuery = useAutomationJobs<"overview">({ refetchIntervalMs });
   const platformQuery = useControlPlane(refetchIntervalMs);
 
   const traceFeed = useMemo(
@@ -93,7 +95,7 @@ const SuperAdminObservability = () => {
     [search, securityQuery.data?.operatorTimeline],
   );
 
-  const runtime = analyticsQuery.data?.runtimeVisibility;
+  const runtime = securityQuery.data?.runtimeVisibility;
   const queueSummary = jobsQuery.data?.data.summary;
   const releaseGovernance = platformQuery.data?.releaseGovernance;
   const evolution = releaseGovernance?.evolution;
@@ -101,7 +103,6 @@ const SuperAdminObservability = () => {
 
   const handleRefresh = async () => {
     await Promise.all([
-      analyticsQuery.refetch(),
       securityQuery.refetch(),
       jobsQuery.refetch(),
       platformQuery.refetch(),
@@ -125,6 +126,13 @@ const SuperAdminObservability = () => {
           )}
           description="Live queue, request, payment, and operator activity state sourced directly from runtime metrics, audit logs, and event traces."
           title="Observability"
+        />
+
+        <SuperAdminSnapshotNotice
+          description="Realtime telemetry is paused for super-admin observability while attendance scans, presence, and auth continue to run live."
+          generatedAt={platformQuery.data?.generatedAt ?? securityQuery.data?.generatedAt}
+          refreshIntervalMs={refetchIntervalMs}
+          title="Realtime telemetry temporarily paused to preserve platform performance."
         />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">

@@ -30,6 +30,7 @@ import type {
   AdminJobQueueRow,
   AdminJobsListResponse,
   AdminJobsOverviewResponse,
+  AdminJobsScope,
   AdminJobWorkflowMutation,
   AdminLibrariesListResponse,
   AdminLibrariesWorkflowMutation,
@@ -67,8 +68,14 @@ export const adminClient = {
       timeoutMs: ADMIN_CONTROL_PLANE_TIMEOUT_MS,
     }),
 
-  getAutomationJobs: (query?: AdminListQuery & { scope?: "overview" | "jobs" }) =>
-    adminGet<AdminJobsOverviewResponse | AdminJobsListResponse>("/api/admin/jobs", { query }),
+  getAutomationJobs: <TScope extends AdminJobsScope>(
+    query?: AdminListQuery & { scope?: TScope },
+  ) =>
+    adminGet<
+      TScope extends "jobs"
+        ? AdminJobsListResponse
+        : AdminJobsOverviewResponse
+    >("/api/admin/jobs", { query }),
 
   getBilling: <TScope extends AdminBillingScope>(
     query?: AdminListQuery & { scope?: TScope },

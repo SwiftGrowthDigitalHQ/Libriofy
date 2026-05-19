@@ -2,11 +2,14 @@ import { useDeferredValue, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
 import { ControlPlaneCard, ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useAnalytics, useControlPlane } from "@/hooks/superAdmin";
+import { useControlPlane } from "@/hooks/superAdmin";
+import { SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED } from "@/lib/superAdmin/lightweightMode";
 import {
   formatInr,
   formatNumber,
@@ -14,6 +17,7 @@ import {
   formatPercent,
   toBadgeVariant,
 } from "@/lib/superAdmin/presentation";
+import type { AdminOperationalIntelligenceSnapshot } from "@/lib/superAdmin/types";
 
 const describeSystemStatus = (status?: string | null) => {
   if (status === "green") {
@@ -34,43 +38,42 @@ const describeSystemStatus = (status?: string | null) => {
 const SuperAdminAnalytics = () => {
   const [cityInput, setCityInput] = useState("");
   const deferredCity = useDeferredValue(cityInput.trim());
-  const analyticsQuery = useAnalytics({ city: deferredCity });
-  const platformQuery = useControlPlane({ enabled: analyticsQuery.isError });
+  const platformQuery = useControlPlane();
 
-  const analytics = analyticsQuery.data;
   const platform = platformQuery.data;
-  const overview = analytics?.overview ?? platform?.analytics;
-  const cityMetrics = analytics?.cityMetrics ?? [];
-  const healthCenter =
-    analytics?.healthCenter && analytics.healthCenter.length > 0
-      ? analytics.healthCenter
-      : platform?.statusSignals ?? [];
-  const governanceAnalytics = analytics?.governanceAnalytics;
-  const incidentCoordination = analytics?.incidentCoordination;
-  const operationalIntelligence = analytics?.operationalIntelligence;
-  const systemStatus = analytics?.systemStatus ?? platform?.systemStatus;
-  const security = analytics?.security ?? platform?.security;
-  const analyticsError = analyticsQuery.error;
-  const revenueRows = cityMetrics.length ? cityMetrics : platform?.analytics.revenueByCity ?? [];
+  const overview = platform?.analytics;
+  const healthCenter = platform?.statusSignals ?? [];
+  const operationalIntelligence: AdminOperationalIntelligenceSnapshot | null = null;
+  const systemStatus = platform?.systemStatus;
+  const security = platform?.security;
+  const controlPlaneError = platformQuery.error;
+  const revenueRows = (platform?.analytics.revenueByCity ?? []).filter((point) => {
+    const normalizedSearch = deferredCity.toLowerCase();
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    return [point.city, point.state].some((value) => value.toLowerCase().includes(normalizedSearch));
+  });
   const systemStatusLabel = describeSystemStatus(systemStatus);
   const dailyActiveLibrariesValue = overview
     ? formatNumber(overview.dailyActiveLibraries)
-    : analyticsQuery.isLoading
+    : platformQuery.isLoading
       ? "Syncing"
       : "Telemetry reconnecting";
   const studentsTodayValue = overview
     ? formatNumber(overview.activeStudentsToday)
-    : analyticsQuery.isLoading
+    : platformQuery.isLoading
       ? "Syncing"
       : "Telemetry reconnecting";
   const conversionValue = overview
     ? formatPercent(overview.conversionRate, 2)
-    : analyticsQuery.isLoading
+    : platformQuery.isLoading
       ? "Syncing"
       : "Telemetry reconnecting";
   const securityFailedLoginsValue = security
     ? formatNumber(security.failedLoginAttempts24h)
-    : analyticsQuery.isLoading
+    : platformQuery.isLoading
       ? "Syncing"
       : "Telemetry reconnecting";
 
@@ -78,16 +81,27 @@ const SuperAdminAnalytics = () => {
     <SuperAdminLayout>
       <div className="space-y-6">
         <ControlPlanePageHeader
+          actions={(
+            <Button onClick={() => void platformQuery.refetch()} variant="outline">
+              Refresh snapshot
+            </Button>
+          )}
           description="Platform-wide growth, monetization, delivery, and health analytics through the centralized control-plane API."
           title="Analytics"
         />
 
-        {analyticsError ? (
+        <SuperAdminSnapshotNotice
+          description="Platform-wide analytics are served from cached control-plane snapshots so attendance and auth remain protected from admin analytics fanout."
+          generatedAt={platform?.generatedAt}
+          title="Operational analytics running in lightweight mode."
+        />
+
+        {controlPlaneError ? (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>Analytics aggregation is temporarily degraded</AlertTitle>
             <AlertDescription>
-              {analyticsError.message}
+              {controlPlaneError.message}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -173,7 +187,7 @@ const SuperAdminAnalytics = () => {
                       <TableRow>
                         <TableCell className="py-8 text-sm text-muted-foreground" colSpan={5}>
                           {deferredCity
-                            ? `No live revenue records match "${deferredCity}" yet.`
+                            ? `No revenue snapshot rows match "${deferredCity}" yet.`
                             : "Revenue analytics will appear here after the first approved transactions land."}
                         </TableCell>
                       </TableRow>
@@ -208,21 +222,15 @@ const SuperAdminAnalytics = () => {
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <ControlPlaneCard title="Communication">
-            <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">Email success rate</p>
-              <p className="text-2xl font-bold font-display text-foreground">{formatPercent(analytics?.communication.emailSuccessRate ?? 0, 2)}</p>
-              <p className="text-muted-foreground">Queued notifications: {formatNumber(analytics?.communication.queuedNotifications ?? 0)}</p>
-              <p className="text-muted-foreground">Failed notifications: {formatNumber(analytics?.communication.failedNotifications ?? 0)}</p>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Realtime telemetry temporarily paused to preserve platform performance. Delivery analytics refresh on demand.
+            </p>
           </ControlPlaneCard>
 
           <ControlPlaneCard title="Billing pulse">
-            <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">GST rate</p>
-              <p className="text-2xl font-bold font-display text-foreground">{formatPercent(analytics?.billing.gstRatePercent ?? 0, 0)}</p>
-              <p className="text-muted-foreground">Invoices: {formatNumber(analytics?.billing.invoices ?? 0)}</p>
-              <p className="text-muted-foreground">Refunds: {formatNumber(analytics?.billing.refunds ?? 0)}</p>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Billing analytics are in lightweight mode. Use the billing console to refresh a current snapshot only when needed.
+            </p>
           </ControlPlaneCard>
 
           <ControlPlaneCard title="Security pulse">
@@ -247,47 +255,26 @@ const SuperAdminAnalytics = () => {
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <ControlPlaneCard title="Governance flow">
-            <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">Average approval latency</p>
-              <p className="text-2xl font-bold font-display text-foreground">
-                {formatNumber(governanceAnalytics?.approvalLatencyMinutes.average ?? 0)} min
-              </p>
-              <p className="text-muted-foreground">
-                P95 latency: {formatNumber(governanceAnalytics?.approvalLatencyMinutes.p95 ?? 0)} min
-              </p>
-              <p className="text-muted-foreground">
-                Delegation utilization: {formatPercent(governanceAnalytics?.delegationUtilizationRate ?? 0, 2)}
-              </p>
-              <p className="text-muted-foreground">
-                Emergency override frequency: {formatPercent(governanceAnalytics?.emergencyOverrideFrequency ?? 0, 2)}
-              </p>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Live governance monitoring temporarily reduced. Manual refresh is available whenever an operator needs a fresh audit snapshot.
+            </p>
           </ControlPlaneCard>
 
           <ControlPlaneCard title="Operational coordination">
-            <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">
-                Cross-team escalations: {formatNumber(incidentCoordination?.crossTeamEscalations ?? 0)}
-              </p>
-              <p className="text-muted-foreground">
-                After-hours escalations: {formatNumber(incidentCoordination?.afterHoursEscalations ?? 0)}
-              </p>
-              <p className="text-muted-foreground">
-                Regional failovers: {formatNumber(incidentCoordination?.regionalFailovers ?? 0)}
-              </p>
-              <p className="text-muted-foreground">
-                Unresolved ownership: {formatNumber(incidentCoordination?.unresolvedOwnership ?? 0)}
-              </p>
-              <p className="text-muted-foreground">
-                Delegated remediations: {formatNumber(incidentCoordination?.delegatedRemediations ?? 0)}
-              </p>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Cross-team operational coordination widgets are paused in lightweight mode to prevent platform-wide invalidation storms.
+            </p>
           </ControlPlaneCard>
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.25fr_1fr]">
           <ControlPlaneCard title="Operational intelligence">
             <div className="space-y-3">
+              {SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED ? (
+                <p className="text-sm text-muted-foreground">
+                  Predictive analytics are paused here so cached attendance and auth workloads keep priority on Nano compute.
+                </p>
+              ) : null}
               {(operationalIntelligence?.predictions ?? []).slice(0, 5).map((prediction) => (
                 <div key={prediction.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-3">
@@ -307,7 +294,7 @@ const SuperAdminAnalytics = () => {
                   </p>
                 </div>
               ))}
-              {(operationalIntelligence?.predictions ?? []).length === 0 ? (
+              {!SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED && (operationalIntelligence?.predictions ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No predictive risks are elevated right now.</p>
               ) : null}
             </div>
@@ -315,6 +302,11 @@ const SuperAdminAnalytics = () => {
 
           <ControlPlaneCard title="Governance health">
             <div className="space-y-3">
+              {SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED ? (
+                <p className="text-sm text-muted-foreground">
+                  Governance health scoring is temporarily reduced. Snapshot-based controls remain available in Settings.
+                </p>
+              ) : null}
               {(operationalIntelligence?.governanceHealth ?? []).map((score) => (
                 <div key={score.key} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-3">
@@ -332,6 +324,11 @@ const SuperAdminAnalytics = () => {
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <ControlPlaneCard title="Adaptive routing">
             <div className="space-y-3 text-sm">
+              {SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED ? (
+                <p className="text-muted-foreground">
+                  Adaptive routing is paused. Incident responders should use manual review until full analytics are re-enabled.
+                </p>
+              ) : null}
               {(operationalIntelligence?.routingRecommendations ?? []).slice(0, 4).map((recommendation) => (
                 <div key={recommendation.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-3">
@@ -353,7 +350,7 @@ const SuperAdminAnalytics = () => {
                   </div>
                 </div>
               ))}
-              {(operationalIntelligence?.routingRecommendations ?? []).length === 0 ? (
+              {!SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED && (operationalIntelligence?.routingRecommendations ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No adaptive reroutes are needed right now.</p>
               ) : null}
             </div>
@@ -361,6 +358,11 @@ const SuperAdminAnalytics = () => {
 
           <ControlPlaneCard title="Simulation readiness">
             <div className="space-y-3 text-sm">
+              {SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED ? (
+                <p className="text-muted-foreground">
+                  Release and failover simulations are paused on this dashboard while the platform recovers Nano headroom.
+                </p>
+              ) : null}
               {(operationalIntelligence?.simulations ?? []).map((simulation) => (
                 <div key={simulation.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-3">

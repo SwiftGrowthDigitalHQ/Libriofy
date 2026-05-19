@@ -3,8 +3,10 @@ import { AlertTriangle, BarChart3, Building2, Flag, ShieldCheck, Zap } from "luc
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import StatsCard from "@/components/dashboard/StatsCard";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
 import { useControlPlane } from "@/hooks/superAdmin";
@@ -122,8 +124,19 @@ const SuperAdminDashboard = () => {
     <SuperAdminLayout>
       <div className="space-y-6">
         <ControlPlanePageHeader
+          actions={(
+            <Button onClick={() => void platformQuery.refetch()} variant="outline">
+              Refresh snapshot
+            </Button>
+          )}
           description="Infrastructure-grade visibility into platform growth, reliability, and control-plane pressure."
           title="Control Plane Dashboard"
+        />
+
+        <SuperAdminSnapshotNotice
+          description="Platform health snapshots refresh on demand while attendance scans, student presence, and auth continue to operate in realtime."
+          generatedAt={platform?.generatedAt}
+          title="Platform health snapshots refresh periodically."
         />
 
         {controlPlaneError && !platform ? (

@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type {
-  AdminLibraryCenterSummary,
   AdminLibrariesListResponse,
   AdminLibrariesWorkflowMutation,
   AdminListQuery,
@@ -10,6 +9,11 @@ import type {
   AdminUserWorkflowMutation,
 } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
+import {
+  SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED,
+  SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
+} from "@/lib/superAdmin/lightweightMode";
+import type { AdminLibraryCenterSummary } from "@/lib/superAdmin/types";
 import { supabase } from "@/integrations/supabase/client";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
@@ -129,18 +133,18 @@ export const useLibraries = ({
     enabled,
     queryFn: () => adminClient.getLibraries(query),
     queryKey: ["admin-libraries", query ?? {}],
-    staleTime: 20_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
   const usersQuery = useAdminQuery({
     enabled: enabled && enableUsers,
     queryFn: () => adminClient.getUsers(userQuery),
     queryKey: ["admin-users", userQuery ?? {}],
-    staleTime: 20_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED) {
       return;
     }
 

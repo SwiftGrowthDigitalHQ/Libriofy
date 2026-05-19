@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import SuperAdminLayout from "@/components/dashboard/SuperAdminLayout";
 import { ControlPlaneCard, ControlPlanePageHeader } from "@/components/superAdmin/ControlPlanePrimitives";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,7 +31,7 @@ const SuperAdminRevenue = () => {
   const [defaultCommissionPercent, setDefaultCommissionPercent] = useState("");
 
   const platformQuery = useControlPlane();
-  const overviewQuery = useRevenue();
+  const overviewQuery = useRevenue<"overview">();
   const payoutsQuery = useRevenue({ enabled: activeTab === "payouts", query: { page: 1, pageSize: 8, scope: "payouts", search } });
   const adjustmentsQuery = useRevenue({ enabled: activeTab === "adjustments", query: { page: 1, pageSize: 8, scope: "adjustments", search } });
   const commissionsQuery = useRevenue({ enabled: activeTab === "commissions", query: { page: 1, pageSize: 8, scope: "commissions", search } });
@@ -38,7 +39,7 @@ const SuperAdminRevenue = () => {
   const plansQuery = useRevenue({ enabled: activeTab === "plans", query: { page: 1, pageSize: 8, scope: "plans", search } });
   const { approveOrRejectPayout, saveCommission, saveRevenueAdjustment } = useRevenueMutations();
 
-  const overview = "data" in (overviewQuery.data ?? {}) ? overviewQuery.data.data : overviewQuery.data;
+  const overview = overviewQuery.data?.data;
   const pageError = platformQuery.error ?? overviewQuery.error;
   const hasAuthFailure = readErrorStatus(pageError) === 401;
   const isSummaryLoading = platformQuery.isLoading || overviewQuery.isLoading;
@@ -69,6 +70,24 @@ const SuperAdminRevenue = () => {
       revenue,
     }));
   }, [platformQuery.data?.analytics.series]);
+
+  const handleRefresh = async () => {
+    const refreshes: Array<Promise<unknown>> = [platformQuery.refetch(), overviewQuery.refetch()];
+
+    if (activeTab === "payouts") {
+      refreshes.push(payoutsQuery.refetch());
+    } else if (activeTab === "adjustments") {
+      refreshes.push(adjustmentsQuery.refetch());
+    } else if (activeTab === "commissions") {
+      refreshes.push(commissionsQuery.refetch());
+    } else if (activeTab === "payments") {
+      refreshes.push(paymentsQuery.refetch());
+    } else if (activeTab === "plans") {
+      refreshes.push(plansQuery.refetch());
+    }
+
+    await Promise.all(refreshes);
+  };
 
   const handleAdjustmentSave = async () => {
     const amountDelta = Number(adjustmentAmount);
@@ -131,8 +150,19 @@ const SuperAdminRevenue = () => {
     <SuperAdminLayout>
       <div className="space-y-6">
         <ControlPlanePageHeader
+          actions={(
+            <Button onClick={() => void handleRefresh()} variant="outline">
+              Refresh snapshot
+            </Button>
+          )}
           description="Centralized revenue controls for payouts, commissions, adjustments, and platform earnings."
           title="Revenue"
+        />
+
+        <SuperAdminSnapshotNotice
+          description="Revenue dashboards now use cached snapshots so platform-wide payment analytics stop competing with attendance and auth workloads."
+          generatedAt={platformQuery.data?.generatedAt ?? overview?.generatedAt}
+          title="Operational analytics running in lightweight mode."
         />
 
         {pageError && !overview ? (

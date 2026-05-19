@@ -93,6 +93,7 @@ export type AdminPaginatedItems<T> = {
 
 export type AdminListQuery = {
   channel?: string;
+  city?: string;
   format?: "json" | "csv" | "pdf";
   invoiceId?: string;
   page?: number;

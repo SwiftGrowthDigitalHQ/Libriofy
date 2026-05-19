@@ -1,4 +1,5 @@
 import { adminClient } from "@/lib/superAdmin/client";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useControlPlaneRealtime } from "./useControlPlaneRealtime";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -10,17 +11,17 @@ type UseControlPlaneOptions = {
 export const useControlPlane = (
   options: UseControlPlaneOptions | number | false = {},
 ) => {
-  const normalizedOptions =
-    typeof options === "object" && options !== null
-      ? options
-      : { refetchIntervalMs: options };
+  const normalizedOptions: UseControlPlaneOptions =
+    typeof options === "number" || options === false
+      ? { refetchIntervalMs: options }
+      : options;
   const { enabled = true, refetchIntervalMs = false } = normalizedOptions;
   const query = useAdminQuery({
     enabled,
     queryFn: () => adminClient.getPlatform(),
     queryKey: ["admin-platform"],
     refetchInterval: refetchIntervalMs,
-    staleTime: 20_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
   useControlPlaneRealtime({

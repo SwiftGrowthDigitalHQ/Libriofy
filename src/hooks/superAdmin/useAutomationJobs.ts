@@ -1,5 +1,6 @@
 import type { AdminListQuery, AdminJobsScope } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -19,7 +20,7 @@ export const useAutomationJobs = <TScope extends AdminJobsScope = "overview">({
     queryFn: () => adminClient.getAutomationJobs(query),
     queryKey: ["admin-jobs", query?.scope ?? "overview", query ?? {}],
     refetchInterval: refetchIntervalMs,
-    staleTime: 15_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
 export const useAutomationJobMutation = () =>

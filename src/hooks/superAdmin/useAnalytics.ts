@@ -1,4 +1,5 @@
 import { adminClient } from "@/lib/superAdmin/client";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useControlPlaneRealtime } from "./useControlPlaneRealtime";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -29,7 +30,7 @@ export const useAnalytics = (
     queryFn: () => adminClient.getAnalytics(city ? { city } : undefined),
     queryKey: ["admin-analytics", city],
     refetchInterval: refetchIntervalMs,
-    staleTime: 20_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
   useControlPlaneRealtime({

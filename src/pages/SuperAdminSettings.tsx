@@ -8,9 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
 import { useToast } from "@/hooks/use-toast";
 import { useAdminMutation, useControlPlane, useSecurity, useSecurityMutation } from "@/hooks/superAdmin";
 import { adminClient } from "@/lib/superAdmin/client";
+import {
+  SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED,
+  resolveSuperAdminSnapshotRefresh,
+} from "@/lib/superAdmin/lightweightMode";
 import {
   buildPriorOperatorActions,
   buildRuntimeDependencyStatus,
@@ -81,8 +86,6 @@ const GOVERNANCE_DOMAIN_OPTIONS: Array<{ label: string; value: AdminOperatorGove
   { label: "Emergency", value: "emergency" },
   { label: "Platform", value: "platform" },
 ];
-
-const AUTO_REFRESH_MS = 30_000;
 
 const findSettingValue = (settings: Array<{ key: string; value: unknown }>, key: string) =>
   settings.find((setting) => setting.key === key)?.value;
@@ -226,7 +229,7 @@ const SettingsSelect = ({
 
 const SuperAdminSettings = () => {
   const { toast } = useToast();
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED);
   const [actionDialog, setActionDialog] = useState<OperatorActionDialogConfig | null>(null);
   const [governanceSearch, setGovernanceSearch] = useState("");
   const [approvalSearch, setApprovalSearch] = useState("");
@@ -254,7 +257,7 @@ const SuperAdminSettings = () => {
     userId: "",
     workloadCapacity: "",
   });
-  const refetchIntervalMs = autoRefreshEnabled ? AUTO_REFRESH_MS : false;
+  const refetchIntervalMs = resolveSuperAdminSnapshotRefresh(autoRefreshEnabled);
   const platformQuery = useControlPlane(refetchIntervalMs);
   const securityQuery = useSecurity({ refetchIntervalMs });
   const saveSecurity = useSecurityMutation();
@@ -819,6 +822,10 @@ const SuperAdminSettings = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    await Promise.all([platformQuery.refetch(), securityQuery.refetch()]);
+  };
+
   const [activeSettingsTab, setActiveSettingsTab] = useState<"platform" | "automation" | "rbac" | "governance">("platform");
 
   return (
@@ -826,13 +833,25 @@ const SuperAdminSettings = () => {
       <div className="space-y-6">
         <ControlPlanePageHeader
           actions={(
-            <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
-              <span className="text-muted-foreground">Auto-refresh</span>
-              <Switch checked={autoRefreshEnabled} onCheckedChange={setAutoRefreshEnabled} />
-            </div>
+            <>
+              <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Auto-refresh</span>
+                <Switch checked={autoRefreshEnabled} onCheckedChange={setAutoRefreshEnabled} />
+              </div>
+              <Button onClick={() => void handleRefresh()} variant="outline">
+                Refresh snapshot
+              </Button>
+            </>
           )}
           description="Auditable runtime governance, enterprise RBAC, approval workflows, temporary elevation, and IP protections in one control-plane console."
           title="Settings"
+        />
+
+        <SuperAdminSnapshotNotice
+          description="Governance and platform-control views are intentionally delayed so operator settings no longer create cross-dashboard invalidation storms."
+          generatedAt={platformQuery.data?.generatedAt ?? securityQuery.data?.generatedAt}
+          refreshIntervalMs={refetchIntervalMs}
+          title="Live governance monitoring temporarily reduced."
         />
 
         {/* Tab Navigation */}

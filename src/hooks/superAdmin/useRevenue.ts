@@ -1,5 +1,6 @@
 import type { AdminListQuery, AdminRevenueScope } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -16,7 +17,7 @@ export const useRevenue = <TScope extends AdminRevenueScope = "overview">({
     enabled,
     queryFn: () => adminClient.getRevenue<TScope>(query),
     queryKey: ["admin-revenue", query?.scope ?? "overview", query ?? {}],
-    staleTime: 20_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
 export const useRevenueMutations = () => ({

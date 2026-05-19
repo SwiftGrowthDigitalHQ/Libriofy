@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED } from "@/lib/superAdmin/lightweightMode";
 
 const CONTROL_PLANE_REALTIME_TABLES = [
   "attendance_logs",
@@ -30,7 +31,7 @@ export const useControlPlaneRealtime = ({
   const invalidateQueryKeys = useMemo(() => queryKeys, [subscriptionKey]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED) {
       return;
     }
 

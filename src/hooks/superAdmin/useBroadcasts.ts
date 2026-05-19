@@ -1,5 +1,6 @@
 import type { AdminBroadcastScope, AdminListQuery } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -19,7 +20,7 @@ export const useBroadcasts = <TScope extends AdminBroadcastScope = "overview">({
     queryFn: () => adminClient.getBroadcasts<TScope>(query),
     queryKey: ["admin-broadcasts", query?.scope ?? "overview", query ?? {}],
     refetchInterval: refetchIntervalMs,
-    staleTime: 20_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
 export const useBroadcastMutations = () => ({

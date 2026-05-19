@@ -11,8 +11,13 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
 import { useToast } from "@/hooks/use-toast";
-import { useAnalytics, useBilling, useBillingDownload, useBillingMutations, useRevenue, useSecurity } from "@/hooks/superAdmin";
+import { useBilling, useBillingDownload, useBillingMutations, useRevenue, useSecurity } from "@/hooks/superAdmin";
+import {
+  SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED,
+  resolveSuperAdminSnapshotRefresh,
+} from "@/lib/superAdmin/lightweightMode";
 import {
   buildPriorOperatorActions,
   buildRuntimeDependencyStatus,
@@ -26,11 +31,10 @@ import {
 import { formatDateTime, formatInr, formatNumber, saveBlob, toBadgeVariant } from "@/lib/superAdmin/presentation";
 import type { AdminBillingPaymentRow } from "@/lib/superAdmin/types";
 
-const AUTO_REFRESH_MS = 15_000;
-
 const SuperAdminBilling = () => {
   const { toast } = useToast();
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED);
+  const [activeTab, setActiveTab] = useState("invoices");
   const [actionDialog, setActionDialog] = useState<OperatorActionDialogConfig | null>(null);
   const [search, setSearch] = useState("");
   const [selectedPayment, setSelectedPayment] = useState<AdminBillingPaymentRow | null>(null);
@@ -51,19 +55,39 @@ const SuperAdminBilling = () => {
     sortOrder: "100",
   });
 
-  const refetchIntervalMs = autoRefreshEnabled ? AUTO_REFRESH_MS : false;
+  const refetchIntervalMs = resolveSuperAdminSnapshotRefresh(autoRefreshEnabled);
 
-  const analyticsQuery = useAnalytics("Patna", refetchIntervalMs);
-  const invoicesQuery = useBilling({ query: { page: 1, pageSize: 10, scope: "invoices", search }, refetchIntervalMs });
-  const refundsQuery = useBilling({ query: { page: 1, pageSize: 10, scope: "refunds", search }, refetchIntervalMs });
-  const paymentsQuery = useBilling({ query: { page: 1, pageSize: 25, scope: "payments", search }, refetchIntervalMs });
-  const plansQuery = useRevenue({ query: { page: 1, pageSize: 10, scope: "plans", search } });
+  const billingOverviewQuery = useBilling({
+    query: { page: 1, pageSize: 1, scope: "invoices" },
+    refetchIntervalMs,
+  });
+  const invoicesQuery = useBilling({
+    enabled: activeTab === "invoices",
+    query: { page: 1, pageSize: 10, scope: "invoices", search },
+    refetchIntervalMs,
+  });
+  const refundsQuery = useBilling({
+    enabled: activeTab === "refunds",
+    query: { page: 1, pageSize: 10, scope: "refunds", search },
+    refetchIntervalMs,
+  });
+  const paymentsQuery = useBilling({
+    enabled: activeTab === "payments",
+    query: { page: 1, pageSize: 25, scope: "payments", search },
+    refetchIntervalMs,
+  });
+  const plansQuery = useRevenue({
+    enabled: activeTab === "plans",
+    query: { page: 1, pageSize: 10, scope: "plans", search },
+  });
   const securityQuery = useSecurity({ refetchIntervalMs });
   const { createInvoice, deletePlan, processRefund, upsertPlan } = useBillingMutations();
   const downloadBilling = useBillingDownload();
-  const paymentOperations = paymentsQuery.data?.operations;
-  const runtimeVisibility = analyticsQuery.data?.runtimeVisibility ?? securityQuery.data?.runtimeVisibility;
-  const runtimeGovernance = analyticsQuery.data?.governance;
+  const paymentOperations = billingOverviewQuery.data?.operations;
+  const runtimeVisibility = securityQuery.data?.runtimeVisibility;
+  const runtimeGovernance = paymentOperations
+    ? { billingMutationsEnabled: paymentOperations.billingMutationsEnabled }
+    : null;
 
   const handleInvoiceCreate = async () => {
     const subtotal = Number(invoiceSubtotal);
@@ -300,6 +324,25 @@ const SuperAdminBilling = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    const refreshes: Array<Promise<unknown>> = [
+      billingOverviewQuery.refetch(),
+      securityQuery.refetch(),
+    ];
+
+    if (activeTab === "invoices") {
+      refreshes.push(invoicesQuery.refetch());
+    } else if (activeTab === "refunds") {
+      refreshes.push(refundsQuery.refetch());
+    } else if (activeTab === "payments") {
+      refreshes.push(paymentsQuery.refetch());
+    } else if (activeTab === "plans") {
+      refreshes.push(plansQuery.refetch());
+    }
+
+    await Promise.all(refreshes);
+  };
+
   return (
     <SuperAdminLayout>
       <div className="space-y-6">
@@ -310,6 +353,9 @@ const SuperAdminBilling = () => {
                 <span className="text-muted-foreground">Auto-refresh</span>
                 <Switch checked={autoRefreshEnabled} onCheckedChange={setAutoRefreshEnabled} />
               </div>
+              <Button onClick={() => void handleRefresh()} variant="outline">
+                Refresh snapshot
+              </Button>
               <Button onClick={() => handleDownload("csv")} variant="outline">
                 Export payments CSV
               </Button>
@@ -317,6 +363,13 @@ const SuperAdminBilling = () => {
           }
           description="Operational billing workflows, duplicate detection, reconciliation state, retry visibility, and payment trace inspection."
           title="Billing"
+        />
+
+        <SuperAdminSnapshotNotice
+          description="Billing telemetry is running in cached snapshot mode so refunds, invoices, and reconciliation views stop hammering Supabase between operator actions."
+          generatedAt={billingOverviewQuery.data?.generatedAt ?? securityQuery.data?.generatedAt}
+          refreshIntervalMs={refetchIntervalMs}
+          title="Operational analytics running in lightweight mode."
         />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
@@ -452,7 +505,7 @@ const SuperAdminBilling = () => {
                 value={search}
               />
 
-              <Tabs defaultValue="invoices">
+              <Tabs onValueChange={setActiveTab} value={activeTab}>
                 <TabsList>
                   <TabsTrigger value="invoices">Invoices</TabsTrigger>
                   <TabsTrigger value="refunds">Refunds</TabsTrigger>

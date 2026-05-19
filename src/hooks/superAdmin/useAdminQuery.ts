@@ -1,4 +1,5 @@
 import { useQuery, type QueryKey, type UseQueryOptions } from "@tanstack/react-query";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 
 type AdminQueryOptions<TData> = Omit<
   UseQueryOptions<TData, Error, TData, QueryKey>,
@@ -9,7 +10,7 @@ type AdminQueryOptions<TData> = Omit<
 };
 
 export const useAdminQuery = <TData>({
-  staleTime = 30_000,
+  staleTime = SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   ...options
 }: AdminQueryOptions<TData>) =>
   useQuery<TData, Error, TData, QueryKey>({

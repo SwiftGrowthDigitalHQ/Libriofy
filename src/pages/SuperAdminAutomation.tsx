@@ -10,7 +10,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { useAnalytics, useAutomationJobMutation, useAutomationJobs, useSecurity } from "@/hooks/superAdmin";
+import { SuperAdminSnapshotNotice } from "@/components/superAdmin/SuperAdminSnapshotNotice";
+import { useAutomationJobMutation, useAutomationJobs, useSecurity } from "@/hooks/superAdmin";
+import {
+  SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED,
+  SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED,
+  resolveSuperAdminSnapshotRefresh,
+} from "@/lib/superAdmin/lightweightMode";
 import {
   buildPriorOperatorActions,
   buildRuntimeDependencyStatus,
@@ -25,11 +31,10 @@ import { formatDateTime, formatNumber, toBadgeVariant } from "@/lib/superAdmin/p
 import type {
   AdminDeadLetterRow,
   AdminJobQueueRow,
+  AdminOperationalIntelligenceSnapshot,
   AdminOperatorActionPreview,
   AdminRuntimeTraceEvent,
 } from "@/lib/superAdmin/types";
-
-const AUTO_REFRESH_MS = 15_000;
 
 const buildRelatedIncidentPreview = (
   traceFeed: AdminRuntimeTraceEvent[] | undefined,
@@ -115,21 +120,22 @@ const buildQueueContextSections = ({
 
 const SuperAdminAutomation = () => {
   const { toast } = useToast();
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(SUPER_ADMIN_DEFAULT_AUTO_REFRESH_ENABLED);
   const [actionDialog, setActionDialog] = useState<OperatorActionDialogConfig | null>(null);
   const [jobType, setJobType] = useState("inactive_library_alert");
   const [search, setSearch] = useState("");
   const [selectedJob, setSelectedJob] = useState<AdminJobQueueRow | null>(null);
   const [selectedDeadLetter, setSelectedDeadLetter] = useState<AdminDeadLetterRow | null>(null);
 
-  const refetchIntervalMs = autoRefreshEnabled ? AUTO_REFRESH_MS : false;
-  const analyticsQuery = useAnalytics("Patna", refetchIntervalMs);
-  const overviewQuery = useAutomationJobs({ refetchIntervalMs });
+  const refetchIntervalMs = resolveSuperAdminSnapshotRefresh(autoRefreshEnabled);
+  const overviewQuery = useAutomationJobs<"overview">({ refetchIntervalMs });
   const jobMutation = useAutomationJobMutation();
   const securityQuery = useSecurity({ refetchIntervalMs });
-  const operationalIntelligence = analyticsQuery.data?.operationalIntelligence;
-  const runtimeVisibility = analyticsQuery.data?.runtimeVisibility ?? securityQuery.data?.runtimeVisibility;
-  const runtimeGovernance = analyticsQuery.data?.governance;
+  const operationalIntelligence: AdminOperationalIntelligenceSnapshot | null = null;
+  const runtimeVisibility = securityQuery.data?.runtimeVisibility;
+  const runtimeGovernance = {
+    queueProcessingEnabled: !(overviewQuery.data?.data.summary.paused ?? false),
+  };
 
   const filteredJobs = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -493,6 +499,10 @@ const SuperAdminAutomation = () => {
     });
   };
 
+  const handleRefresh = async () => {
+    await Promise.all([overviewQuery.refetch(), securityQuery.refetch()]);
+  };
+
   return (
     <SuperAdminLayout>
       <div className="space-y-6">
@@ -503,6 +513,9 @@ const SuperAdminAutomation = () => {
                 <span className="text-muted-foreground">Auto-refresh</span>
                 <Switch checked={autoRefreshEnabled} onCheckedChange={setAutoRefreshEnabled} />
               </div>
+              <Button onClick={() => void handleRefresh()} variant="outline">
+                Refresh snapshot
+              </Button>
               <Button onClick={openRunDueDialog} variant="outline">
                 Run due jobs
               </Button>
@@ -510,6 +523,13 @@ const SuperAdminAutomation = () => {
           )}
           description="Operator controls for live queue inspection, claim ownership review, retries, dead-letter replay, and safe cancellation."
           title="Automation"
+        />
+
+        <SuperAdminSnapshotNotice
+          description="Queue analytics and recommendation engines are paused on the admin surface while attendance scanning and active session events remain realtime."
+          generatedAt={overviewQuery.data?.data.generatedAt ?? securityQuery.data?.generatedAt}
+          refreshIntervalMs={refetchIntervalMs}
+          title="Operational analytics running in lightweight mode."
         />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-6">
@@ -551,6 +571,11 @@ const SuperAdminAutomation = () => {
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <ControlPlaneCard title="Remediation planner">
             <div className="space-y-3 text-sm">
+              {SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED ? (
+                <p className="text-muted-foreground">
+                  Remediation planning snapshots are paused on this dashboard to reduce control-plane load.
+                </p>
+              ) : null}
               {(operationalIntelligence?.remediationPlans ?? []).slice(0, 4).map((plan) => (
                 <div key={plan.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-3">
@@ -566,7 +591,7 @@ const SuperAdminAutomation = () => {
                   <p className="mt-1 text-xs text-muted-foreground">Rollback: {plan.rollbackSummary}</p>
                 </div>
               ))}
-              {(operationalIntelligence?.remediationPlans ?? []).length === 0 ? (
+              {!SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED && (operationalIntelligence?.remediationPlans ?? []).length === 0 ? (
                 <p className="text-muted-foreground">No remediation plans are elevated right now.</p>
               ) : null}
             </div>
@@ -574,6 +599,11 @@ const SuperAdminAutomation = () => {
 
           <ControlPlaneCard title="Recommendation engine">
             <div className="space-y-3 text-sm">
+              {SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED ? (
+                <p className="text-muted-foreground">
+                  Recommendation synthesis is temporarily reduced. Refresh manually when operator review is needed.
+                </p>
+              ) : null}
               {(operationalIntelligence?.recommendations ?? []).map((recommendation) => (
                 <div key={recommendation.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-3">
@@ -584,7 +614,7 @@ const SuperAdminAutomation = () => {
                   <p className="mt-2 text-xs text-foreground">{recommendation.primaryAction}</p>
                 </div>
               ))}
-              {(operationalIntelligence?.recommendations ?? []).length === 0 ? (
+              {!SUPER_ADMIN_LIGHTWEIGHT_MODE_ENABLED && (operationalIntelligence?.recommendations ?? []).length === 0 ? (
                 <p className="text-muted-foreground">No workload-aware recommendations are pending.</p>
               ) : null}
             </div>

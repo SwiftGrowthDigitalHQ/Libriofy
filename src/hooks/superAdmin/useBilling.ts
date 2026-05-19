@@ -1,5 +1,6 @@
 import type { AdminBillingScope, AdminDownloadsMutation, AdminListQuery } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
+import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -19,7 +20,7 @@ export const useBilling = <TScope extends AdminBillingScope = "invoices">({
     queryFn: () => adminClient.getBilling<TScope>(query),
     queryKey: ["admin-billing", query?.scope ?? "invoices", query ?? {}],
     refetchInterval: refetchIntervalMs,
-    staleTime: 20_000,
+    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
   });
 
 export const useBillingMutations = () => ({
