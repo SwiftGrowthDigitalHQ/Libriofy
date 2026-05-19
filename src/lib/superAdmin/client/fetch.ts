@@ -1,9 +1,14 @@
-import { toAdminApiError } from "./errors";
+import { AdminApiError, toAdminApiError } from "./errors";
 import { createAdminSearchParams } from "./pagination";
 import type { AdminApiPath, AdminApiResponse, AdminListQuery } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_RETRY_ATTEMPTS = 2;
+const OPAQUE_ABORT_MESSAGES = [
+  "signal is aborted without reason",
+  "the operation was aborted",
+  "this operation was aborted",
+];
 
 type AdminRequestOptions = {
   body?: unknown;
@@ -32,20 +37,59 @@ const parseRetryAfter = (value: string | null) => {
   return parsed;
 };
 
+const hasMeaningfulAbortMessage = (value: string | null | undefined) =>
+  Boolean(
+    value?.trim() &&
+      !OPAQUE_ABORT_MESSAGES.some((candidate) => value.toLowerCase().includes(candidate)),
+  );
+
+const normalizeAbortReason = (reason: unknown, fallbackMessage: string) => {
+  if (typeof DOMException !== "undefined" && reason instanceof DOMException) {
+    if (hasMeaningfulAbortMessage(reason.message)) {
+      return new Error(reason.message);
+    }
+
+    return new Error(fallbackMessage);
+  }
+
+  if (reason instanceof Error) {
+    if (hasMeaningfulAbortMessage(reason.message)) {
+      return reason;
+    }
+
+    return new Error(fallbackMessage);
+  }
+
+  if (typeof reason === "string" && hasMeaningfulAbortMessage(reason)) {
+    return new Error(reason.trim());
+  }
+
+  return new Error(fallbackMessage);
+};
+
 const buildTimeoutSignal = (timeoutMs: number, signal?: AbortSignal) => {
   const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  let didTimeout = false;
+  const upstreamAbortHandler = () =>
+    controller?.abort(
+      normalizeAbortReason(
+        signal?.reason,
+        "Admin request was cancelled before it completed.",
+      ),
+    );
   const timeoutId =
     controller && timeoutMs > 0
       ? window.setTimeout(() => {
-          controller.abort();
+          didTimeout = true;
+          controller.abort(new Error(`Admin request timed out after ${timeoutMs}ms.`));
         }, timeoutMs)
       : null;
 
   if (controller && signal) {
     if (signal.aborted) {
-      controller.abort(signal.reason);
+      upstreamAbortHandler();
     } else {
-      signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+      signal.addEventListener("abort", upstreamAbortHandler, { once: true });
     }
   }
 
@@ -54,7 +98,9 @@ const buildTimeoutSignal = (timeoutMs: number, signal?: AbortSignal) => {
       if (timeoutId !== null) {
         window.clearTimeout(timeoutId);
       }
+      signal?.removeEventListener("abort", upstreamAbortHandler);
     },
+    didTimeout: () => didTimeout,
     signal: controller?.signal ?? signal,
   };
 };
@@ -90,7 +136,7 @@ const adminRequest = async <T>(
   });
 
   for (let attempt = 0; attempt <= retryAttempts; attempt += 1) {
-    const { cleanup, signal: requestSignal } = buildTimeoutSignal(timeoutMs, signal);
+    const { cleanup, didTimeout, signal: requestSignal } = buildTimeoutSignal(timeoutMs, signal);
 
     try {
       const response = await fetch(url.toString(), {
@@ -135,6 +181,27 @@ const adminRequest = async <T>(
 
       return payload.data;
     } catch (error) {
+      if (requestSignal?.aborted) {
+        const timeoutMessage = `Admin request to ${path} timed out after ${Math.ceil(timeoutMs / 1000)}s.`;
+        const cancelledMessage = `Admin request to ${path} was cancelled before it completed.`;
+        const normalizedAbortError = normalizeAbortReason(
+          requestSignal.reason,
+          didTimeout() ? timeoutMessage : cancelledMessage,
+        );
+        const adminError = new AdminApiError({
+          errorCode: didTimeout() ? "ADMIN_REQUEST_TIMEOUT" : "ADMIN_REQUEST_ABORTED",
+          message: didTimeout() ? timeoutMessage : normalizedAbortError.message,
+          status: didTimeout() ? 504 : 499,
+        });
+
+        if (didTimeout() && attempt < retryAttempts) {
+          await waitForRetry(attempt);
+          continue;
+        }
+
+        throw adminError;
+      }
+
       if (attempt < retryAttempts) {
         await waitForRetry(attempt);
         continue;

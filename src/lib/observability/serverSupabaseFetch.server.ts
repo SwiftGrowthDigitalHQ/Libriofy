@@ -4,6 +4,11 @@ import { recordRuntimeLatency, incrementRuntimeMetric } from "./runtimeMetrics.s
 import { getSupabaseRequestDetails, parseSupabaseErrorResponse } from "./supabaseRequestDetails.js";
 
 const DEFAULT_SUPABASE_REQUEST_TIMEOUT_MS = 10_000;
+const OPAQUE_ABORT_MESSAGES = [
+  "signal is aborted without reason",
+  "the operation was aborted",
+  "this operation was aborted",
+];
 
 const resolveSupabaseRequestTimeoutMs = () => {
   const parsed = Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || "");
@@ -26,6 +31,36 @@ const buildServerQueryFailureMessage = (
   return `Supabase ${queryType} request failed for ${target} with status ${status}.`;
 };
 
+const hasMeaningfulAbortMessage = (value: string | null | undefined) =>
+  Boolean(
+    value?.trim() &&
+      !OPAQUE_ABORT_MESSAGES.some((candidate) => value.toLowerCase().includes(candidate)),
+  );
+
+const normalizeAbortReason = (reason: unknown, fallbackMessage: string) => {
+  if (typeof DOMException !== "undefined" && reason instanceof DOMException) {
+    if (hasMeaningfulAbortMessage(reason.message)) {
+      return new Error(reason.message);
+    }
+
+    return new Error(fallbackMessage);
+  }
+
+  if (reason instanceof Error) {
+    if (hasMeaningfulAbortMessage(reason.message)) {
+      return reason;
+    }
+
+    return new Error(fallbackMessage);
+  }
+
+  if (typeof reason === "string" && hasMeaningfulAbortMessage(reason)) {
+    return new Error(reason.trim());
+  }
+
+  return new Error(fallbackMessage);
+};
+
 export const createInstrumentedServerSupabaseFetch = (source: string): typeof fetch => {
   const baseFetch = globalThis.fetch.bind(globalThis);
   const slowQueryThresholdMs = Math.max(250, Number(process.env.SLOW_DB_QUERY_THRESHOLD_MS || "800"));
@@ -33,25 +68,29 @@ export const createInstrumentedServerSupabaseFetch = (source: string): typeof fe
 
   return async (input, init) => {
     const controller = new AbortController();
+    const upstreamSignal = init?.signal;
     const customInit = {
       ...init,
       cache: "no-store" as RequestCache,
     };
-    const requestSignal = customInit.signal
-      ? AbortSignal.any([customInit.signal, controller.signal])
-      : controller.signal;
-    const onAbort = () => controller.abort(customInit.signal?.reason);
-    if (customInit.signal) {
-      if (customInit.signal.aborted) {
-        controller.abort(customInit.signal.reason);
+    const onAbort = () =>
+      controller.abort(
+        normalizeAbortReason(
+          upstreamSignal?.reason,
+          "Supabase request was cancelled before completion.",
+        ),
+      );
+    if (upstreamSignal) {
+      if (upstreamSignal.aborted) {
+        onAbort();
       } else {
-        customInit.signal.addEventListener("abort", onAbort, { once: true });
+        upstreamSignal.addEventListener("abort", onAbort, { once: true });
       }
     }
     const timeout = setTimeout(() => {
       controller.abort(new Error(`Supabase request timed out after ${requestTimeoutMs}ms.`));
     }, requestTimeoutMs);
-    customInit.signal = requestSignal;
+    customInit.signal = controller.signal;
     const details = getSupabaseRequestDetails(input, customInit);
     const startedAt = Date.now();
 
@@ -149,6 +188,13 @@ export const createInstrumentedServerSupabaseFetch = (source: string): typeof fe
 
       return response;
     } catch (error) {
+      const normalizedError = controller.signal.aborted
+        ? normalizeAbortReason(
+            controller.signal.reason,
+            `Supabase request for ${details.queryName || details.path} was aborted.`,
+          )
+        : error;
+
       if (!details.skipLogging && details.queryType !== "other") {
         const durationMs = Date.now() - startedAt;
         incrementRuntimeMetric("supabase_requests_total", 1, {
@@ -178,10 +224,10 @@ export const createInstrumentedServerSupabaseFetch = (source: string): typeof fe
 
         console.error("[supabase] query request crashed", {
           ...context,
-          detail: error instanceof Error ? error.message : String(error),
+          detail: normalizedError instanceof Error ? normalizedError.message : String(normalizedError),
         });
 
-        captureServerError(error, context);
+        captureServerError(normalizedError, context);
 
         void logEvent({
           type: "SUPABASE_QUERY_FAILED",
@@ -189,7 +235,7 @@ export const createInstrumentedServerSupabaseFetch = (source: string): typeof fe
           classification: "PERFORMANCE_EVENT",
           entityId: details.queryName || details.path,
           metadata: {
-            detail: error instanceof Error ? error.message : String(error),
+            detail: normalizedError instanceof Error ? normalizedError.message : String(normalizedError),
             duration_ms: durationMs,
             method: details.method,
             path: details.path,
@@ -198,17 +244,17 @@ export const createInstrumentedServerSupabaseFetch = (source: string): typeof fe
             severity: "ERROR",
             source,
           },
-          message: error instanceof Error ? error.message : "Supabase request crashed unexpectedly.",
+          message: normalizedError instanceof Error ? normalizedError.message : "Supabase request crashed unexpectedly.",
         }, {
           skipConsole: true,
         });
       }
 
-      throw error;
+      throw normalizedError;
     } finally {
       clearTimeout(timeout);
-      if (customInit.signal && init?.signal) {
-        init.signal.removeEventListener("abort", onAbort);
+      if (upstreamSignal) {
+        upstreamSignal.removeEventListener("abort", onAbort);
       }
     }
   };

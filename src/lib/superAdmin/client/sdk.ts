@@ -57,9 +57,15 @@ import type {
   AdminRefundRow,
 } from "./types";
 
+const ADMIN_CONTROL_PLANE_TIMEOUT_MS = 20_000;
+
 export const adminClient = {
   getAnalytics: (query?: { city?: string }) =>
-    adminGet<AdminAnalyticsCenterData>("/api/admin/analytics", { query }),
+    adminGet<AdminAnalyticsCenterData>("/api/admin/analytics", {
+      query,
+      retryAttempts: 0,
+      timeoutMs: ADMIN_CONTROL_PLANE_TIMEOUT_MS,
+    }),
 
   getAutomationJobs: (query?: AdminListQuery & { scope?: "overview" | "jobs" }) =>
     adminGet<AdminJobsOverviewResponse | AdminJobsListResponse>("/api/admin/jobs", { query }),
@@ -104,7 +110,10 @@ export const adminClient = {
     adminGet<AdminLibrariesListResponse>("/api/admin/libraries", { query }),
 
   getPlatform: () =>
-    adminGet<SuperAdminControlCenterData>("/api/admin/platform"),
+    adminGet<SuperAdminControlCenterData>("/api/admin/platform", {
+      retryAttempts: 0,
+      timeoutMs: ADMIN_CONTROL_PLANE_TIMEOUT_MS,
+    }),
 
   getRevenue: <TScope extends AdminRevenueScope>(
     query?: AdminListQuery & { scope?: TScope },
