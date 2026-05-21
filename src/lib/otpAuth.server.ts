@@ -47,6 +47,7 @@ import {
 } from "./authRuntimeConfig.js";
 import { sendEmail } from "./email.server.js";
 import {
+  isLibriofyAuthEmail,
   isAllowedLibriofyRequestHost,
   isAllowedLibriofyRequestOrigin,
   resolveLibriofyAppUrl,
@@ -133,6 +134,16 @@ type SuperAdminEmailLookupRow = {
   email: string | null;
   full_name: string | null;
   user_id: string;
+};
+
+type SuperAdminRoleGrantRow = {
+  email: string | null;
+  expires_at: string | null;
+  id: string;
+  revoked_at: string | null;
+  role: string | null;
+  scope_type: string | null;
+  user_id: string | null;
 };
 
 type OtpRecord = {
@@ -1018,6 +1029,15 @@ const enforceRateLimit = async (
 
 const normalizeEmail = (value: unknown) => trimText(value).toLowerCase();
 
+const isActiveSuperAdminGrantRow = (grant: Pick<SuperAdminRoleGrantRow, "expires_at" | "revoked_at">) => {
+  if (trimText(grant.revoked_at)) {
+    return false;
+  }
+
+  const expiresAtMs = Date.parse(trimText(grant.expires_at));
+  return !Number.isFinite(expiresAtMs) || expiresAtMs > Date.now();
+};
+
 const buildLoginDeviceLabel = (context: RequestContext) =>
   [trimText(context.deviceLabel), trimText(context.userAgent)].filter(Boolean).join(" | ") || "unknown";
 
@@ -1565,6 +1585,10 @@ const sendSuperAdminOtpEmail = async ({
 };
 
 const isSuperAdminEmailAllowedByEnv = (env: EnvLike, email: string) => {
+  if (isLibriofyAuthEmail(email)) {
+    return true;
+  }
+
   const allowList = readEnv(env, "SUPER_ADMIN_ALLOWED_EMAILS", "SUPER_ADMIN_EMAIL_ALLOWLIST");
   if (!allowList) {
     return true;
@@ -1688,9 +1712,7 @@ const logLoginAttempt = async ({
   }
 };
 
-const loadAuthUserById = async (env: EnvLike, userId: string) => {
-  const serviceClient = createServiceClient(env);
-
+const loadAuthUserByIdWithClient = async (serviceClient: ReturnType<typeof createServiceClient>, userId: string) => {
   const [{ data: profile, error: profileError }, { data: roles, error: rolesError }] = await Promise.all([
     serviceClient
       .from("profiles")
@@ -1721,6 +1743,194 @@ const loadAuthUserById = async (env: EnvLike, userId: string) => {
     fullName: typedProfile?.full_name ?? null,
     roles: typedRoles.map((role) => role.role),
   } satisfies AuthUser;
+};
+
+const loadAuthUserById = async (env: EnvLike, userId: string) => {
+  const serviceClient = createServiceClient(env);
+  return loadAuthUserByIdWithClient(serviceClient, userId);
+};
+
+const findActiveSuperAdminGrantByEmail = async (
+  serviceClient: ReturnType<typeof createServiceClient>,
+  email: string,
+) => {
+  try {
+    const { data, error } = await serviceClient
+      .from("super_admin_role_grants")
+      .select("id, user_id, email, role, scope_type, expires_at, revoked_at")
+      .eq("role", "super_admin")
+      .ilike("email", email)
+      .limit(20);
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = (data ?? []) as SuperAdminRoleGrantRow[];
+    return rows.find((row) => isActiveSuperAdminGrantRow(row)) ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const ensureSuperAdminUserRole = async (
+  serviceClient: ReturnType<typeof createServiceClient>,
+  userId: string,
+) => {
+  const { data, error } = await serviceClient
+    .from("user_roles")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("role", "super_admin")
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (data) {
+    return;
+  }
+
+  const { error: insertError } = await serviceClient.from("user_roles").insert({
+    library_id: null,
+    role: "super_admin",
+    user_id: userId,
+  });
+
+  if (insertError) {
+    throw insertError;
+  }
+};
+
+const ensureBootstrapSuperAdminGrant = async (
+  serviceClient: ReturnType<typeof createServiceClient>,
+  input: {
+    email: string;
+    userId: string;
+  },
+) => {
+  try {
+    const { data, error } = await serviceClient
+      .from("super_admin_role_grants")
+      .select("id, expires_at, revoked_at")
+      .eq("role", "super_admin")
+      .eq("user_id", input.userId)
+      .limit(20);
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = (data ?? []) as Array<Pick<SuperAdminRoleGrantRow, "id" | "expires_at" | "revoked_at">>;
+    if (rows.some((row) => isActiveSuperAdminGrantRow(row))) {
+      return;
+    }
+
+    await serviceClient.from("super_admin_role_grants").insert({
+      email: input.email,
+      grant_mode: "legacy_migrated",
+      metadata: {
+        bootstrap_recovered: true,
+        source: "otp_auth_server",
+      },
+      reason: "Recovered bootstrap super admin access during OTP login.",
+      restrictions: {},
+      role: "super_admin",
+      scope_label: "Bootstrap",
+      scope_type: "global",
+      user_id: input.userId,
+    });
+  } catch {
+    // Best-effort only. login authorization depends on user_roles and Auth user existence.
+  }
+};
+
+export const recoverSuperAdminUserFromBootstrapSources = async (
+  env: EnvLike,
+  email: string,
+  serviceClient = createServiceClient(env),
+): Promise<AuthUser | null> => {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const bootstrapEmail = isLibriofyAuthEmail(normalizedEmail);
+  const grantRow = await findActiveSuperAdminGrantByEmail(serviceClient, normalizedEmail);
+  if (!bootstrapEmail && !grantRow) {
+    return null;
+  }
+
+  const { data: profile, error: profileError } = await serviceClient
+    .from("profiles")
+    .select("user_id, email, full_name, phone_number")
+    .ilike("email", normalizedEmail)
+    .limit(1)
+    .maybeSingle();
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  const typedProfile = profile as ProfileRow | null;
+  let userId = trimText(typedProfile?.user_id) || trimText(grantRow?.user_id);
+  let resolvedEmail = normalizeEmail(typedProfile?.email ?? grantRow?.email ?? normalizedEmail) || normalizedEmail;
+
+  if (!userId && bootstrapEmail) {
+    for (let page = 1; page <= 10 && !userId; page += 1) {
+      const { data: listedUsers, error: listUsersError } = await serviceClient.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+
+      if (listUsersError) {
+        throw listUsersError;
+      }
+
+      const users = listedUsers?.users ?? [];
+      const authUser = users.find((candidate) => normalizeEmail(candidate.email) === normalizedEmail);
+      userId = trimText(authUser?.id);
+      resolvedEmail = normalizeEmail(authUser?.email ?? resolvedEmail) || normalizedEmail;
+
+      if (users.length < 200) {
+        break;
+      }
+    }
+  }
+
+  if (!userId) {
+    return null;
+  }
+
+  if (bootstrapEmail && !typedProfile) {
+    const { error: profileUpsertError } = await serviceClient.from("profiles").upsert(
+      {
+        email: resolvedEmail,
+        full_name: null,
+        user_id: userId,
+      },
+      {
+        onConflict: "user_id",
+      },
+    );
+
+    if (profileUpsertError) {
+      throw profileUpsertError;
+    }
+  }
+
+  await ensureSuperAdminUserRole(serviceClient, userId);
+
+  if (bootstrapEmail) {
+    await ensureBootstrapSuperAdminGrant(serviceClient, {
+      email: resolvedEmail,
+      userId,
+    });
+  }
+
+  return loadAuthUserByIdWithClient(serviceClient, userId);
 };
 
 const findUserByPhone = async (env: EnvLike, phone: string) => {
@@ -1761,10 +1971,10 @@ const resolveSuperAdminEmailUser = async (env: EnvLike, email: string) => {
 
   const row = Array.isArray(data) ? (data[0] as SuperAdminEmailLookupRow | undefined) : undefined;
   if (!row?.user_id) {
-    return null;
+    return recoverSuperAdminUserFromBootstrapSources(env, email, serviceClient);
   }
 
-  const user = await loadAuthUserById(env, row.user_id);
+  const user = await loadAuthUserByIdWithClient(serviceClient, row.user_id);
   return {
     ...user,
     email: user.email ?? row.email ?? null,
