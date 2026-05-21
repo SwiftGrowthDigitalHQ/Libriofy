@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 
 import { loadActiveImpersonationSession } from "./impersonationRuntime.server.js";
 import type { AuthImpersonationContext, AuthSessionScope, AuthUser } from "./auth.shared.js";
+import { resolveSupabaseAdminConfig } from "./observability/supabaseAdminConfig.server.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 
 type EnvLike = Record<string, string | undefined>;
@@ -51,14 +52,12 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
 };
 
 const buildServiceClient = (env: EnvLike) => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error("Supabase service credentials are missing.");
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (!adminConfig.ok) {
+    throw new Error(adminConfig.detail);
   }
 
-  return createClient(supabaseUrl, serviceRoleKey, {
+  return createClient(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

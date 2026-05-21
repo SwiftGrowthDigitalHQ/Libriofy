@@ -15,6 +15,7 @@ import {
 import { logInternalError, logInternalWarning } from "./observability/internalLogger.server.js";
 import { getRequestTraceContext } from "./observability/requestContext.server.js";
 import { incrementRuntimeMetric, recordRuntimeLatency } from "./observability/runtimeMetrics.server.js";
+import { resolveSupabaseAdminConfig } from "./observability/supabaseAdminConfig.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -178,6 +179,44 @@ const maybeWarnOnAnonKeyDrift = (env: EnvLike) => {
   });
 };
 
+const buildSupabaseAdminConfigChecks = (env: EnvLike): AuthIntegrityCheck[] => {
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (adminConfig.ok) {
+    return [
+      buildCheck("supabase_url", "pass", "Supabase admin URL is configured.", {
+        requirement: "SUPABASE_URL|VITE_SUPABASE_URL",
+      }),
+      buildCheck("supabase_service_role_key", "pass", "Supabase admin service role key is configured.", {
+        requirement: "SUPABASE_SERVICE_ROLE_KEY|VITE_SUPABASE_SERVICE_ROLE_KEY",
+      }),
+    ];
+  }
+
+  const hasUrlCandidate = hasValue(env.SUPABASE_URL) || hasValue(env.VITE_SUPABASE_URL);
+  const urlCheck = buildCheck(
+    "supabase_url",
+    hasUrlCandidate ? "pass" : "fail",
+    hasUrlCandidate ? "Supabase admin URL candidate is present." : adminConfig.detail,
+    {
+      code: hasUrlCandidate ? null : "AUTH_RUNTIME_FAILURE",
+      requirement: "SUPABASE_URL|VITE_SUPABASE_URL",
+    },
+  );
+
+  return [
+    urlCheck,
+    buildCheck(
+      "supabase_service_role_key",
+      "fail",
+      adminConfig.detail,
+      {
+        code: "AUTH_RUNTIME_FAILURE",
+        requirement: "SUPABASE_SERVICE_ROLE_KEY|VITE_SUPABASE_SERVICE_ROLE_KEY",
+      },
+    ),
+  ];
+};
+
 const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
   const checks: AuthIntegrityCheck[] = [];
 
@@ -194,31 +233,7 @@ const buildConfigChecks = (env: EnvLike, flow: AuthIntegrityFlow) => {
     ),
   );
 
-  const supabaseUrl = readEnv(env, "SUPABASE_URL");
-  checks.push(
-    buildCheck(
-      "supabase_url",
-      supabaseUrl ? "pass" : "fail",
-      supabaseUrl ? "SUPABASE_URL is configured." : "SUPABASE_URL is missing.",
-      {
-        code: supabaseUrl ? null : "AUTH_RUNTIME_FAILURE",
-        requirement: "SUPABASE_URL",
-      },
-    ),
-  );
-
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY");
-  checks.push(
-    buildCheck(
-      "supabase_service_role_key",
-      serviceRoleKey ? "pass" : "fail",
-      serviceRoleKey ? "SUPABASE_SERVICE_ROLE_KEY is configured." : "SUPABASE_SERVICE_ROLE_KEY is missing.",
-      {
-        code: serviceRoleKey ? null : "AUTH_RUNTIME_FAILURE",
-        requirement: "SUPABASE_SERVICE_ROLE_KEY",
-      },
-    ),
-  );
+  checks.push(...buildSupabaseAdminConfigChecks(env));
 
   const hasJwtSecret = hasCustomJwtSigningConfig(env);
   if (!hasJwtSecret) {

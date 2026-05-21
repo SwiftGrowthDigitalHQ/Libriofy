@@ -23,8 +23,17 @@ vi.mock("@/lib/observability/store.server", () => ({
 
 import { getCriticalDatabaseHealth } from "@/lib/observability/databaseHealth.server";
 
+const buildSupabaseJwt = (projectRef: string, role: "anon" | "service_role") => {
+  const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return [
+    encode({ alg: "HS256", typ: "JWT" }),
+    encode({ iat: 1, iss: "supabase", ref: projectRef, role }),
+    "signature",
+  ].join(".");
+};
+
 const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
-  SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+  SUPABASE_SERVICE_ROLE_KEY: buildSupabaseJwt("libriofy", "service_role"),
   SUPABASE_URL: "https://libriofy.supabase.co",
   ...overrides,
 });
@@ -169,5 +178,60 @@ describe("database health runtime contracts", () => {
     expect(result.missing_contracts).toEqual([]);
     expect(result.auth_runtime_failure_category).toBe("AUTH_RPC_FAILURE");
     expect(result.detail).toContain("Auth runtime health RPC failed with status 404");
+  });
+
+  it("uses a matching Supabase URL and service role key when canonical runtime envs drift", async () => {
+    const fetchSpy = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      expect(url.startsWith("https://new-project.supabase.co")).toBe(true);
+
+      if (url.includes("/rpc/get_schema_entity_status")) {
+        return new Response(JSON.stringify(healthyEntities), { status: 200 });
+      }
+
+      if (url.includes("/rpc/get_auth_runtime_status")) {
+        return new Response(JSON.stringify(healthyAuthContracts), { status: 200 });
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await getCriticalDatabaseHealth(
+      buildEnv({
+        SUPABASE_SERVICE_ROLE_KEY: buildSupabaseJwt("new-project", "service_role"),
+        SUPABASE_URL: "https://old-project.supabase.co",
+        VITE_SUPABASE_URL: "https://new-project.supabase.co",
+      }),
+      {
+        forceRefresh: true,
+        phase: "database_health_test_env_drift_recovery",
+      },
+    );
+
+    expect(result.status).toBe("ok");
+    expect(result.connectivity).toBe("pass");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails before issuing RPCs when the configured admin key is anon-scoped", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await getCriticalDatabaseHealth(
+      buildEnv({
+        SUPABASE_SERVICE_ROLE_KEY: buildSupabaseJwt("libriofy", "anon"),
+      }),
+      {
+        forceRefresh: true,
+        phase: "database_health_test_anon_key_rejected",
+      },
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.connectivity).toBe("fail");
+    expect(result.detail).toContain("anon or publishable key");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

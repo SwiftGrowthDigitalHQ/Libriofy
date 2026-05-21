@@ -5,6 +5,7 @@ import { withRequestTraceMetadata } from "./requestContext.server.js";
 import { sanitizeObservabilityMetadata } from "./logSanitizer.js";
 import { createInstrumentedServerSupabaseFetch } from "./serverSupabaseFetch.server.js";
 import { SUPABASE_OBSERVABILITY_SKIP_HEADER, SUPABASE_OBSERVABILITY_SKIP_VALUE } from "./supabaseRequestDetails.js";
+import { resolveSupabaseAdminConfig } from "./supabaseAdminConfig.server.js";
 import type { AlertSeverity, EventLogInput, RecentObservabilitySignal } from "./types.js";
 import {
   resolveEventClassification,
@@ -47,26 +48,13 @@ const normalizeText = (value: unknown) => (typeof value === "string" ? value.tri
 
 const normalizeMetadata = (metadata: unknown) => sanitizeObservabilityMetadata(metadata);
 
-const readEnv = (env: EnvLike, ...names: string[]) => {
-  for (const name of names) {
-    const value = env[name];
-    if (value && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return "";
-};
-
 export const createObservabilityServiceClient = (env: EnvLike = process.env) => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (!adminConfig.ok) {
     return null;
   }
 
-  return createClient<Database>(supabaseUrl, serviceRoleKey, {
+  return createClient<Database>(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

@@ -11,6 +11,7 @@ import { sendAdminAlert } from "./alertService.server.js";
 import { logEvent } from "./eventLogger.server.js";
 import { captureServerError } from "./serverMonitoring.js";
 import { listRecentObservabilitySignals } from "./store.server.js";
+import { resolveSupabaseAdminConfig } from "./supabaseAdminConfig.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -34,17 +35,6 @@ const supabaseRequestHeaders = (serviceRoleKey: string) => ({
   "Content-Type": "application/json",
   apikey: serviceRoleKey,
 });
-
-const readEnv = (env: EnvLike, ...names: string[]) => {
-  for (const name of names) {
-    const value = env[name];
-    if (value && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return "";
-};
 
 const buildFailedHealthPayload = (
   detail: string,
@@ -226,15 +216,17 @@ const buildFailedAuthRuntimeHealthPayload = (
 });
 
 const loadLiveAuthRuntimeHealth = async (env: EnvLike): Promise<AuthRuntimeHealthPayload> => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return buildFailedAuthRuntimeHealthPayload("Supabase URL or service role key is missing.");
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (!adminConfig.ok) {
+    return buildFailedAuthRuntimeHealthPayload(adminConfig.detail);
   }
 
   try {
-    const authRuntimeResponse = await invokeSupabaseRpc(supabaseUrl, serviceRoleKey, "get_auth_runtime_status");
+    const authRuntimeResponse = await invokeSupabaseRpc(
+      adminConfig.config.supabaseUrl,
+      adminConfig.config.serviceRoleKey,
+      "get_auth_runtime_status",
+    );
     if (!authRuntimeResponse.ok) {
       return buildFailedAuthRuntimeHealthPayload(
         formatFailedRpcDetail("Auth runtime health", authRuntimeResponse.status, authRuntimeResponse.rawText),
@@ -268,16 +260,14 @@ const loadLiveAuthRuntimeHealth = async (env: EnvLike): Promise<AuthRuntimeHealt
 };
 
 const loadLiveDatabaseHealth = async (env: EnvLike): Promise<DatabaseHealthPayload> => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return buildFailedHealthPayload("Supabase URL or service role key is missing.", await loadRecentSignals(env));
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (!adminConfig.ok) {
+    return buildFailedHealthPayload(adminConfig.detail, await loadRecentSignals(env));
   }
 
   try {
     const [schemaResponse, authRuntimeHealth] = await Promise.all([
-      invokeSupabaseRpc(supabaseUrl, serviceRoleKey, "get_schema_entity_status", {
+      invokeSupabaseRpc(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, "get_schema_entity_status", {
         p_entities: [...CRITICAL_DB_ENTITIES],
       }),
       loadLiveAuthRuntimeHealth(env),

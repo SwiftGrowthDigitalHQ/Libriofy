@@ -15,13 +15,22 @@ import {
 import { clearAuthRuntimeIntegrityCacheForTest } from "@/lib/authRuntimeIntegrity.server";
 import { resolveRefreshSessionRequest } from "@/lib/otpAuth.server";
 
+const buildSupabaseJwt = (projectRef: string, role: "anon" | "service_role") => {
+  const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return [
+    encode({ alg: "HS256", typ: "JWT" }),
+    encode({ iat: 1, iss: "supabase", ref: projectRef, role }),
+    "signature",
+  ].join(".");
+};
+
 const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
   APP_ENV: "test",
   APP_URL: "https://www.libriofy.com",
   AUTH_EMAIL_FROM: "hello@libriofy.com",
   PUBLIC_APP_URL: "https://www.libriofy.com",
   RESEND_API_KEY: "resend-key",
-  SUPABASE_SERVICE_ROLE_KEY: "service-role",
+  SUPABASE_SERVICE_ROLE_KEY: buildSupabaseJwt("example", "service_role"),
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_JWT_SECRET: "jwt-secret",
   ...overrides,
@@ -90,8 +99,8 @@ describe("auth API route handling", () => {
     expect(response.statusCode).toBe(503);
     expect(parseBody(response.body)).toMatchObject({
       code: "AUTH_INFRA_UNAVAILABLE",
-      error: "Session and OTP challenge storage is not configured.",
-      message: "Session and OTP challenge storage is not configured.",
+      error: "Super admin sign-in is temporarily unavailable. Please try again shortly.",
+      message: "Super admin sign-in is temporarily unavailable. Please try again shortly.",
       success: false,
     });
     expect(headers.get("x-request-id")).toBeTruthy();
