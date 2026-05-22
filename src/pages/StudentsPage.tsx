@@ -446,6 +446,7 @@ const StudentsPage = () => {
       try {
         const draftUpload = await uploadStudentPhotoDraftAssets({
           file,
+          libraryId: resolvedLibraryId,
           onProgress: (progress) => {
             setPhotoJobs((current) => {
               const existingJob = current[studentId];
@@ -460,6 +461,7 @@ const StudentsPage = () => {
               };
             });
           },
+          studentId,
           userId: user.id,
         });
 
@@ -479,9 +481,11 @@ const StudentsPage = () => {
 
         const uploadResult = await finalizeStudentPhotoUpload({
           file,
+          libraryId: resolvedLibraryId,
           preferClientFinalization: draftUpload.bypassedTempUpload,
           studentId,
           tempOriginalPath: draftUpload.tempOriginalPath,
+          userId: user.id,
         });
 
         patchStudentAcrossCaches(studentId, (student) => ({
@@ -527,7 +531,7 @@ const StudentsPage = () => {
         }
       }
     },
-    [isStudentPhotoBusy, patchStudentAcrossCaches, queryClient, schedulePhotoJobClear, toast, upsertPhotoJob, user?.id],
+    [isStudentPhotoBusy, patchStudentAcrossCaches, queryClient, resolvedLibraryId, schedulePhotoJobClear, toast, upsertPhotoJob, user?.id],
   );
 
   const resetFilters = () => {

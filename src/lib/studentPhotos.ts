@@ -28,6 +28,7 @@ type PrepareStudentPhotoUploadResponse = {
   error?: string;
   finalOriginalPath?: string;
   finalThumbnailPath?: string;
+  libraryId?: string | null;
   success?: boolean;
   version?: number;
 };
@@ -39,6 +40,31 @@ type UpdateStudentPhotoUrlResponse = {
   previousPhotoStoragePath?: string | null;
   previousPhotoThumbnailPath?: string | null;
   success?: boolean;
+};
+
+type StudentPhotoUploadDiagnostics = {
+  authRole?: string | null;
+  bucket?: Record<string, unknown> | null;
+  grants?: Record<string, unknown> | null;
+  libraryAccess?: boolean | null;
+  libraryId?: string | null;
+  pathCategory?: string | null;
+  policies?: Record<string, unknown> | null;
+  rpcs?: Record<string, unknown> | null;
+  storagePath?: string | null;
+  studentId?: string | null;
+  suspectedFailingPolicy?: string | null;
+  userId?: string | null;
+};
+
+type StudentPhotoUploadLogContext = {
+  error?: unknown;
+  extra?: Record<string, unknown>;
+  libraryId?: string | null;
+  stage: string;
+  storagePath?: string | null;
+  studentId?: string;
+  userId?: string | null;
 };
 
 const compressPhoto = async ({
@@ -68,7 +94,11 @@ const cleanupTempStudentPhotoAssets = async (paths: Array<string | null | undefi
 
   if (validPaths.length === 0) return;
 
-  await supabase.storage.from(STUDENT_PHOTOS_BUCKET).remove(validPaths);
+  const { error } = await supabase.storage.from(STUDENT_PHOTOS_BUCKET).remove(validPaths);
+
+  if (error) {
+    throw error;
+  }
 };
 
 const getFunctionErrorMessage = (error: unknown) => {
@@ -101,6 +131,99 @@ const shouldUseClientFinalizationFallback = (error: unknown) => {
     name.includes("functionsfetcherror") ||
     /failed to send a request to the edge function|failed to fetch|networkerror|load failed|cors|preflight/.test(message)
   );
+};
+
+const serializeSupabaseError = (error: unknown) => {
+  const record = typeof error === "object" && error ? (error as Record<string, unknown>) : null;
+  const status =
+    typeof record?.status === "number"
+      ? record.status
+      : typeof record?.statusCode === "number"
+        ? record.statusCode
+        : null;
+
+  return {
+    code: typeof record?.code === "string" ? record.code : null,
+    details: record?.details ?? null,
+    error: record?.error ?? null,
+    hint: record?.hint ?? null,
+    message: getFunctionErrorMessage(error),
+    name:
+      typeof record?.name === "string"
+        ? record.name
+        : error instanceof Error
+          ? error.name
+          : null,
+    status,
+  };
+};
+
+const logStudentPhotoEvent = (level: "error" | "info" | "warn", stage: string, payload: Record<string, unknown>) => {
+  const logger = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+  logger(`[student-photo-upload] ${stage}`, payload);
+};
+
+const fetchStudentPhotoUploadDiagnostics = async ({
+  libraryId,
+  storagePath,
+  studentId,
+}: {
+  libraryId?: string | null;
+  storagePath?: string | null;
+  studentId?: string;
+}) => {
+  try {
+    const { data, error } = await supabase.rpc("get_student_photo_upload_diagnostics" as never, {
+      p_library_id: libraryId ?? null,
+      p_storage_path: storagePath ?? null,
+      p_student_id: studentId ?? null,
+    } as never);
+
+    if (error) {
+      return {
+        diagnosticsRpcError: serializeSupabaseError(error),
+      };
+    }
+
+    return ((data ?? null) as StudentPhotoUploadDiagnostics | null) ?? null;
+  } catch (error) {
+    return {
+      diagnosticsRpcError: serializeSupabaseError(error),
+    };
+  }
+};
+
+const logStudentPhotoUploadFailure = async ({
+  error,
+  extra,
+  libraryId,
+  stage,
+  storagePath,
+  studentId,
+  userId,
+}: StudentPhotoUploadLogContext) => {
+  const diagnostics = await fetchStudentPhotoUploadDiagnostics({
+    libraryId,
+    storagePath,
+    studentId,
+  });
+
+  const suspectedFailingPolicy =
+    diagnostics && typeof diagnostics === "object" && "suspectedFailingPolicy" in diagnostics
+      ? diagnostics.suspectedFailingPolicy
+      : null;
+
+  logStudentPhotoEvent("error", stage, {
+    bucket: STUDENT_PHOTOS_BUCKET,
+    diagnostics,
+    error: serializeSupabaseError(error),
+    libraryId: libraryId ?? null,
+    storagePath: storagePath ?? null,
+    studentId: studentId ?? null,
+    suspectedFailingPolicy,
+    userId: userId ?? null,
+    ...(extra ?? {}),
+  });
 };
 
 const loadImage = (src: string) =>
@@ -159,7 +282,7 @@ const uploadFinalStudentPhotoAsset = async ({
   blob: Blob;
   path: string;
 }) => {
-  const { error } = await supabase.storage.from(STUDENT_PHOTOS_BUCKET).upload(path, blob, {
+  const { data, error } = await supabase.storage.from(STUDENT_PHOTOS_BUCKET).upload(path, blob, {
     cacheControl: STUDENT_PHOTO_CACHE_CONTROL,
     contentType: "image/jpeg",
     upsert: false,
@@ -168,17 +291,34 @@ const uploadFinalStudentPhotoAsset = async ({
   if (error) {
     throw error;
   }
+
+  return data;
 };
 
 const finalizeStudentPhotoUploadFromClient = async ({
   file,
+  libraryId,
   studentId,
   tempOriginalPath,
+  userId,
 }: {
   file: File;
+  libraryId?: string | null;
   studentId: string;
   tempOriginalPath: string;
+  userId?: string | null;
 }) => {
+  logStudentPhotoEvent("info", "client-finalization-start", {
+    bucket: STUDENT_PHOTOS_BUCKET,
+    fileName: file.name,
+    fileSize: file.size,
+    fileType: file.type,
+    libraryId: libraryId ?? null,
+    storagePath: tempOriginalPath,
+    studentId,
+    userId: userId ?? null,
+  });
+
   const compressedFile = await compressPhoto({ file, maxSizeMB: 0.5, maxWidthOrHeight: 800 });
   const thumbnailBlob = await createSquareThumbnailBlob(compressedFile);
   const { data: prepareData, error: prepareError } = await supabase.rpc("prepare_student_photo_upload" as never, {
@@ -187,20 +327,53 @@ const finalizeStudentPhotoUploadFromClient = async ({
   } as never);
 
   if (prepareError) {
+    await logStudentPhotoUploadFailure({
+      error: prepareError,
+      libraryId,
+      stage: "prepare-student-photo-upload",
+      storagePath: tempOriginalPath,
+      studentId,
+      userId,
+    });
     throw prepareError;
   }
 
   const prepared = (prepareData ?? {}) as PrepareStudentPhotoUploadResponse;
 
   if (prepared.success === false || !prepared.finalOriginalPath || !prepared.finalThumbnailPath || !prepared.version) {
-    throw new Error(prepared.error || "Unable to prepare the student photo upload.");
+    const responseError = new Error(prepared.error || "Unable to prepare the student photo upload.");
+    await logStudentPhotoUploadFailure({
+      error: responseError,
+      extra: {
+        prepareResponse: prepared,
+      },
+      libraryId: libraryId ?? prepared.libraryId ?? null,
+      stage: "prepare-student-photo-upload-response",
+      storagePath: tempOriginalPath,
+      studentId,
+      userId,
+    });
+    throw responseError;
   }
+
+  logStudentPhotoEvent("info", "prepare-student-photo-upload-success", {
+    bucket: STUDENT_PHOTOS_BUCKET,
+    currentPhotoStoragePath: prepared.currentPhotoStoragePath ?? null,
+    currentPhotoThumbnailPath: prepared.currentPhotoThumbnailPath ?? null,
+    finalOriginalPath: prepared.finalOriginalPath,
+    finalThumbnailPath: prepared.finalThumbnailPath,
+    libraryId: prepared.libraryId ?? libraryId ?? null,
+    studentId,
+    tempOriginalPath,
+    userId: userId ?? null,
+    version: prepared.version,
+  });
 
   const originalUrl = getStudentPhotoPublicUrl(prepared.finalOriginalPath, prepared.version);
   const thumbnailUrl = getStudentPhotoPublicUrl(prepared.finalThumbnailPath, prepared.version);
 
   try {
-    await Promise.all([
+    const [originalUploadData, thumbnailUploadData] = await Promise.all([
       uploadFinalStudentPhotoAsset({
         blob: compressedFile,
         path: prepared.finalOriginalPath,
@@ -210,6 +383,18 @@ const finalizeStudentPhotoUploadFromClient = async ({
         path: prepared.finalThumbnailPath,
       }),
     ]);
+
+    logStudentPhotoEvent("info", "client-final-storage-upload-response", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      finalOriginalPath: prepared.finalOriginalPath,
+      finalThumbnailPath: prepared.finalThumbnailPath,
+      libraryId: prepared.libraryId ?? libraryId ?? null,
+      originalUploadData,
+      studentId,
+      thumbnailUploadData,
+      userId: userId ?? null,
+      version: prepared.version,
+    });
 
     const { data: updateData, error: updateError } = await supabase.rpc("update_student_photo_url" as never, {
       p_student_id: studentId,
@@ -223,19 +408,73 @@ const finalizeStudentPhotoUploadFromClient = async ({
     } as never);
 
     if (updateError) {
+      await logStudentPhotoUploadFailure({
+        error: updateError,
+        extra: {
+          finalOriginalPath: prepared.finalOriginalPath,
+          finalThumbnailPath: prepared.finalThumbnailPath,
+          originalUrl,
+          thumbnailUrl,
+          version: prepared.version,
+        },
+        libraryId: prepared.libraryId ?? libraryId ?? null,
+        stage: "update-student-photo-url",
+        storagePath: prepared.finalOriginalPath,
+        studentId,
+        userId,
+      });
       throw updateError;
     }
 
     const finalized = (updateData ?? {}) as UpdateStudentPhotoUrlResponse;
     if (finalized.success === false) {
-      throw new Error(finalized.error || "Unable to finalize the student photo upload.");
+      const finalizeError = new Error(finalized.error || "Unable to finalize the student photo upload.");
+      await logStudentPhotoUploadFailure({
+        error: finalizeError,
+        extra: {
+          finalizedResponse: finalized,
+          finalOriginalPath: prepared.finalOriginalPath,
+          finalThumbnailPath: prepared.finalThumbnailPath,
+          version: prepared.version,
+        },
+        libraryId: prepared.libraryId ?? libraryId ?? null,
+        stage: "update-student-photo-url-response",
+        storagePath: prepared.finalOriginalPath,
+        studentId,
+        userId,
+      });
+      throw finalizeError;
     }
+
+    logStudentPhotoEvent("info", "update-student-photo-url-success", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      finalOriginalPath: prepared.finalOriginalPath,
+      finalThumbnailPath: prepared.finalThumbnailPath,
+      finalized,
+      libraryId: prepared.libraryId ?? libraryId ?? null,
+      studentId,
+      userId: userId ?? null,
+      version: prepared.version,
+    });
 
     await cleanupTempStudentPhotoAssets([
       tempOriginalPath,
       finalized.previousPhotoStoragePath ?? null,
       finalized.previousPhotoThumbnailPath ?? null,
-    ]).catch(() => undefined);
+    ]).catch((cleanupError) => {
+      logStudentPhotoEvent("warn", "cleanup-student-photo-assets-after-success-failed", {
+        bucket: STUDENT_PHOTOS_BUCKET,
+        error: serializeSupabaseError(cleanupError),
+        finalOriginalPath: prepared.finalOriginalPath,
+        finalThumbnailPath: prepared.finalThumbnailPath,
+        libraryId: prepared.libraryId ?? libraryId ?? null,
+        previousPhotoStoragePath: finalized.previousPhotoStoragePath ?? null,
+        previousPhotoThumbnailPath: finalized.previousPhotoThumbnailPath ?? null,
+        studentId,
+        tempOriginalPath,
+        userId: userId ?? null,
+      });
+    });
 
     return {
       originalUrl,
@@ -245,11 +484,38 @@ const finalizeStudentPhotoUploadFromClient = async ({
       version: prepared.version,
     };
   } catch (error) {
+    await logStudentPhotoUploadFailure({
+      error,
+      extra: {
+        finalOriginalPath: prepared.finalOriginalPath,
+        finalThumbnailPath: prepared.finalThumbnailPath,
+        originalUrl,
+        thumbnailUrl,
+        version: prepared.version,
+      },
+      libraryId: prepared.libraryId ?? libraryId ?? null,
+      stage: "client-finalization",
+      storagePath: prepared.finalOriginalPath ?? tempOriginalPath,
+      studentId,
+      userId,
+    });
+
     await cleanupTempStudentPhotoAssets([
       prepared.finalOriginalPath,
       prepared.finalThumbnailPath,
       tempOriginalPath,
-    ]).catch(() => undefined);
+    ]).catch((cleanupError) => {
+      logStudentPhotoEvent("warn", "cleanup-student-photo-assets-after-failure-failed", {
+        bucket: STUDENT_PHOTOS_BUCKET,
+        error: serializeSupabaseError(cleanupError),
+        finalOriginalPath: prepared.finalOriginalPath,
+        finalThumbnailPath: prepared.finalThumbnailPath,
+        libraryId: prepared.libraryId ?? libraryId ?? null,
+        studentId,
+        tempOriginalPath,
+        userId: userId ?? null,
+      });
+    });
 
     throw error;
   }
@@ -330,11 +596,15 @@ export const buildStudentPhotoTempPaths = ({
 
 export const uploadStudentPhotoDraftAssets = async ({
   file,
+  libraryId,
   onProgress,
+  studentId,
   userId,
 }: {
   file: File;
+  libraryId?: string | null;
   onProgress?: (progress: number) => void;
+  studentId?: string;
   userId: string;
 }) => {
   const uploadId = crypto.randomUUID();
@@ -343,7 +613,25 @@ export const uploadStudentPhotoDraftAssets = async ({
     userId,
   });
 
+  logStudentPhotoEvent("info", "draft-upload-start", {
+    bucket: STUDENT_PHOTOS_BUCKET,
+    fileName: file.name,
+    fileSize: file.size,
+    fileType: file.type,
+    libraryId: libraryId ?? null,
+    storagePath: tempOriginalPath,
+    studentId: studentId ?? null,
+    userId,
+  });
+
   if (shouldBypassLocalStudentPhotoPipeline) {
+    logStudentPhotoEvent("info", "draft-upload-local-bypass", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      libraryId: libraryId ?? null,
+      storagePath: tempOriginalPath,
+      studentId: studentId ?? null,
+      userId,
+    });
     onProgress?.(100);
     return {
       bypassedTempUpload: true,
@@ -356,8 +644,38 @@ export const uploadStudentPhotoDraftAssets = async ({
     .from(STUDENT_PHOTOS_BUCKET)
     .createSignedUploadUrl(tempOriginalPath);
 
+  logStudentPhotoEvent(signedUploadError || !signedUploadData?.signedUrl ? "warn" : "info", "create-signed-upload-url-response", {
+    bucket: STUDENT_PHOTOS_BUCKET,
+    error: signedUploadError ? serializeSupabaseError(signedUploadError) : null,
+    hasSignedUrl: Boolean(signedUploadData?.signedUrl),
+    libraryId: libraryId ?? null,
+    storagePath: tempOriginalPath,
+    studentId: studentId ?? null,
+    userId,
+  });
+
   if (signedUploadError || !signedUploadData?.signedUrl) {
+    const uploadPreparationError = signedUploadError ?? new Error("Signed upload URL was not returned by Supabase storage.");
+    await logStudentPhotoUploadFailure({
+      error: uploadPreparationError,
+      extra: {
+        hasSignedUrl: Boolean(signedUploadData?.signedUrl),
+      },
+      libraryId,
+      stage: "create-signed-upload-url",
+      storagePath: tempOriginalPath,
+      studentId,
+      userId,
+    });
+
     if (isStudentPhotoPermissionError(signedUploadError)) {
+      logStudentPhotoEvent("warn", "create-signed-upload-url-permission-blocked-bypassing", {
+        bucket: STUDENT_PHOTOS_BUCKET,
+        libraryId: libraryId ?? null,
+        storagePath: tempOriginalPath,
+        studentId: studentId ?? null,
+        userId,
+      });
       onProgress?.(100);
       return {
         bypassedTempUpload: true,
@@ -375,41 +693,100 @@ export const uploadStudentPhotoDraftAssets = async ({
       signedUrl: signedUploadData.signedUrl,
     });
 
+    logStudentPhotoEvent("info", "draft-upload-signed-url-success", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      libraryId: libraryId ?? null,
+      storagePath: tempOriginalPath,
+      studentId: studentId ?? null,
+      userId,
+    });
+
     return {
       bypassedTempUpload: false,
       tempOriginalPath,
     };
   } catch (error) {
-    await cleanupTempStudentPhotoAssets([tempOriginalPath]).catch(() => undefined);
+    await logStudentPhotoUploadFailure({
+      error,
+      libraryId,
+      stage: "upload-draft-via-signed-url",
+      storagePath: tempOriginalPath,
+      studentId,
+      userId,
+    });
+
+    await cleanupTempStudentPhotoAssets([tempOriginalPath]).catch((cleanupError) => {
+      logStudentPhotoEvent("warn", "cleanup-temp-draft-upload-failed", {
+        bucket: STUDENT_PHOTOS_BUCKET,
+        error: serializeSupabaseError(cleanupError),
+        libraryId: libraryId ?? null,
+        storagePath: tempOriginalPath,
+        studentId: studentId ?? null,
+        userId,
+      });
+    });
     throw error;
   }
 };
 
 export const finalizeStudentPhotoUpload = async ({
   file,
+  libraryId,
   preferClientFinalization,
   studentId,
   tempOriginalPath,
+  userId,
 }: {
   file?: File;
+  libraryId?: string | null;
   preferClientFinalization?: boolean;
   studentId: string;
   tempOriginalPath: string;
+  userId?: string | null;
 }) => {
   if (file && (preferClientFinalization || shouldBypassLocalStudentPhotoPipeline)) {
+    logStudentPhotoEvent("info", "finalization-using-client-path", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      libraryId: libraryId ?? null,
+      reason: preferClientFinalization ? "signed-upload-permission-bypass" : "local-environment-bypass",
+      storagePath: tempOriginalPath,
+      studentId,
+      userId: userId ?? null,
+    });
+
     return finalizeStudentPhotoUploadFromClient({
       file,
+      libraryId,
       studentId,
       tempOriginalPath,
+      userId,
     });
   }
 
   try {
+    logStudentPhotoEvent("info", "invoke-finalize-edge-function", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      libraryId: libraryId ?? null,
+      storagePath: tempOriginalPath,
+      studentId,
+      userId: userId ?? null,
+    });
+
     const { data, error } = await supabase.functions.invoke<FinalizeStudentPhotoUploadResponse>("finalize-student-photo-upload", {
       body: {
         studentId,
         tempOriginalPath,
       },
+    });
+
+    logStudentPhotoEvent(error || !data?.success ? "warn" : "info", "finalize-edge-function-response", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      error: error ? serializeSupabaseError(error) : null,
+      libraryId: libraryId ?? null,
+      response: data ?? null,
+      storagePath: tempOriginalPath,
+      studentId,
+      userId: userId ?? null,
     });
 
     if (error) {
@@ -431,13 +808,32 @@ export const finalizeStudentPhotoUpload = async ({
     const normalizedError = error instanceof Error ? error : new Error(getFunctionErrorMessage(error));
 
     if (!file || !shouldUseClientFinalizationFallback(normalizedError)) {
+      await logStudentPhotoUploadFailure({
+        error: normalizedError,
+        libraryId,
+        stage: "invoke-finalize-edge-function",
+        storagePath: tempOriginalPath,
+        studentId,
+        userId,
+      });
       throw normalizedError;
     }
 
+    logStudentPhotoEvent("warn", "finalize-edge-function-fallback-to-client", {
+      bucket: STUDENT_PHOTOS_BUCKET,
+      error: serializeSupabaseError(normalizedError),
+      libraryId: libraryId ?? null,
+      storagePath: tempOriginalPath,
+      studentId,
+      userId: userId ?? null,
+    });
+
     return finalizeStudentPhotoUploadFromClient({
       file,
+      libraryId,
       studentId,
       tempOriginalPath,
+      userId,
     });
   }
 };
