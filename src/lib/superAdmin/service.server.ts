@@ -980,6 +980,7 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
 export const buildServiceClient = (env: EnvLike = process.env) => {
   const adminConfig = resolveSupabaseAdminConfig(env);
   if (!adminConfig.ok) {
+    console.error("[admin-service] buildServiceClient failed:", adminConfig.detail);
     throw new Error(adminConfig.detail);
   }
 
@@ -6288,6 +6289,15 @@ const loadLibraryCenterCoreData = async (client: UntypedClient) => {
   }
 
   const profiles = await loadProfilesByUserIds(client, [...relevantUserIds]);
+  console.log("[admin-data] Library center core loaded:", {
+    libraries: libraries.length,
+    subscriptions: subscriptions.length,
+    userRoles: userRoles.length,
+    loginRows: loginRows.length,
+    profiles: profiles.length,
+    attendanceRows: attendanceRows.length,
+    impersonationRows: impersonationRows.length,
+  });
   const lastActivityByLibraryId = new Map<string, string>();
   for (const row of attendanceRows) {
     const libraryId = normalizeText(row.library_id);

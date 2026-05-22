@@ -2399,17 +2399,22 @@ export const handleAdminApiRequest = async (
         return;
       }
       case "/api/admin/libraries": {
-        const result = await getLibraryCenterData(env);
-        if (!result.success || !result.data) {
-          sendServiceResponse(res, requestId, result);
-          return;
-        }
+        try {
+          const result = await getLibraryCenterData(env);
+          if (!result.success || !result.data) {
+            sendServiceResponse(res, requestId, result);
+            return;
+          }
 
-        sendJson(
-          res,
-          200,
-          buildSuccessBody(requestId, result.message, buildFilteredLibrariesResponse(result.data, query)),
-        );
+          sendJson(
+            res,
+            200,
+            buildSuccessBody(requestId, result.message, buildFilteredLibrariesResponse(result.data, query)),
+          );
+        } catch (error) {
+          console.error("[admin-api] /api/admin/libraries FAILED:", error instanceof Error ? error.stack ?? error.message : String(error));
+          sendJson(res, 500, buildErrorBody(requestId, `Libraries failed to load: ${error instanceof Error ? error.message : "Unknown error"}`, "LIBRARIES_LOAD_FAILED"));
+        }
         return;
       }
       case "/api/admin/users": {

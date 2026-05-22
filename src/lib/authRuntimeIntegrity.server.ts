@@ -459,7 +459,9 @@ const loadAuthRuntimeIntegrity = async (
 
   const asyncChecks: Array<Promise<AuthIntegrityCheck | null>> = [];
 
-  const shouldRunSupabaseProbe = checks.find((check) => check.name === "supabase_url")?.status === "pass"
+  // Skip expensive Supabase schema probe for refresh flow - it only needs auth_trusted_devices
+  const shouldRunSupabaseProbe = flow !== "auth_refresh"
+    && checks.find((check) => check.name === "supabase_url")?.status === "pass"
     && checks.find((check) => check.name === "supabase_service_role_key")?.status === "pass";
   if (shouldRunSupabaseProbe) {
     asyncChecks.push(probeSupabaseAuthRuntime(env));

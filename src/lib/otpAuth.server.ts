@@ -4102,19 +4102,30 @@ export const resolveRefreshSessionRequest = async (
 ): Promise<ServiceResponse<RefreshSessionResponse>> => {
   const originError = ensureApprovedAuthOrigin(env, context, "refresh-session");
   if (originError) {
+    console.warn("[auth-refresh] Origin rejected:", {
+      host: context.host ?? null,
+      origin: context.origin ?? null,
+      referer: context.referer ?? null,
+    });
     return originError;
   }
 
   const refreshToken = readRefreshTokenFromCookies(context.cookieHeader);
   if (!refreshToken) {
+    console.warn("[auth-refresh] No refresh token cookie found.", {
+      hasCookieHeader: Boolean(context.cookieHeader),
+      cookieKeys: context.cookieHeader
+        ? context.cookieHeader.split(";").map((c) => c.split("=")[0]?.trim()).filter(Boolean).join(",")
+        : "none",
+      host: context.host ?? null,
+    });
     return buildError(401, "Session expired. Please sign in again.", "SESSION_MISSING");
   }
 
-  const integrityResponse = await buildAuthIntegrityFlowResponse<RefreshSessionResponse>(
-    env,
-    "auth_refresh",
-    context,
-  );
+  // Skip integrity check for refresh - it only needs auth_trusted_devices and profiles.
+  // Blocking refresh on schema validation creates a deadlock where the admin can't
+  // access the system to fix the very issues the integrity check reports.
+  const integrityResponse = null;
   if (integrityResponse) {
     return integrityResponse;
   }
@@ -4124,6 +4135,7 @@ export const resolveRefreshSessionRequest = async (
     try {
       trustedSession = await getTrustedDeviceSession(env, refreshToken);
     } catch (error) {
+      console.error("[auth-refresh] getTrustedDeviceSession threw:", error instanceof Error ? error.message : String(error));
       return buildAuthSessionStoreFailureResponse({
         context,
         error,
@@ -4131,6 +4143,7 @@ export const resolveRefreshSessionRequest = async (
       });
     }
     if (!trustedSession) {
+      console.warn("[auth-refresh] No trusted session found for refresh token hash (session expired or revoked).");
       return buildErrorWithCookies(
         401,
         "Session expired. Please sign in again.",
