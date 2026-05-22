@@ -169,9 +169,11 @@ const SuperAdminRevenue = () => {
                       </TableHeader>
                       <TableBody>
                         {plansQuery.isLoading ? (
-                          <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
-                        ) : "items" in (plansQuery.data ?? {}) && plansQuery.data.items.items.length > 0 ? (
-                          plansQuery.data.items.items.map((item) => (
+                          <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">Loading plans...</TableCell></TableRow>
+                        ) : plansQuery.isError ? (
+                          <TableRow><TableCell colSpan={4} className="text-center text-destructive py-8">Failed to load subscription plans. {plansQuery.error?.message}</TableCell></TableRow>
+                        ) : (plansQuery.data?.items?.items ?? []).length > 0 ? (
+                          (plansQuery.data?.items?.items ?? []).map((item) => (
                             <TableRow key={item.id}>
                               <TableCell>
                                 <p className="font-medium">{item.name}</p>
@@ -185,7 +187,7 @@ const SuperAdminRevenue = () => {
                             </TableRow>
                           ))
                         ) : (
-                          <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No plans found</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No plans configured yet</TableCell></TableRow>
                         )}
                       </TableBody>
                     </Table>
@@ -207,8 +209,10 @@ const SuperAdminRevenue = () => {
                       <TableBody>
                         {paymentsQuery.isLoading ? (
                           <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
-                        ) : "items" in (paymentsQuery.data ?? {}) && paymentsQuery.data.items.items.length > 0 ? (
-                          paymentsQuery.data.items.items.map((item) => (
+                        ) : paymentsQuery.isError ? (
+                          <TableRow><TableCell colSpan={5} className="text-center text-destructive py-8">Failed to load payments. {paymentsQuery.error?.message}</TableCell></TableRow>
+                        ) : (paymentsQuery.data?.items?.items ?? []).length > 0 ? (
+                          (paymentsQuery.data?.items?.items ?? []).map((item) => (
                             <TableRow key={item.id}>
                               <TableCell>{item.libraryName || item.libraryId}</TableCell>
                               <TableCell className="text-xs">{item.paymentType === "subscription_payment" ? "Subscription" : "Student"}</TableCell>
@@ -239,8 +243,10 @@ const SuperAdminRevenue = () => {
                       <TableBody>
                         {adjustmentsQuery.isLoading ? (
                           <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
-                        ) : "items" in (adjustmentsQuery.data ?? {}) && adjustmentsQuery.data.items.items.length > 0 ? (
-                          adjustmentsQuery.data.items.items.map((item) => (
+                        ) : adjustmentsQuery.isError ? (
+                          <TableRow><TableCell colSpan={4} className="text-center text-destructive py-8">Failed to load adjustments.</TableCell></TableRow>
+                        ) : (adjustmentsQuery.data?.items?.items ?? []).length > 0 ? (
+                          (adjustmentsQuery.data?.items?.items ?? []).map((item) => (
                             <TableRow key={item.id}>
                               <TableCell>{item.libraryName || item.libraryId}</TableCell>
                               <TableCell>{item.reason}</TableCell>
@@ -270,8 +276,10 @@ const SuperAdminRevenue = () => {
                       <TableBody>
                         {commissionsQuery.isLoading ? (
                           <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
-                        ) : "items" in (commissionsQuery.data ?? {}) && commissionsQuery.data.items.items.length > 0 ? (
-                          commissionsQuery.data.items.items.map((item) => (
+                        ) : commissionsQuery.isError ? (
+                          <TableRow><TableCell colSpan={4} className="text-center text-destructive py-8">Failed to load commissions.</TableCell></TableRow>
+                        ) : (commissionsQuery.data?.items?.items ?? []).length > 0 ? (
+                          (commissionsQuery.data?.items?.items ?? []).map((item) => (
                             <TableRow key={item.libraryId}>
                               <TableCell>{item.libraryName || item.libraryId}</TableCell>
                               <TableCell>{item.commissionPercent}%</TableCell>

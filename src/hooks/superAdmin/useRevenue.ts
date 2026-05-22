@@ -1,8 +1,10 @@
 import type { AdminListQuery, AdminRevenueScope } from "@/lib/superAdmin/client";
 import { adminClient } from "@/lib/superAdmin/client";
-import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
 import { useAdminMutation } from "./useAdminMutation";
 import { useAdminQuery } from "./useAdminQuery";
+
+// Plans and revenue data cached for 60s - no realtime needed
+const REVENUE_STALE_TIME_MS = 60_000;
 
 type UseRevenueOptions<TScope extends AdminRevenueScope> = {
   enabled?: boolean;
@@ -17,7 +19,7 @@ export const useRevenue = <TScope extends AdminRevenueScope = "overview">({
     enabled,
     queryFn: () => adminClient.getRevenue<TScope>(query),
     queryKey: ["admin-revenue", query?.scope ?? "overview", query ?? {}],
-    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
+    staleTime: REVENUE_STALE_TIME_MS,
   });
 
 export const useRevenueMutations = () => ({

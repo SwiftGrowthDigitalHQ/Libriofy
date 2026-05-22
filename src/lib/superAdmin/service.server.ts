@@ -977,7 +977,7 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
   return "";
 };
 
-const buildServiceClient = (env: EnvLike = process.env) => {
+export const buildServiceClient = (env: EnvLike = process.env) => {
   const adminConfig = resolveSupabaseAdminConfig(env);
   if (!adminConfig.ok) {
     throw new Error(adminConfig.detail);

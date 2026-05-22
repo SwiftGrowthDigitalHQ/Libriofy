@@ -23,6 +23,7 @@ import { resolveSuperAdminSessionRequest } from "../otpAuth.server.js";
 import { createInstrumentedServerSupabaseFetch } from "../observability/serverSupabaseFetch.server.js";
 import { isSuperAdminIpAllowed } from "../platformSettings.server.js";
 import {
+  buildServiceClient,
   createBroadcastData,
   createInvoiceData,
   createRefundData,
@@ -2378,6 +2379,59 @@ export const handleAdminApiRequest = async (
         return;
       }
       case "/api/admin/revenue": {
+        // Fast path: plans scope queries subscription_plans directly without loading all admin data
+        if (query.scope === "plans") {
+          try {
+            const client = buildServiceClient(env);
+            const { data: planRows, error: planError } = await client
+              .from("subscription_plans")
+              .select("id, code, name, description, price, seats_limit, lockers_limit, features, is_active, sort_order, updated_at")
+              .order("sort_order", { ascending: true });
+
+            if (planError) {
+              console.error("[admin-api] /api/admin/revenue plans direct query FAILED:", planError.message, planError.code);
+              sendJson(res, 200, buildSuccessBody(requestId, "Plans query failed.", {
+                defaultCommissionPercent: 12.5,
+                generatedAt: new Date().toISOString(),
+                items: paginateItems([], 1, 20),
+                scope: "plans",
+                summary: { adjustmentRevenue: 0, queuedPayoutAmount: 0, studentRevenue: 0, subscriptionRevenue: 0, totalRevenue: 0 },
+              }));
+              return;
+            }
+
+            const plans = (planRows ?? []).map((row: Record<string, unknown>) => ({
+              id: String(row.id ?? ""),
+              code: String(row.code ?? ""),
+              name: String(row.name ?? ""),
+              description: row.description != null ? String(row.description) : null,
+              price: Number(row.price ?? 0),
+              seatsLimit: row.seats_limit != null ? Number(row.seats_limit) : null,
+              lockersLimit: row.lockers_limit != null ? Number(row.lockers_limit) : null,
+              features: Array.isArray(row.features) ? (row.features as string[]) : [],
+              isActive: row.is_active !== false,
+              sortOrder: Number(row.sort_order ?? 0),
+              updatedAt: row.updated_at != null ? String(row.updated_at) : null,
+            }));
+
+            const filtered = plans.filter((plan) =>
+              matchesSearch(query.search, [plan.code, plan.name, plan.description]),
+            );
+
+            sendJson(res, 200, buildSuccessBody(requestId, "Plans loaded.", {
+              defaultCommissionPercent: 12.5,
+              generatedAt: new Date().toISOString(),
+              items: paginateItems(filtered, query.page, query.pageSize),
+              scope: "plans",
+              summary: { adjustmentRevenue: 0, queuedPayoutAmount: 0, studentRevenue: 0, subscriptionRevenue: 0, totalRevenue: 0 },
+            }));
+          } catch (err) {
+            console.error("[admin-api] /api/admin/revenue plans FAILED:", err instanceof Error ? err.message : String(err));
+            sendJson(res, 500, buildErrorBody(requestId, "Failed to load subscription plans.", "PLANS_LOAD_FAILED"));
+          }
+          return;
+        }
+
         const result = await getRevenueCenterData(env);
         if (!result.success || !result.data) {
           sendServiceResponse(res, requestId, result);
