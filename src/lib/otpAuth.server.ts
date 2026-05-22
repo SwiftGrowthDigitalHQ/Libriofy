@@ -2647,7 +2647,14 @@ export const resolveSuperAdminSessionRequest = async (
   env: EnvLike,
   context: RequestContext = {},
 ): Promise<ActiveSessionContext | null> => {
-  const activeSession = await resolveActiveSessionFromRefreshToken(env, context);
+  let activeSession: ActiveSessionContext | null;
+  try {
+    activeSession = await resolveActiveSessionFromRefreshToken(env, context);
+  } catch (err) {
+    console.error("[admin-auth] resolveActiveSessionFromRefreshToken threw:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+
   if (!activeSession) {
     logSuperAdminDebug("session resolution returned null (no valid refresh token or session expired)", {
       hasCookie: Boolean(context.cookieHeader?.includes(AUTH_REFRESH_COOKIE_NAME)),

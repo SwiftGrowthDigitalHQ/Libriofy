@@ -2418,17 +2418,22 @@ export const handleAdminApiRequest = async (
         return;
       }
       case "/api/admin/users": {
-        const result = await getLibraryCenterData(env);
-        if (!result.success || !result.data) {
-          sendServiceResponse(res, requestId, result);
-          return;
-        }
+        try {
+          const result = await getLibraryCenterData(env);
+          if (!result.success || !result.data) {
+            sendServiceResponse(res, requestId, result);
+            return;
+          }
 
-        sendJson(
-          res,
-          200,
-          buildSuccessBody(requestId, "User controls loaded.", buildFilteredUsersResponse(result.data, query)),
-        );
+          sendJson(
+            res,
+            200,
+            buildSuccessBody(requestId, "User controls loaded.", buildFilteredUsersResponse(result.data, query)),
+          );
+        } catch (error) {
+          console.error("[admin-api] /api/admin/users FAILED:", error instanceof Error ? error.message : String(error));
+          sendJson(res, 500, buildErrorBody(requestId, "Users data failed to load.", "USERS_LOAD_FAILED"));
+        }
         return;
       }
       case "/api/admin/revenue": {
@@ -2485,9 +2490,16 @@ export const handleAdminApiRequest = async (
           return;
         }
 
-        const result = await getRevenueCenterData(env);
-        if (!result.success || !result.data) {
-          sendServiceResponse(res, requestId, result);
+        const result = await getRevenueCenterData(env).catch((err) => {
+          console.error("[admin-api] /api/admin/revenue FAILED:", err instanceof Error ? err.stack ?? err.message : String(err));
+          return null;
+        });
+        if (!result || !result.success || !result.data) {
+          if (result) {
+            sendServiceResponse(res, requestId, result);
+          } else {
+            sendJson(res, 500, buildErrorBody(requestId, "Revenue data failed to load.", "REVENUE_LOAD_FAILED"));
+          }
           return;
         }
 
@@ -2582,21 +2594,26 @@ export const handleAdminApiRequest = async (
         return;
       }
       case "/api/admin/billing": {
-        const result = await getBillingCenterData(env);
-        if (!result.success || !result.data) {
-          sendServiceResponse(res, requestId, result);
-          return;
-        }
+        try {
+          const result = await getBillingCenterData(env);
+          if (!result.success || !result.data) {
+            sendServiceResponse(res, requestId, result);
+            return;
+          }
 
-        if (await handleBillingDownload(res, requestId, result.data, query)) {
-          return;
-        }
+          if (await handleBillingDownload(res, requestId, result.data, query)) {
+            return;
+          }
 
-        sendJson(
-          res,
-          200,
-          buildSuccessBody(requestId, result.message, buildBillingScopedResponse(result.data, query)),
-        );
+          sendJson(
+            res,
+            200,
+            buildSuccessBody(requestId, result.message, buildBillingScopedResponse(result.data, query)),
+          );
+        } catch (error) {
+          console.error("[admin-api] /api/admin/billing FAILED:", error instanceof Error ? error.stack ?? error.message : String(error));
+          sendJson(res, 500, buildErrorBody(requestId, `Billing data failed to load: ${error instanceof Error ? error.message : "Unknown error"}`, "BILLING_LOAD_FAILED"));
+        }
         return;
       }
       case "/api/admin/jobs": {
