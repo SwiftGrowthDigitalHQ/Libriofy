@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 const plans = [
   {
     name: "Starter",
-    price: "Rs 2,999",
+    price: "Rs 999",
     period: "/month",
     desc: "Perfect for single-branch libraries",
     features: ["Up to 50 seats", "Up to 30 lockers", "Seat management", "Basic analytics", "Notifications"],
