@@ -762,7 +762,7 @@ serve(async (req) => {
     const finalAmount = Math.max(1, Math.floor(subtotal - discountAmount));
     const amountInPaise = Math.max(100, Math.round(finalAmount * 100));
     const quotePayload = {
-      couponCode: coupon?.code ?? couponCodeInput || null,
+      couponCode: (coupon?.code ?? couponCodeInput) || null,
       discountAmount,
       discountKind,
       finalAmount,
