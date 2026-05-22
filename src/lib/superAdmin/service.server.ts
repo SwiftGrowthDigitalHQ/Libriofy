@@ -3905,103 +3905,111 @@ const insertSystemGovernanceAuditLog = async (
     targetType: string;
   },
 ) => {
-  await client.from("super_admin_audit_logs").insert({
-    action: input.action,
-    actor_email: null,
-    actor_user_id: null,
-    ip_address: null,
-    metadata: {
-      ...(input.metadata ?? {}),
-      policy_version: OPERATOR_POLICY_VERSION,
-      system_generated: true,
-    },
-    request_id: null,
-    target_display: input.targetDisplay ?? null,
-    target_id: input.targetId ?? null,
-    target_type: input.targetType,
-    user_agent: null,
-  });
+  try {
+    await client.from("super_admin_audit_logs").insert({
+      action: input.action,
+      actor_email: null,
+      actor_user_id: null,
+      ip_address: null,
+      metadata: {
+        ...(input.metadata ?? {}),
+        policy_version: OPERATOR_POLICY_VERSION,
+        system_generated: true,
+      },
+      request_id: null,
+      target_display: input.targetDisplay ?? null,
+      target_id: input.targetId ?? null,
+      target_type: input.targetType,
+      user_agent: null,
+    });
+  } catch (err) {
+    console.warn("[admin-governance] insertSystemGovernanceAuditLog failed (non-fatal):", err instanceof Error ? err.message : String(err));
+  }
 };
 
 const sweepExpiredGovernanceState = async (client: UntypedClient) => {
-  const now = nowIso();
-  const expiredGrants = await readOptionalRows<RoleGrantRow>(
-    client
-      .from("super_admin_role_grants")
-      .select("id, role, email, user_id, scope_type, scope_id, scope_label, expires_at, metadata")
-      .is("revoked_at", null)
-      .not("expires_at", "is", null)
-      .lte("expires_at", now)
-      .limit(100),
-  );
-
-  for (const row of expiredGrants) {
-    const metadata = toRecord(row.metadata);
-    if (!normalizeText(metadata.expiry_audit_logged_at)) {
-      await insertSystemGovernanceAuditLog(client, {
-        action: "temporary_access_expired",
-        metadata: {
-          email: normalizeNullableText(row.email),
-          expires_at: normalizeNullableText(row.expires_at),
-          role: normalizeText(row.role),
-          scope_id: normalizeNullableText(row.scope_id),
-          scope_label: normalizeNullableText(row.scope_label),
-          scope_type: normalizeText(row.scope_type),
-          user_id: normalizeNullableText(row.user_id),
-        },
-        targetDisplay: normalizeNullableText(row.email) ?? normalizeNullableText(row.user_id) ?? normalizeText(row.role),
-        targetId: normalizeText(row.id),
-        targetType: "operator_role_grant",
-      });
-
-      await client
+  try {
+    const now = nowIso();
+    const expiredGrants = await readOptionalRows<RoleGrantRow>(
+      client
         .from("super_admin_role_grants")
+        .select("id, role, email, user_id, scope_type, scope_id, scope_label, expires_at, metadata")
+        .is("revoked_at", null)
+        .not("expires_at", "is", null)
+        .lte("expires_at", now)
+        .limit(100),
+    );
+
+    for (const row of expiredGrants) {
+      const metadata = toRecord(row.metadata);
+      if (!normalizeText(metadata.expiry_audit_logged_at)) {
+        await insertSystemGovernanceAuditLog(client, {
+          action: "temporary_access_expired",
+          metadata: {
+            email: normalizeNullableText(row.email),
+            expires_at: normalizeNullableText(row.expires_at),
+            role: normalizeText(row.role),
+            scope_id: normalizeNullableText(row.scope_id),
+            scope_label: normalizeNullableText(row.scope_label),
+            scope_type: normalizeText(row.scope_type),
+            user_id: normalizeNullableText(row.user_id),
+          },
+          targetDisplay: normalizeNullableText(row.email) ?? normalizeNullableText(row.user_id) ?? normalizeText(row.role),
+          targetId: normalizeText(row.id),
+          targetType: "operator_role_grant",
+        });
+
+        await client
+          .from("super_admin_role_grants")
+          .update({
+            metadata: {
+              ...metadata,
+              expiry_audit_logged_at: now,
+            },
+            updated_at: now,
+          })
+          .eq("id", normalizeText(row.id));
+      }
+    }
+
+    const expiredApprovalRequests = await readOptionalRows<ApprovalRequestRow>(
+      client
+        .from("super_admin_approval_requests")
+        .select("id, action_id, status, target_type, target_id, target_display, requester_email, metadata, expires_at")
+        .eq("status", "pending")
+        .lte("expires_at", now)
+        .limit(100),
+    );
+
+    for (const row of expiredApprovalRequests) {
+      const metadata = toRecord(row.metadata);
+      await client
+        .from("super_admin_approval_requests")
         .update({
+          last_reviewed_at: now,
           metadata: {
             ...metadata,
-            expiry_audit_logged_at: now,
+            expired_by_system_at: now,
           },
+          status: "expired",
           updated_at: now,
         })
         .eq("id", normalizeText(row.id));
-    }
-  }
 
-  const expiredApprovalRequests = await readOptionalRows<ApprovalRequestRow>(
-    client
-      .from("super_admin_approval_requests")
-      .select("id, action_id, status, target_type, target_id, target_display, requester_email, metadata, expires_at")
-      .eq("status", "pending")
-      .lte("expires_at", now)
-      .limit(100),
-  );
-
-  for (const row of expiredApprovalRequests) {
-    const metadata = toRecord(row.metadata);
-    await client
-      .from("super_admin_approval_requests")
-      .update({
-        last_reviewed_at: now,
+      await insertSystemGovernanceAuditLog(client, {
+        action: "governance_request_expired",
         metadata: {
-          ...metadata,
-          expired_by_system_at: now,
+          action_id: normalizeText(row.action_id),
+          expires_at: normalizeNullableText(row.expires_at),
+          requester_email: normalizeNullableText(row.requester_email),
         },
-        status: "expired",
-        updated_at: now,
-      })
-      .eq("id", normalizeText(row.id));
-
-    await insertSystemGovernanceAuditLog(client, {
-      action: "governance_request_expired",
-      metadata: {
-        action_id: normalizeText(row.action_id),
-        expires_at: normalizeNullableText(row.expires_at),
-        requester_email: normalizeNullableText(row.requester_email),
-      },
-      targetDisplay: normalizeNullableText(row.target_display),
-      targetId: normalizeNullableText(row.target_id) ?? normalizeText(row.id),
-      targetType: normalizeText(row.target_type) || "governance_request",
-    });
+        targetDisplay: normalizeNullableText(row.target_display),
+        targetId: normalizeNullableText(row.target_id) ?? normalizeText(row.id),
+        targetType: normalizeText(row.target_type) || "governance_request",
+      });
+    }
+  } catch (err) {
+    console.warn("[admin-governance] sweepExpiredGovernanceState failed (non-fatal):", err instanceof Error ? err.message : String(err));
   }
 };
 

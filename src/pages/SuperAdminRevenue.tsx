@@ -30,6 +30,8 @@ const SuperAdminRevenue = () => {
 
   const overview = overviewQuery.data?.data;
   const isLoading = overviewQuery.isLoading;
+  const pageError = overviewQuery.error ?? plansQuery.error;
+  const isAuthError = pageError && "status" in (pageError as any) && (pageError as any).status === 401;
 
   const handleAdjustmentSave = async () => {
     const amountDelta = Number(adjustmentAmount);
@@ -76,6 +78,18 @@ const SuperAdminRevenue = () => {
           <h1 className="text-2xl font-bold font-display text-foreground">Plans & Revenue</h1>
           <p className="text-sm text-muted-foreground">Manage subscription plans, view revenue, and record adjustments.</p>
         </div>
+
+        {isAuthError ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+            <p className="text-sm font-medium text-destructive">Session expired. Please sign in again.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Admin APIs require an active super admin session.</p>
+          </div>
+        ) : pageError && !isLoading ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-50 p-4 dark:bg-amber-950/20">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">Failed to load data</p>
+            <p className="mt-1 text-xs text-muted-foreground">{pageError.message || "An unexpected error occurred."}</p>
+          </div>
+        ) : null}
 
         {/* Summary cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

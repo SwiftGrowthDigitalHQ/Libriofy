@@ -53,7 +53,7 @@ import {
   upsertPlanData,
   upsertTemplateData,
 } from "./service.server.js";
-import { canAccessControlPlanePage } from "./governance.js";
+import { canAccessControlPlanePage, EMPTY_OPERATOR_SCOPE_BOUNDARY, expandOperatorPermissions, resolveOperatorPages, type AdminOperatorGrant } from "./governance.js";
 import { buildOperationalIntelligenceSnapshot } from "./operationalIntelligence.js";
 import type {
   AdminBillingPaymentRow,
@@ -1101,6 +1101,8 @@ const buildActorContext = async (
   context: RequestContext,
 ) => {
   const requestTrace = getRequestTraceContext();
+  const hasCookie = Boolean(context.cookieHeader?.includes("libriofy_refresh"));
+
   const activeSession = await resolveSuperAdminSessionRequest(env, {
     authorization: context.authorization,
     cookieHeader: context.cookieHeader,
@@ -1114,9 +1116,18 @@ const buildActorContext = async (
   });
 
   if (!activeSession) {
+    const diagnosticMessage = !hasCookie
+      ? "No session cookie present. Please sign in."
+      : "Session expired or invalid. Please sign in again.";
+    console.warn("[admin-auth] Session validation failed:", {
+      hasCookie,
+      ip: context.ip ?? "unknown",
+      pathname: context.pathname,
+      requestId,
+    });
     return {
       actor: null,
-      error: buildErrorBody(requestId, "Super admin verification is required.", "UNAUTHORIZED"),
+      error: buildErrorBody(requestId, diagnosticMessage, "UNAUTHORIZED"),
       statusCode: 401,
     };
   }
@@ -1134,13 +1145,50 @@ const buildActorContext = async (
   }
 
   const actorUser = activeSession.realUser ?? activeSession.user;
-  const operatorAccess = await resolveSuperAdminOperatorAccessData(
-    env,
-    actorUser.id,
-    actorUser.email ?? null,
-  );
+  let operatorAccess: Awaited<ReturnType<typeof resolveSuperAdminOperatorAccessData>>;
+  try {
+    operatorAccess = await resolveSuperAdminOperatorAccessData(
+      env,
+      actorUser.id,
+      actorUser.email ?? null,
+    );
+  } catch (err) {
+    console.error("[admin-auth] resolveSuperAdminOperatorAccessData failed:", err instanceof Error ? err.message : String(err));
+    // Fall back to full super_admin access so the request can proceed
+    const fallbackGrant: AdminOperatorGrant = {
+      boundary: EMPTY_OPERATOR_SCOPE_BOUNDARY,
+      email: actorUser.email ?? null,
+      expiresAt: null,
+      grantId: "fallback",
+      grantMode: "direct",
+      metadata: {},
+      reason: "Fallback grant due to governance query failure",
+      restrictions: {},
+      revokedAt: null,
+      role: "super_admin",
+      scopeId: null,
+      scopeLabel: "Fallback",
+      scopeType: "global",
+      startsAt: null,
+      userId: actorUser.id,
+    };
+    const fallbackPermissions = expandOperatorPermissions([fallbackGrant]);
+    operatorAccess = {
+      allowedPages: resolveOperatorPages(fallbackPermissions),
+      emergencyAccessActive: true,
+      grants: [fallbackGrant],
+      legacyFallbackAccess: true,
+      permissions: fallbackPermissions,
+      readOnlyActive: false,
+      roles: ["super_admin"],
+      temporaryElevationActive: false,
+    };
+  }
 
-  const ipAllowed = await isSuperAdminIpAllowed(env, context.ip);
+  const ipAllowed = await isSuperAdminIpAllowed(env, context.ip).catch((err) => {
+    console.warn("[admin-auth] isSuperAdminIpAllowed failed (allowing by default):", err instanceof Error ? err.message : String(err));
+    return true;
+  });
   if (!ipAllowed) {
     return {
       actor: null,

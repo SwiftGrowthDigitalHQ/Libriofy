@@ -2649,6 +2649,9 @@ export const resolveSuperAdminSessionRequest = async (
 ): Promise<ActiveSessionContext | null> => {
   const activeSession = await resolveActiveSessionFromRefreshToken(env, context);
   if (!activeSession) {
+    logSuperAdminDebug("session resolution returned null (no valid refresh token or session expired)", {
+      hasCookie: Boolean(context.cookieHeader?.includes(AUTH_REFRESH_COOKIE_NAME)),
+    });
     return null;
   }
 
@@ -2657,6 +2660,12 @@ export const resolveSuperAdminSessionRequest = async (
     activeSession.authLevel < 2 ||
     !activeSession.realUser.roles.includes("super_admin")
   ) {
+    logSuperAdminDebug("session exists but does not meet super admin requirements", {
+      authLevel: activeSession.authLevel,
+      roles: activeSession.realUser.roles,
+      sessionScope: activeSession.sessionScope,
+      userId: activeSession.realUser.id,
+    });
     return null;
   }
 
