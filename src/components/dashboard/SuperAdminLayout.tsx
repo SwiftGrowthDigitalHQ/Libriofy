@@ -9,6 +9,7 @@ import {
   Receipt,
   Settings,
   Shield,
+  Tag,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SUPER_ADMIN_DASHBOARD_ROUTE, SUPER_ADMIN_LOGIN_ROUTE } from "@/lib/superAdminPaths";
@@ -19,6 +20,7 @@ const navItems = [
   { icon: Building2, label: "Libraries", path: "/admin/libraries" },
   { icon: CreditCard, label: "Plans", path: "/admin/revenue" },
   { icon: Receipt, label: "Billing", path: "/admin/billing" },
+  { icon: Tag, label: "Coupons", path: "/admin/coupons" },
   { icon: Settings, label: "Settings", path: "/admin/settings" },
 ] as const;
 

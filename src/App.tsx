@@ -65,6 +65,7 @@ const SuperAdminDashboard = lazy(() => import("./pages/SuperAdminDashboard"));
 const SuperAdminLibraries = lazy(() => import("./pages/SuperAdminLibraries"));
 const SuperAdminRevenue = lazy(() => import("./pages/SuperAdminRevenue"));
 const SuperAdminBilling = lazy(() => import("./pages/SuperAdminBilling"));
+const SuperAdminCoupons = lazy(() => import("./pages/SuperAdminCoupons"));
 const SuperAdminSettings = lazy(() => import("./pages/SuperAdminSettings"));
 
 const useHashRouter = import.meta.env.VITE_USE_HASH_ROUTER === "true";
@@ -396,6 +397,17 @@ const App = () => (
                           unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
                         >
                           <SuperAdminBilling />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/coupons"
+                      element={
+                        <ProtectedRoute
+                          allowRoles={["super_admin"]}
+                          unauthenticatedRedirectTo={SUPER_ADMIN_LOGIN_ROUTE}
+                        >
+                          <SuperAdminCoupons />
                         </ProtectedRoute>
                       }
                     />
