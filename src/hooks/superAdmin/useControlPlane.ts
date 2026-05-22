@@ -1,33 +1,13 @@
 import { adminClient } from "@/lib/superAdmin/client";
-import { SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS } from "@/lib/superAdmin/lightweightMode";
-import { useControlPlaneRealtime } from "./useControlPlaneRealtime";
 import { useAdminQuery } from "./useAdminQuery";
 
-type UseControlPlaneOptions = {
-  enabled?: boolean;
-  refetchIntervalMs?: number | false;
-};
+// Dashboard data is cached for 60s - no realtime subscriptions needed.
+const PLATFORM_STALE_TIME_MS = 60_000;
 
-export const useControlPlane = (
-  options: UseControlPlaneOptions | number | false = {},
-) => {
-  const normalizedOptions: UseControlPlaneOptions =
-    typeof options === "number" || options === false
-      ? { refetchIntervalMs: options }
-      : options;
-  const { enabled = true, refetchIntervalMs = false } = normalizedOptions;
-  const query = useAdminQuery({
-    enabled,
+export const useControlPlane = (refetchIntervalMs: number | false = false) =>
+  useAdminQuery({
     queryFn: () => adminClient.getPlatform(),
     queryKey: ["admin-platform"],
     refetchInterval: refetchIntervalMs,
-    staleTime: SUPER_ADMIN_SNAPSHOT_STALE_TIME_MS,
+    staleTime: PLATFORM_STALE_TIME_MS,
   });
-
-  useControlPlaneRealtime({
-    enabled,
-    queryKeys: [["admin-platform"]],
-  });
-
-  return query;
-};

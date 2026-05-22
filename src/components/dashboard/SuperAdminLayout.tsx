@@ -1,20 +1,14 @@
 import { ReactNode, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  Activity,
-  BarChart3,
-  BellRing,
-  Bot,
+  Building2,
   ChevronLeft,
-  Flag,
+  CreditCard,
   LayoutDashboard,
   LogOut,
   Receipt,
   Settings,
   Shield,
-  Siren,
-  TrendingUp,
-  Building2,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SUPER_ADMIN_DASHBOARD_ROUTE, SUPER_ADMIN_LOGIN_ROUTE } from "@/lib/superAdminPaths";
@@ -23,15 +17,8 @@ import InstallAppButton from "@/components/pwa/InstallAppButton";
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: SUPER_ADMIN_DASHBOARD_ROUTE },
   { icon: Building2, label: "Libraries", path: "/admin/libraries" },
-  { icon: TrendingUp, label: "Revenue", path: "/admin/revenue" },
+  { icon: CreditCard, label: "Plans", path: "/admin/revenue" },
   { icon: Receipt, label: "Billing", path: "/admin/billing" },
-  { icon: Siren, label: "Incidents", path: "/admin/incidents" },
-  { icon: BarChart3, label: "Analytics", path: "/admin/analytics" },
-  { icon: BellRing, label: "Broadcasts", path: "/admin/broadcasts" },
-  { icon: Bot, label: "Automation", path: "/admin/automation" },
-  { icon: Flag, label: "Feature Flags", path: "/admin/feature-flags" },
-  { icon: Activity, label: "Observability", path: "/admin/observability" },
-  { icon: Receipt, label: "Coupons", path: "/admin/coupons" },
   { icon: Settings, label: "Settings", path: "/admin/settings" },
 ] as const;
 
