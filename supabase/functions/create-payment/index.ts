@@ -1,19 +1,36 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+
 import { blockIfMaintenanceMode } from "../_shared/maintenance.ts";
 import { logEdgeEvent, sendEdgeAdminAlert } from "../_shared/observability.ts";
 import {
   buildSubscriptionPaymentIdempotencyKey,
   findReusableSubscriptionPayment,
   mergePaymentTraceMetadata,
-  readPaymentTraceHeaders,
   type ReusableSubscriptionPayment,
 } from "../_shared/payment-runtime.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import {
+  buildBillingErrorBody,
+  buildCapacityLimitError,
+  clampInt,
+  computeCouponDiscount,
+  createBillingFunctionError,
+  createSupabaseOperationError,
+  isBillingFunctionError,
+  logBillingFunctionEvent,
+  normalizeCouponCode,
+  normalizePlanCode,
+  readJsonRequestBody,
+  resolveBillingTraceContext,
+  safeNumber,
+  serializeSupabaseError,
+  validateBillingRuntimeEnv,
+} from "../_shared/billing-runtime.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-request-id, x-correlation-id, x-trace-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -49,56 +66,9 @@ type LibraryCapacityRow = {
   total_seats: number | null;
   total_lockers: number | null;
 };
-
-const normalizePlanCode = (value: unknown) => String(value ?? "").trim().toLowerCase();
-const normalizeCouponCode = (value: unknown) => String(value ?? "").trim().toUpperCase();
-
-const clampInt = (value: unknown, min: number, max: number, fallback: number) => {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
-};
-
-const safeNumber = (value: unknown, fallback: number) => {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
-const exceedsPlanLimit = (currentUsage: number, planLimit: number | null | undefined) =>
-  typeof planLimit === "number" && planLimit > 0 && currentUsage > planLimit;
-
-const buildCapacityLimitError = ({
-  currentLockers,
-  currentSeats,
-  plan,
-}: {
-  currentLockers: number;
-  currentSeats: number;
-  plan: SubscriptionPlanRow;
-}) => {
-  const messages: string[] = [];
-
-  if (exceedsPlanLimit(currentSeats, plan.seats_limit)) {
-    messages.push(`${currentSeats} configured seats exceed the ${plan.seats_limit} seat limit`);
-  }
-
-  if (exceedsPlanLimit(currentLockers, plan.lockers_limit)) {
-    messages.push(`${currentLockers} configured lockers exceed the ${plan.lockers_limit} locker limit`);
-  }
-
-  if (messages.length === 0) return null;
-  return `Reduce capacity before switching to ${plan.name}: ${messages.join(" and ")}.`;
-};
-
-const computeCouponDiscount = (subtotal: number, coupon: CouponRow) => {
-  if (subtotal <= 0) return 0;
-  if (coupon.discount_type === "percentage") {
-    const pct = Math.max(0, Math.min(100, safeNumber(coupon.discount_value, 0)));
-    return Math.floor((subtotal * pct) / 100);
-  }
-
-  const flat = Math.max(0, safeNumber(coupon.discount_value, 0));
-  return Math.min(Math.floor(flat), Math.max(0, subtotal - 1));
+type LibrarySubscriptionRow = {
+  id: string;
+  plan_name: string | null;
 };
 
 const REFERRAL_SIGNUP_DISCOUNT_PERCENT = 10;
@@ -107,20 +77,33 @@ const REFERRAL_SIGNUP_DISCOUNT_MAX = 1000;
 const listOwnedLibraryIds = async (
   supabase: ReturnType<typeof createClient>,
   userId: string,
+  requestId: string,
 ) => {
-  const { data: ownedLibraries, error: ownedLibrariesError } = await supabase
+  const { data, error } = await supabase
     .from("libraries")
     .select("id")
     .eq("owner_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (ownedLibrariesError) throw ownedLibrariesError;
+    .order("created_at", { ascending: false });
 
-  return ownedLibraries?.map((library) => String(library.id)) ?? [];
+  if (error) {
+    throw createSupabaseOperationError({
+      diagnostics: {
+        requestId,
+        userId,
+      },
+      error,
+      hint: "Confirm the libraries table is readable in the active Supabase project.",
+      layer: "db.libraries.lookup_owned",
+      message: "Failed to resolve library ownership for payment creation.",
+      requestId,
+    });
+  }
+
+  return (data ?? []).map((library) => String(library.id));
 };
 
 const resolveLibraryId = (
-  roles: UserRoleRow[] | null | undefined,
+  roles: UserRoleRow[],
   libraryIdInput: string,
   ownedLibraryIds: string[],
 ) => {
@@ -129,175 +112,473 @@ const resolveLibraryId = (
   const ownedLibraryId = ownedLibraryIds[0] ?? "";
   if (ownedLibraryId) return ownedLibraryId;
 
-  const ownerRoleLibraryId = roles?.find((row) => row.role === "library_owner" && row.library_id)?.library_id ?? null;
+  const ownerRoleLibraryId = roles.find((row) => row.role === "library_owner" && row.library_id)?.library_id ?? null;
   if (ownerRoleLibraryId) return String(ownerRoleLibraryId);
 
-  const staffRoleLibraryId = roles?.find((row) => row.role === "staff" && row.library_id)?.library_id ?? null;
+  const staffRoleLibraryId = roles.find((row) => row.role === "staff" && row.library_id)?.library_id ?? null;
   if (staffRoleLibraryId) return String(staffRoleLibraryId);
 
   return "";
 };
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+const ensureLibrarySubscription = async (
+  supabase: ReturnType<typeof createClient>,
+  libraryId: string,
+  userId: string,
+  requestId: string,
+) => {
+  const { error: ensureError } = await supabase.rpc("ensure_library_subscription", {
+    p_actor_user_id: userId,
+    p_library_id: libraryId,
+  });
+  if (ensureError) {
+    throw createSupabaseOperationError({
+      diagnostics: {
+        libraryId,
+        requestId,
+        userId,
+      },
+      error: ensureError,
+      hint: "Apply the latest billing migration so ensure_library_subscription is available and executable.",
+      layer: "db.rpc.ensure_library_subscription",
+      message: "The billing runtime could not guarantee a subscription row for this library.",
+      requestId,
+    });
   }
-  const maintenanceBlocked = await blockIfMaintenanceMode(corsHeaders);
-  if (maintenanceBlocked) return maintenanceBlocked;
+
+  const { data: subscription, error: subscriptionError } = await supabase
+    .from("library_subscriptions")
+    .select("id, plan_name")
+    .eq("library_id", libraryId)
+    .maybeSingle();
+  if (subscriptionError) {
+    throw createSupabaseOperationError({
+      diagnostics: {
+        libraryId,
+        requestId,
+        userId,
+      },
+      error: subscriptionError,
+      hint: "Check library_subscriptions RLS, grants, and the ensure_library_subscription migration.",
+      layer: "db.library_subscriptions.fetch",
+      message: "Failed to load the library subscription record required for payment creation.",
+      requestId,
+    });
+  }
+  if (!subscription) {
+    throw createBillingFunctionError({
+      code: "SUBSCRIPTION_ROW_MISSING",
+      diagnostics: {
+        libraryId,
+        requestId,
+        userId,
+      },
+      hint: "Run the latest billing migrations and backfill missing library_subscriptions rows.",
+      layer: "db.library_subscriptions.fetch",
+      message: "No billing subscription row exists for this library.",
+      requestId,
+      retryable: false,
+      status: 500,
+    });
+  }
+
+  return subscription as LibrarySubscriptionRow;
+};
+
+const recordBillingLifecycleEvent = async (
+  supabase: ReturnType<typeof createClient> | null,
+  payload: Parameters<typeof logEdgeEvent>[1],
+  diagnostics: Record<string, unknown>,
+) => {
+  if (!supabase) return;
+
+  try {
+    await logEdgeEvent(supabase, payload);
+  } catch (error) {
+    logBillingFunctionEvent("warn", "create_payment_observability_failed", {
+      ...diagnostics,
+      observabilityError: serializeSupabaseError(error),
+      payload,
+    });
+  }
+};
+
+const recordBillingAdminAlert = async (
+  payload: Parameters<typeof sendEdgeAdminAlert>[0],
+  diagnostics: Record<string, unknown>,
+) => {
+  try {
+    await sendEdgeAdminAlert(payload);
+  } catch (error) {
+    logBillingFunctionEvent("warn", "create_payment_admin_alert_failed", {
+      ...diagnostics,
+      observabilityError: serializeSupabaseError(error),
+      payload,
+    });
+  }
+};
+
+serve(async (req) => {
+  const trace = resolveBillingTraceContext(req.headers);
   let observabilitySupabase: ReturnType<typeof createClient> | null = null;
   let observabilityUser = "anonymous";
   let observabilityEntityId: string | null = null;
-  const trace = readPaymentTraceHeaders(req.headers);
-  let observabilityMetadata: Record<string, unknown> = {
+  let diagnostics: Record<string, unknown> = {
     correlationId: trace.correlationId,
+    functionName: "create-payment",
+    paymentProvider: "razorpay",
     requestId: trace.requestId,
     source: "create_payment_edge",
     traceId: trace.traceId,
   };
 
-  try {
-    if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  const respondWithError = async (error: unknown) => {
+    const billingError = isBillingFunctionError(error)
+      ? error
+      : createBillingFunctionError({
+          code: "UNEXPECTED_BILLING_ERROR",
+          detail: error instanceof Error ? error.message : String(error),
+          diagnostics: {
+            ...diagnostics,
+            unexpectedError: serializeSupabaseError(error),
+          },
+          hint: "Inspect the request diagnostics and billing logs for the failing backend layer.",
+          layer: "create_payment.unhandled",
+          message: "Payment session creation failed unexpectedly.",
+          requestId: trace.requestId,
+          retryable: true,
+          status: 500,
+        });
 
-    const authHeader = req.headers.get("Authorization");
-    const token = authHeader?.replace("Bearer ", "");
-    if (!token) {
-      return json({ error: "Missing auth token" }, 401);
-    }
+    const errorBody = buildBillingErrorBody(billingError.payload);
+    logBillingFunctionEvent("error", "create_payment_failed", {
+      ...diagnostics,
+      error: errorBody,
+    });
 
-    const body = await req.json().catch(() => ({}));
-    const libraryIdInput = String(body?.libraryId ?? "").trim();
-    const months = clampInt(body?.months, 1, 12, 1);
-    const planCodeInput = normalizePlanCode(body?.planName ?? body?.plan);
-    const couponCodeInput = normalizeCouponCode(body?.couponCode);
-    observabilityEntityId = libraryIdInput || null;
-    observabilityMetadata = mergePaymentTraceMetadata({
-      couponCode: couponCodeInput || null,
-      months,
-      planCode: planCodeInput || null,
-      source: "create_payment_edge",
-    }, trace);
-
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const razorpayKeyId = Deno.env.get("RAZORPAY_KEY_ID");
-    const razorpaySecret = Deno.env.get("RAZORPAY_KEY_SECRET");
-
-    if (!supabaseUrl || !serviceRoleKey) {
-      return json(
-        { error: "Supabase secrets missing", hint: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for this Edge Function." },
-        500,
-      );
-    }
-
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
-    observabilitySupabase = supabase;
-
-    if (!razorpayKeyId || !razorpaySecret) {
-      await Promise.allSettled([
-        logEdgeEvent(supabase, {
+    await Promise.all([
+      recordBillingLifecycleEvent(
+        observabilitySupabase,
+        {
           type: "PAYMENT_FAILED",
           status: "FAILED",
           user: observabilityUser,
           entityId: observabilityEntityId,
           metadata: {
-            ...observabilityMetadata,
+            ...diagnostics,
             severity: "CRITICAL",
-            stage: "configuration",
+            stage: billingError.payload.layer,
           },
-          message: "Razorpay secrets missing",
-        }),
-        sendEdgeAdminAlert({
+          message: billingError.payload.message,
+        },
+        diagnostics,
+      ),
+      recordBillingAdminAlert(
+        {
           type: "PAYMENT_FAILED",
           severity: "CRITICAL",
           user: observabilityUser,
-          message: "Razorpay secrets missing",
+          message: billingError.payload.message,
           metadata: {
-            ...observabilityMetadata,
-            stage: "configuration",
+            ...diagnostics,
+            entityId: observabilityEntityId,
+            stage: billingError.payload.layer,
           },
-        }),
-      ]);
-      return json(
-        {
-          error: "Razorpay secrets missing",
-          hint: "Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Supabase Function secrets (Test Mode keys start with rzp_test_...).",
         },
-        500,
-      );
+        diagnostics,
+      ),
+    ]);
+
+    return json(errorBody, billingError.payload.status);
+  };
+
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  const maintenanceBlocked = await blockIfMaintenanceMode(corsHeaders);
+  if (maintenanceBlocked) return maintenanceBlocked;
+
+  try {
+    if (req.method !== "POST") {
+      throw createBillingFunctionError({
+        code: "METHOD_NOT_ALLOWED",
+        detail: `Received ${req.method}.`,
+        diagnostics,
+        hint: "Send this payment creation request as POST.",
+        layer: "http.method",
+        message: "Method not allowed.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 405,
+      });
     }
 
+    const authHeader = req.headers.get("Authorization");
+    const token = authHeader?.replace("Bearer ", "").trim() ?? "";
+    if (!token) {
+      throw createBillingFunctionError({
+        code: "MISSING_AUTH_TOKEN",
+        diagnostics,
+        hint: "Refresh the page, sign in again, and retry checkout.",
+        layer: "auth.header",
+        message: "Payment session creation requires an authenticated session.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 401,
+      });
+    }
+
+    const envValidation = validateBillingRuntimeEnv({
+      RAZORPAY_KEY_ID: Deno.env.get("RAZORPAY_KEY_ID"),
+      RAZORPAY_KEY_SECRET: Deno.env.get("RAZORPAY_KEY_SECRET"),
+      RAZORPAY_WEBHOOK_SECRET: Deno.env.get("RAZORPAY_WEBHOOK_SECRET"),
+      SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+      SUPABASE_URL: Deno.env.get("SUPABASE_URL"),
+    }, {
+      provider: "razorpay",
+      requireWebhookSecret: true,
+    });
+    logBillingFunctionEvent("info", "create_payment_env_validation", {
+      ...diagnostics,
+      envValidation,
+    });
+    if (!envValidation.ok) {
+      throw createBillingFunctionError({
+        code: "BILLING_ENV_INVALID",
+        detail: "The payment runtime is missing one or more required billing secrets.",
+        diagnostics: {
+          ...diagnostics,
+          envValidation,
+        },
+        hint: "Configure Supabase, Razorpay, and webhook secrets in the active billing runtime before activating plans.",
+        layer: "runtime.env",
+        message: "Billing payment creation is not configured correctly.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 500,
+      });
+    }
+
+    const body = await readJsonRequestBody<{
+      couponCode?: string | null;
+      libraryId?: string | null;
+      months?: number | string | null;
+      plan?: string | null;
+      planName?: string | null;
+    }>(req, {
+      diagnostics,
+      layer: "request.json",
+      message: "Payment session payload is invalid.",
+      requestId: trace.requestId,
+    });
+
+    const libraryIdInput = String(body?.libraryId ?? "").trim();
+    const months = clampInt(body?.months, 1, 12, 1);
+    const planCodeInput = normalizePlanCode(body?.planName ?? body?.plan);
+    const couponCodeInput = normalizeCouponCode(body?.couponCode);
+    diagnostics = mergePaymentTraceMetadata({
+      couponCode: couponCodeInput || null,
+      functionName: "create-payment",
+      libraryIdInput: libraryIdInput || null,
+      months,
+      paymentProvider: "razorpay",
+      planCode: planCodeInput || null,
+      source: "create_payment_edge",
+    }, trace);
+    observabilityEntityId = libraryIdInput || null;
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") as string,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") as string,
+    );
+    observabilitySupabase = supabase;
+
+    logBillingFunctionEvent("info", "create_payment_request_received", diagnostics);
+
     const { data: authData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !authData.user) {
-      return json({ error: "Unauthorized" }, 401);
+    if (authError) {
+      throw createSupabaseOperationError({
+        diagnostics,
+        error: authError,
+        hint: "The billing token could not be validated. Ask the user to sign in again.",
+        layer: "auth.get_user",
+        message: "Failed to validate the authenticated billing user.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 401,
+      });
+    }
+    if (!authData.user) {
+      throw createBillingFunctionError({
+        code: "UNAUTHORIZED",
+        diagnostics,
+        hint: "Sign in again before activating a plan.",
+        layer: "auth.get_user",
+        message: "Unauthorized payment session request.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 401,
+      });
     }
 
     const userId = authData.user.id;
     observabilityUser = `user:${userId}`;
+    diagnostics = {
+      ...diagnostics,
+      userId,
+    };
+
     const { data: roleData, error: roleError } = await supabase
       .from("user_roles")
       .select("role, library_id")
       .eq("user_id", userId);
-    if (roleError) throw roleError;
+    if (roleError) {
+      throw createSupabaseOperationError({
+        diagnostics,
+        error: roleError,
+        hint: "Check the user_roles table permissions and data in the active Supabase project.",
+        layer: "db.user_roles.fetch",
+        message: "Failed to load billing roles for the authenticated user.",
+        requestId: trace.requestId,
+      });
+    }
 
     const roles = (roleData ?? []) as UserRoleRow[];
-    const isSuperAdmin = roles.some((r) => r.role === "super_admin");
-    const ownedLibraryIds = await listOwnedLibraryIds(supabase, userId);
-    const ownedLibraryIdSet = new Set(ownedLibraryIds);
-
+    const isSuperAdmin = roles.some((role) => role.role === "super_admin");
+    const ownedLibraryIds = await listOwnedLibraryIds(supabase, userId, trace.requestId);
     const libraryId = resolveLibraryId(roles, libraryIdInput, ownedLibraryIds);
     if (!libraryId) {
-      return json({ error: "libraryId is required" }, 400);
+      throw createBillingFunctionError({
+        code: "LIBRARY_ID_REQUIRED",
+        diagnostics: {
+          ...diagnostics,
+          ownedLibraryIds,
+          roleLibraryIds: roles.map((role) => role.library_id).filter(Boolean),
+        },
+        hint: "Select a library before activating a plan.",
+        layer: "request.validation",
+        message: "libraryId is required.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 400,
+      });
     }
+
     observabilityEntityId = libraryId;
-
     const canAccessLibrary =
-      ownedLibraryIdSet.has(libraryId) ||
-      roles.some((r) => r.library_id === libraryId && (r.role === "library_owner" || r.role === "staff"));
+      ownedLibraryIds.includes(libraryId) ||
+      roles.some((role) => role.library_id === libraryId && (role.role === "library_owner" || role.role === "staff"));
+
+    diagnostics = {
+      ...diagnostics,
+      libraryId,
+      ownedLibraryIds,
+      roleLibraryIds: roles.map((role) => role.library_id).filter(Boolean),
+      roles: roles.map((role) => role.role),
+    };
+
     if (!isSuperAdmin && !canAccessLibrary) {
-      return json({ error: "Forbidden" }, 403);
+      throw createBillingFunctionError({
+        code: "FORBIDDEN",
+        diagnostics,
+        hint: "Use the library owner or staff account linked to this library.",
+        layer: "auth.library_access",
+        message: "This account cannot create a payment session for the selected library.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 403,
+      });
     }
 
-    const { data: sub, error: subError } = await supabase
-      .from("library_subscriptions")
-      .select("id, plan_name")
-      .eq("library_id", libraryId)
-      .single();
-    if (subError) throw subError;
+    const sub = await ensureLibrarySubscription(supabase, libraryId, userId, trace.requestId);
+    diagnostics = {
+      ...diagnostics,
+      ensuredSubscriptionId: sub.id,
+      ensuredSubscriptionPlan: sub.plan_name,
+    };
+    logBillingFunctionEvent("info", "create_payment_subscription_ensured", diagnostics);
 
-    const currentPlanCode = normalizePlanCode(sub?.plan_name);
+    const currentPlanCode = normalizePlanCode(sub.plan_name);
     const requestedPlanCode = planCodeInput || currentPlanCode;
+    diagnostics = {
+      ...diagnostics,
+      currentPlanCode: currentPlanCode || null,
+      requestedPlanCode: requestedPlanCode || null,
+    };
+
     if (!requestedPlanCode) {
-      return json({ error: "plan is required" }, 400);
+      throw createBillingFunctionError({
+        code: "PLAN_REQUIRED",
+        diagnostics,
+        hint: "Choose a valid subscription plan before activating billing.",
+        layer: "request.validation",
+        message: "plan is required.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 400,
+      });
     }
 
-    await logEdgeEvent(supabase, {
-      type: "PAYMENT_INITIATED",
-      status: "START",
-      user: observabilityUser,
-      entityId: libraryId,
-      metadata: {
-        ...observabilityMetadata,
-        currentPlanCode,
-        requestedPlanCode,
-        severity: "INFO",
+    await recordBillingLifecycleEvent(
+      supabase,
+      {
+        type: "PAYMENT_INITIATED",
+        status: "START",
+        user: observabilityUser,
+        entityId: libraryId,
+        metadata: {
+          ...diagnostics,
+          currentPlanCode: currentPlanCode || null,
+          requestedPlanCode,
+          severity: "INFO",
+        },
+        message: "Razorpay order creation started.",
       },
-      message: "Razorpay order creation started.",
-    });
+      diagnostics,
+    );
 
     const { data: planRow, error: planError } = await supabase
       .from("subscription_plans")
       .select("code, name, description, price, seats_limit, lockers_limit, features, is_active")
       .eq("code", requestedPlanCode)
       .maybeSingle();
-    if (planError) throw planError;
+    if (planError) {
+      throw createSupabaseOperationError({
+        diagnostics,
+        error: planError,
+        hint: "Check the subscription_plans table, grants, and active Supabase project alignment.",
+        layer: "db.subscription_plans.fetch",
+        message: "Failed to resolve the selected billing plan.",
+        requestId: trace.requestId,
+      });
+    }
     if (!planRow) {
-      return json({ error: "Invalid plan selected" }, 400);
+      throw createBillingFunctionError({
+        code: "PLAN_NOT_FOUND",
+        diagnostics,
+        hint: "Select a plan that exists in subscription_plans and is active for billing.",
+        layer: "db.subscription_plans.fetch",
+        message: "Invalid plan selected.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 400,
+      });
     }
 
     const plan = planRow as SubscriptionPlanRow;
     const canPurchaseInactive = isSuperAdmin || requestedPlanCode === currentPlanCode;
     if (!plan.is_active && !canPurchaseInactive) {
-      return json({ error: "This plan is currently disabled" }, 400);
+      throw createBillingFunctionError({
+        code: "PLAN_DISABLED",
+        diagnostics,
+        hint: "Enable the plan in subscription_plans or choose another active plan.",
+        layer: "db.subscription_plans.fetch",
+        message: "This plan is currently disabled.",
+        requestId: trace.requestId,
+        retryable: false,
+        status: 400,
+      });
     }
 
     const { data: libraryRow, error: libraryError } = await supabase
@@ -305,15 +586,41 @@ serve(async (req) => {
       .select("total_seats, total_lockers")
       .eq("id", libraryId)
       .single();
-    if (libraryError) throw libraryError;
+    if (libraryError) {
+      throw createSupabaseOperationError({
+        diagnostics,
+        error: libraryError,
+        hint: "Confirm the selected library exists in the active Supabase project.",
+        layer: "db.libraries.fetch_capacity",
+        message: "Failed to load the library capacity required for billing validation.",
+        requestId: trace.requestId,
+      });
+    }
 
+    const currentSeats = Math.max(0, Number((libraryRow as LibraryCapacityRow | null)?.total_seats ?? 0));
+    const currentLockers = Math.max(0, Number((libraryRow as LibraryCapacityRow | null)?.total_lockers ?? 0));
     const capacityError = buildCapacityLimitError({
-      currentLockers: Math.max(0, Number((libraryRow as LibraryCapacityRow | null)?.total_lockers ?? 0)),
-      currentSeats: Math.max(0, Number((libraryRow as LibraryCapacityRow | null)?.total_seats ?? 0)),
+      currentLockers,
+      currentSeats,
       plan,
     });
     if (capacityError) {
-      return json({ error: capacityError }, 400);
+      throw createBillingFunctionError({
+        code: "PLAN_CAPACITY_EXCEEDED",
+        diagnostics: {
+          ...diagnostics,
+          currentLockers,
+          currentSeats,
+          planLockersLimit: plan.lockers_limit,
+          planSeatsLimit: plan.seats_limit,
+        },
+        hint: "Reduce library seat or locker capacity before switching to this plan.",
+        layer: "billing.capacity_validation",
+        message: capacityError,
+        requestId: trace.requestId,
+        retryable: false,
+        status: 400,
+      });
     }
 
     const unitPrice = safeNumber(plan.price, 0);
@@ -324,16 +631,34 @@ serve(async (req) => {
       .select("referred_by, affiliate_id")
       .eq("library_id", libraryId)
       .maybeSingle();
-    if (acquisitionError) throw acquisitionError;
+    if (acquisitionError) {
+      throw createSupabaseOperationError({
+        diagnostics,
+        error: acquisitionError,
+        hint: "Check library_acquisition visibility in the current Supabase project.",
+        layer: "db.library_acquisition.fetch",
+        message: "Failed to load referral state for payment creation.",
+        requestId: trace.requestId,
+      });
+    }
 
     const { count: capturedCount, error: capturedCountError } = await supabase
       .from("subscription_payments")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
       .eq("status", "captured");
-    if (capturedCountError) throw capturedCountError;
-    const isFirstPurchase = Number(capturedCount ?? 0) === 0;
+    if (capturedCountError) {
+      throw createSupabaseOperationError({
+        diagnostics,
+        error: capturedCountError,
+        hint: "Check subscription_payments access and indexes in the active Supabase project.",
+        layer: "db.subscription_payments.count_captured",
+        message: "Failed to determine whether this is the library's first paid billing cycle.",
+        requestId: trace.requestId,
+      });
+    }
 
+    const isFirstPurchase = Number(capturedCount ?? 0) === 0;
     let discountKind: "coupon" | "referral" | null = null;
     let discountAmount = 0;
     let coupon: CouponRow | null = null;
@@ -344,18 +669,54 @@ serve(async (req) => {
         .select("id, code, discount_type, discount_value, expires_at, max_uses, is_active")
         .eq("code", couponCodeInput)
         .maybeSingle();
-      if (couponError) throw couponError;
+      if (couponError) {
+        throw createSupabaseOperationError({
+          diagnostics,
+          error: couponError,
+          hint: "Check coupons table access and the selected coupon code.",
+          layer: "db.coupons.fetch",
+          message: "Failed to validate the supplied coupon code.",
+          requestId: trace.requestId,
+        });
+      }
       if (!couponRow) {
-        return json({ error: "Invalid coupon code" }, 400);
+        throw createBillingFunctionError({
+          code: "COUPON_NOT_FOUND",
+          diagnostics,
+          hint: "Enter an active coupon code that exists in the coupons table.",
+          layer: "db.coupons.fetch",
+          message: "Invalid coupon code.",
+          requestId: trace.requestId,
+          retryable: false,
+          status: 400,
+        });
       }
 
       coupon = couponRow as CouponRow;
       if (!coupon.is_active) {
-        return json({ error: "This coupon is disabled" }, 400);
+        throw createBillingFunctionError({
+          code: "COUPON_DISABLED",
+          diagnostics,
+          hint: "Choose an enabled coupon or remove the coupon from checkout.",
+          layer: "billing.coupon_validation",
+          message: "This coupon is disabled.",
+          requestId: trace.requestId,
+          retryable: false,
+          status: 400,
+        });
       }
 
       if (coupon.expires_at && new Date(coupon.expires_at) <= new Date()) {
-        return json({ error: "This coupon has expired" }, 400);
+        throw createBillingFunctionError({
+          code: "COUPON_EXPIRED",
+          diagnostics,
+          hint: "Use an unexpired coupon code or continue without a coupon.",
+          layer: "billing.coupon_validation",
+          message: "This coupon has expired.",
+          requestId: trace.requestId,
+          retryable: false,
+          status: 400,
+        });
       }
 
       if (coupon.max_uses) {
@@ -364,9 +725,27 @@ serve(async (req) => {
           .select("id", { count: "exact", head: true })
           .eq("coupon_id", coupon.id)
           .in("status", ["reserved", "captured"]);
-        if (usesError) throw usesError;
+        if (usesError) {
+          throw createSupabaseOperationError({
+            diagnostics,
+            error: usesError,
+            hint: "Check coupon_redemptions access and data consistency in the current project.",
+            layer: "db.coupon_redemptions.count",
+            message: "Failed to validate coupon usage limits.",
+            requestId: trace.requestId,
+          });
+        }
         if (Number(usesCount ?? 0) >= Number(coupon.max_uses)) {
-          return json({ error: "Coupon max uses reached" }, 400);
+          throw createBillingFunctionError({
+            code: "COUPON_MAX_USES_REACHED",
+            diagnostics,
+            hint: "Use a coupon with remaining redemptions or continue without one.",
+            layer: "billing.coupon_validation",
+            message: "Coupon max uses reached.",
+            requestId: trace.requestId,
+            retryable: false,
+            status: 400,
+          });
         }
       }
 
@@ -382,6 +761,16 @@ serve(async (req) => {
 
     const finalAmount = Math.max(1, Math.floor(subtotal - discountAmount));
     const amountInPaise = Math.max(100, Math.round(finalAmount * 100));
+    const quotePayload = {
+      couponCode: coupon?.code ?? couponCodeInput || null,
+      discountAmount,
+      discountKind,
+      finalAmount,
+      months,
+      subtotal,
+      unitPrice,
+    };
+
     const idempotencyKey = buildSubscriptionPaymentIdempotencyKey({
       couponCode: coupon?.code ?? couponCodeInput,
       currentPlanCode,
@@ -389,9 +778,10 @@ serve(async (req) => {
       months,
       planCode: plan.code,
     });
-    observabilityMetadata = {
-      ...observabilityMetadata,
+    diagnostics = {
+      ...diagnostics,
       idempotencyKey,
+      quotePayload,
     };
 
     const { data: activeCreatedRows, error: activeCreatedRowsError } = await supabase
@@ -401,251 +791,292 @@ serve(async (req) => {
       .eq("status", "created")
       .order("created_at", { ascending: false })
       .limit(8);
-    if (activeCreatedRowsError) throw activeCreatedRowsError;
+    if (activeCreatedRowsError) {
+      throw createSupabaseOperationError({
+        diagnostics,
+        error: activeCreatedRowsError,
+        hint: "Check subscription_payments reads in the active Supabase project.",
+        layer: "db.subscription_payments.lookup_reusable",
+        message: "Failed to inspect recent payment sessions for reuse.",
+        requestId: trace.requestId,
+      });
+    }
 
     const reusablePayment = findReusableSubscriptionPayment(
       (activeCreatedRows ?? []) as ReusableSubscriptionPayment[],
       idempotencyKey,
     );
     if (reusablePayment?.razorpay_order_id) {
-      await logEdgeEvent(supabase, {
-        type: "PAYMENT_INITIATED",
-        status: "SUCCESS",
-        user: observabilityUser,
-        entityId: String(reusablePayment.razorpay_order_id),
-        metadata: {
-          ...observabilityMetadata,
-          amount: safeNumber(reusablePayment.amount, finalAmount),
-          currency: reusablePayment.currency ?? "INR",
-          libraryId,
-          orderId: reusablePayment.razorpay_order_id,
-          requestedPlanCode,
-          reused_order: true,
-          severity: "INFO",
-        },
-        message: "Reused an active Razorpay order for the same billing request.",
+      const reusedAmount = Math.max(100, Math.round(safeNumber(reusablePayment.amount, finalAmount) * 100));
+      logBillingFunctionEvent("info", "create_payment_reused_order", {
+        ...diagnostics,
+        reusedOrderId: reusablePayment.razorpay_order_id,
       });
 
+      await recordBillingLifecycleEvent(
+        supabase,
+        {
+          type: "PAYMENT_INITIATED",
+          status: "SUCCESS",
+          user: observabilityUser,
+          entityId: String(reusablePayment.razorpay_order_id),
+          metadata: {
+            ...diagnostics,
+            amount: safeNumber(reusablePayment.amount, finalAmount),
+            currency: reusablePayment.currency ?? "INR",
+            libraryId,
+            orderId: reusablePayment.razorpay_order_id,
+            requestedPlanCode,
+            reused_order: true,
+            severity: "INFO",
+          },
+          message: "Reused an active Razorpay order for the same billing request.",
+        },
+        diagnostics,
+      );
+
       return json({
-        amount: Math.max(100, Math.round(safeNumber(reusablePayment.amount, finalAmount) * 100)),
+        amount: reusedAmount,
         currency: reusablePayment.currency ?? "INR",
-        keyId: razorpayKeyId,
+        keyId: Deno.env.get("RAZORPAY_KEY_ID"),
         orderId: reusablePayment.razorpay_order_id,
+        requestId: trace.requestId,
         reused: true,
       });
     }
 
+    const razorpayKeyId = Deno.env.get("RAZORPAY_KEY_ID") as string;
+    const razorpaySecret = Deno.env.get("RAZORPAY_KEY_SECRET") as string;
     const basic = btoa(`${razorpayKeyId}:${razorpaySecret}`);
     const razorpayAbortController = new AbortController();
     const razorpayTimeout = setTimeout(() => razorpayAbortController.abort("razorpay_order_timeout"), 12_000);
+
+    const providerRequestPayload = {
+      amount: amountInPaise,
+      currency: "INR",
+      notes: {
+        coupon: coupon?.code ?? "",
+        idempotency_key: idempotencyKey,
+        library_id: libraryId,
+        months: String(months),
+        plan: plan.code,
+      },
+      receipt: `${libraryId.slice(0, 8)}-${Date.now()}`,
+    };
+    logBillingFunctionEvent("info", "create_payment_provider_request", {
+      ...diagnostics,
+      providerRequestPayload,
+    });
+
     const razorpayResponse = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST",
       headers: {
         Authorization: `Basic ${basic}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        amount: amountInPaise,
-        currency: "INR",
-        receipt: `${libraryId.slice(0, 8)}-${Date.now()}`,
-        notes: {
-          idempotency_key: idempotencyKey,
-          library_id: libraryId,
-          months: String(months),
-          plan: plan.code,
-          coupon: coupon?.code ?? "",
-        },
-      }),
+      body: JSON.stringify(providerRequestPayload),
       signal: razorpayAbortController.signal,
     }).finally(() => clearTimeout(razorpayTimeout));
 
+    const providerResponseText = await razorpayResponse.text();
+    logBillingFunctionEvent("info", "create_payment_provider_response", {
+      ...diagnostics,
+      providerResponseText,
+      providerStatus: razorpayResponse.status,
+    });
+
     if (!razorpayResponse.ok) {
-      const errBody = await razorpayResponse.text();
-      console.error("Razorpay order creation failed", { status: razorpayResponse.status, body: errBody });
-      let detail: string | null = null;
+      let providerDetail: string | null = null;
+      let providerCode = "RAZORPAY_ORDER_CREATION_FAILED";
       try {
-        const parsed = JSON.parse(errBody);
-        detail = parsed?.error?.description ? String(parsed.error.description) : null;
+        const parsed = JSON.parse(providerResponseText) as Record<string, unknown>;
+        const errorRecord =
+          parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
+            ? (parsed.error as Record<string, unknown>)
+            : null;
+        providerDetail =
+          typeof errorRecord?.description === "string"
+            ? errorRecord.description
+            : typeof parsed.message === "string"
+              ? parsed.message
+              : null;
+        if (typeof errorRecord?.code === "string" && errorRecord.code.trim()) {
+          providerCode = errorRecord.code.trim();
+        }
       } catch {
-        // ignore
+        providerDetail = providerResponseText || null;
       }
-      const paymentFailureMessage = detail ?? (errBody.length > 400 ? `${errBody.slice(0, 400)}...` : errBody) || "Razorpay order creation failed";
-      await Promise.allSettled([
-        logEdgeEvent(supabase, {
-          type: "PAYMENT_FAILED",
-          status: "FAILED",
-          user: observabilityUser,
-          entityId: libraryId,
-          metadata: {
-            ...observabilityMetadata,
-            httpStatus: razorpayResponse.status,
-            severity: "CRITICAL",
-            stage: "order_creation",
-          },
-          message: paymentFailureMessage,
-        }),
-        sendEdgeAdminAlert({
-          type: "PAYMENT_FAILED",
-          severity: "CRITICAL",
-          user: observabilityUser,
-          message: paymentFailureMessage,
-          metadata: {
-            ...observabilityMetadata,
-            httpStatus: razorpayResponse.status,
-            libraryId,
-            stage: "order_creation",
-          },
-        }),
-      ]);
-      return json(
-        {
-          error: "Razorpay order creation failed",
-          status: razorpayResponse.status,
-          detail: detail ?? (errBody.length > 400 ? `${errBody.slice(0, 400)}...` : errBody),
+
+      throw createBillingFunctionError({
+        code: providerCode,
+        detail: providerDetail ?? `Razorpay returned HTTP ${razorpayResponse.status}.`,
+        diagnostics: {
+          ...diagnostics,
+          providerResponseText,
+          providerStatus: razorpayResponse.status,
         },
-        502,
-      );
+        hint: "Check Razorpay credentials, account mode, and order payload validity.",
+        layer: "provider.razorpay.create_order",
+        message: "Razorpay order creation failed.",
+        requestId: trace.requestId,
+        retryable: razorpayResponse.status >= 500,
+        status: 502,
+      });
     }
 
-    const order = (await razorpayResponse.json()) as { id?: string; amount?: number; currency?: string };
+    let order: { id?: string; amount?: number; currency?: string };
+    try {
+      order = JSON.parse(providerResponseText) as { id?: string; amount?: number; currency?: string };
+    } catch (error) {
+      throw createBillingFunctionError({
+        code: "RAZORPAY_INVALID_RESPONSE",
+        detail: error instanceof Error ? error.message : "Razorpay returned non-JSON order data.",
+        diagnostics: {
+          ...diagnostics,
+          providerResponseText,
+        },
+        hint: "Retry the request and inspect the provider response in billing logs if this persists.",
+        layer: "provider.razorpay.parse_response",
+        message: "Razorpay returned an invalid order response.",
+        requestId: trace.requestId,
+        retryable: true,
+        status: 502,
+      });
+    }
+
     if (!order?.id || typeof order.amount !== "number" || !order.currency) {
-      console.error("Unexpected Razorpay order response", order);
-      await Promise.allSettled([
-        logEdgeEvent(supabase, {
-          type: "PAYMENT_FAILED",
-          status: "FAILED",
-          user: observabilityUser,
-          entityId: libraryId,
-          metadata: {
-            ...observabilityMetadata,
-            severity: "CRITICAL",
-            stage: "order_response_validation",
-          },
-          message: "Invalid Razorpay order response",
-        }),
-        sendEdgeAdminAlert({
-          type: "PAYMENT_FAILED",
-          severity: "CRITICAL",
-          user: observabilityUser,
-          message: "Invalid Razorpay order response",
-          metadata: {
-            ...observabilityMetadata,
-            libraryId,
-            stage: "order_response_validation",
-          },
-        }),
-      ]);
-      return json({ error: "Invalid Razorpay order response" }, 502);
+      throw createBillingFunctionError({
+        code: "RAZORPAY_INVALID_RESPONSE",
+        detail: "Razorpay did not return a valid order id, amount, or currency.",
+        diagnostics: {
+          ...diagnostics,
+          providerOrder: order,
+        },
+        hint: "Inspect the provider response in billing logs and verify Razorpay order creation settings.",
+        layer: "provider.razorpay.validate_response",
+        message: "Razorpay returned an invalid order response.",
+        requestId: trace.requestId,
+        retryable: true,
+        status: 502,
+      });
     }
 
     const { data: paymentRow, error: paymentInsertError } = await supabase
       .from("subscription_payments")
       .insert({
-        library_id: libraryId,
-        subscription_id: sub.id,
         amount: finalAmount,
-        idempotency_key: idempotencyKey,
         currency: "INR",
-        razorpay_order_id: order.id,
-        status: "created",
-        months_purchased: Number(months),
+        idempotency_key: idempotencyKey,
+        library_id: libraryId,
         metadata: {
-          plan_code: plan.code,
-          plan_name: plan.name,
-          plan_description: plan.description,
-          plan_price: safeNumber(plan.price, 0),
-          plan_seats_limit: plan.seats_limit,
-          plan_lockers_limit: plan.lockers_limit,
-          plan_features: plan.features,
-          subtotal_amount: subtotal,
-          discount_amount: discountAmount,
-          total_amount: finalAmount,
-          discount_kind: discountKind,
-          coupon_id: coupon?.id ?? null,
+          affiliate_id: acquisition?.affiliate_id ?? null,
           coupon_code: coupon?.code ?? null,
           coupon_discount_type: coupon?.discount_type ?? null,
           coupon_discount_value: coupon ? safeNumber(coupon.discount_value, 0) : null,
-          idempotency_key: idempotencyKey,
-          referral_referred_by: acquisition?.referred_by ?? null,
-          affiliate_id: acquisition?.affiliate_id ?? null,
+          coupon_id: coupon?.id ?? null,
           created_by: userId,
+          discount_amount: discountAmount,
+          discount_kind: discountKind,
+          idempotency_key: idempotencyKey,
+          plan_code: plan.code,
+          plan_description: plan.description,
+          plan_features: plan.features,
+          plan_lockers_limit: plan.lockers_limit,
+          plan_name: plan.name,
+          plan_price: safeNumber(plan.price, 0),
+          plan_seats_limit: plan.seats_limit,
+          referral_referred_by: acquisition?.referred_by ?? null,
           source_correlation_id: trace.correlationId,
           source_request_id: trace.requestId,
           source_trace_id: trace.traceId,
+          subtotal_amount: subtotal,
+          total_amount: finalAmount,
         },
+        months_purchased: Number(months),
+        razorpay_order_id: order.id,
+        status: "created",
+        subscription_id: sub.id,
       })
       .select("id")
       .single();
-    if (paymentInsertError) throw paymentInsertError;
+    if (paymentInsertError) {
+      throw createSupabaseOperationError({
+        diagnostics: {
+          ...diagnostics,
+          providerOrder: order,
+        },
+        error: paymentInsertError,
+        hint: "Check subscription_payments grants, foreign keys, and billing migration status.",
+        layer: "db.subscription_payments.insert",
+        message: "Failed to persist the new payment session in Supabase.",
+        requestId: trace.requestId,
+      });
+    }
 
     if (coupon && paymentRow?.id) {
       const { error: redemptionError } = await supabase.from("coupon_redemptions").insert({
-        coupon_id: coupon.id,
         code: coupon.code,
-        user_id: userId,
+        coupon_id: coupon.id,
+        discount_amount: discountAmount,
         library_id: libraryId,
-        subscription_payment_id: paymentRow.id,
         razorpay_order_id: order.id,
         status: "reserved",
-        discount_amount: discountAmount,
+        subscription_payment_id: paymentRow.id,
+        user_id: userId,
       });
-      if (redemptionError) throw redemptionError;
+      if (redemptionError) {
+        throw createSupabaseOperationError({
+          diagnostics: {
+            ...diagnostics,
+            couponId: coupon.id,
+            paymentRowId: paymentRow.id,
+            providerOrderId: order.id,
+          },
+          error: redemptionError,
+          hint: "Check coupon_redemptions grants and foreign keys in the active Supabase project.",
+          layer: "db.coupon_redemptions.insert",
+          message: "Failed to reserve the coupon redemption for this billing session.",
+          requestId: trace.requestId,
+        });
+      }
     }
 
-    await logEdgeEvent(supabase, {
-      type: "PAYMENT_INITIATED",
-      status: "SUCCESS",
-      user: observabilityUser,
-      entityId: order.id,
-      metadata: {
-        ...observabilityMetadata,
-        amount: finalAmount,
-        currency: order.currency,
-        idempotencyKey,
-        libraryId,
-        orderId: order.id,
-        requestedPlanCode,
-        severity: "INFO",
-        subscriptionPaymentId: paymentRow?.id ?? null,
+    const successDiagnostics = {
+      ...diagnostics,
+      orderId: order.id,
+      providerAmount: order.amount,
+      providerCurrency: order.currency,
+      subscriptionPaymentId: paymentRow?.id ?? null,
+    };
+    logBillingFunctionEvent("info", "create_payment_succeeded", successDiagnostics);
+
+    await recordBillingLifecycleEvent(
+      supabase,
+      {
+        type: "PAYMENT_INITIATED",
+        status: "SUCCESS",
+        user: observabilityUser,
+        entityId: order.id,
+        metadata: {
+          ...successDiagnostics,
+          amount: finalAmount,
+          currency: order.currency,
+          severity: "INFO",
+        },
+        message: "Razorpay order created successfully.",
       },
-      message: "Razorpay order created successfully.",
-    });
+      successDiagnostics,
+    );
 
     return json({
-      orderId: order.id,
       amount: order.amount,
       currency: order.currency,
       keyId: razorpayKeyId,
+      orderId: order.id,
+      requestId: trace.requestId,
+      reused: false,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (observabilitySupabase) {
-      await Promise.allSettled([
-        logEdgeEvent(observabilitySupabase, {
-          type: "PAYMENT_FAILED",
-          status: "FAILED",
-          user: observabilityUser,
-          entityId: observabilityEntityId,
-          metadata: {
-            ...observabilityMetadata,
-            severity: "CRITICAL",
-            stage: "unexpected_exception",
-          },
-          message,
-        }),
-        sendEdgeAdminAlert({
-          type: "PAYMENT_FAILED",
-          severity: "CRITICAL",
-          user: observabilityUser,
-          message,
-          metadata: {
-            ...observabilityMetadata,
-            entityId: observabilityEntityId,
-            stage: "unexpected_exception",
-          },
-        }),
-      ]);
-    }
-    return json({ error: message }, 500);
+    return await respondWithError(error);
   }
 });

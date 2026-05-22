@@ -11,7 +11,6 @@ import {
   readFunctionErrorMessage,
   waitForActiveLibrarySubscription,
 } from "@/lib/billingEdgeFunctions";
-import { getSafeErrorMessage } from "@/lib/errorHandling";
 import {
   logPaymentInitiated,
   logPaymentStart,
@@ -188,7 +187,14 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
       razorpay.open();
     } catch (err: unknown) {
       await reportPaymentFailure(paymentContext, err, "create_order");
-      const message = getSafeErrorMessage(err, "Renewal could not be started. Try again in a moment.");
+      const message = err instanceof Error && err.message.trim()
+        ? err.message
+        : "Renewal could not be started. Try again in a moment.";
+      console.error("[subscription-gate] renewal failed", {
+        error: message,
+        libraryId,
+        paymentContext,
+      });
       toast({ title: "Renewal failed", description: message, variant: "destructive" });
     } finally {
       setRenewLoading(false);

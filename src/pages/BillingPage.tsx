@@ -15,7 +15,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useUserRole } from "@/hooks/useUserRole";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
-import { getSafeErrorMessage } from "@/lib/errorHandling";
 import {
   getEdgeFunctionAuthHeaders,
   isFunctionUnavailableError,
@@ -233,7 +232,12 @@ const BillingPage = () => {
 
   const appliedCouponNormalized = useMemo(() => (appliedCoupon ? normalizeCouponCode(appliedCoupon) : ""), [appliedCoupon]);
 
-  const { data: quote, isFetching: quoteFetching } = useQuery({
+  const {
+    data: quote,
+    error: quoteError,
+    isFetching: quoteFetching,
+    refetch: refetchQuote,
+  } = useQuery({
     queryKey: ["subscription-quote", libraryId, normalizePlanCode(selectedPlan), appliedCouponNormalized],
     queryFn: async (): Promise<SubscriptionQuoteResponse | null> => {
       if (!libraryId || !selectedPlanConfig) return null;
@@ -257,6 +261,8 @@ const BillingPage = () => {
     gcTime: 2 * 60_000,
     retry: 1,
   });
+
+  const quoteErrorMessage = quoteError instanceof Error ? quoteError.message : null;
 
   const applyCouponMutation = useMutation({
     mutationFn: async (code: string) => {
@@ -443,7 +449,13 @@ const BillingPage = () => {
       razorpay.open();
     } catch (error) {
       await reportPaymentFailure(paymentContext, error, "create_order");
-      const message = getSafeErrorMessage(error, "Unable to start checkout.");
+      const message = error instanceof Error && error.message.trim() ? error.message : "Unable to start checkout.";
+      console.error("[billing-page] checkout failed", {
+        error: message,
+        libraryId,
+        paymentContext,
+        selectedPlan: selectedPlanConfig.code,
+      });
       toast({
         title: "Checkout failed",
         description: message,
@@ -634,6 +646,8 @@ const BillingPage = () => {
                   <p className="text-sm text-muted-foreground">
                     {selectedPlanBlocked ? (
                       "Reduce configured capacity in Settings before switching to this plan."
+                    ) : quoteErrorMessage ? (
+                      quoteErrorMessage
                     ) : quoteFetching || plansLoading ? (
                       "Calculating total..."
                     ) : quotePricing ? (
@@ -658,6 +672,25 @@ const BillingPage = () => {
 
                   {selectedPlanCapacityWarning ? (
                     <p className="mt-3 text-sm text-amber-700">{selectedPlanCapacityWarning}</p>
+                  ) : null}
+
+                  {quoteErrorMessage ? (
+                    <Alert variant="destructive" className="mt-3">
+                      <AlertTitle>Subscription quote failed</AlertTitle>
+                      <AlertDescription className="space-y-3">
+                        <span className="block">{quoteErrorMessage}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            void refetchQuote();
+                          }}
+                        >
+                          Retry quote
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
                   ) : null}
 
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -714,6 +747,7 @@ const BillingPage = () => {
                     plansLoading ||
                     !selectedPlanConfig ||
                     !planIsSelected ||
+                    !!quoteErrorMessage ||
                     selectedPlanBlocked
                   }
                 >

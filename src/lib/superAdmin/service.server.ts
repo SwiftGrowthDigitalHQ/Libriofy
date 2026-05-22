@@ -24,6 +24,7 @@ import {
 } from "../observability/runtimeMetrics.server.js";
 import { buildServerReadiness } from "../observability/serverHealth.server.js";
 import { resolveSupabaseAdminConfig } from "../observability/supabaseAdminConfig.server.js";
+import { validateServerStartupEnv } from "../observability/startupValidation.js";
 import { createObservabilityServiceClient } from "../observability/store.server.js";
 import { createInstrumentedServerSupabaseFetch } from "../observability/serverSupabaseFetch.server.js";
 import {
@@ -975,6 +976,66 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
   }
 
   return "";
+};
+
+const hasConfiguredEnvValue = (value: string | undefined) => Boolean(value && value.trim());
+
+const normalizeComparableUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "") || "/"}`;
+  } catch {
+    return value.trim();
+  }
+};
+
+const buildBillingProviderDiagnostics = (env: EnvLike) => {
+  const activeProvider = readEnv(env, "BILLING_PROVIDER").toLowerCase() === "stripe" ? "stripe" : "razorpay";
+  const razorpayMissing = ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"].filter(
+    (key) => !hasConfiguredEnvValue(env[key]),
+  );
+  const stripeMissing = ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"].filter(
+    (key) => !hasConfiguredEnvValue(env[key]),
+  );
+
+  return {
+    activeProvider,
+    providers: {
+      razorpay: {
+        configured: razorpayMissing.length === 0,
+        missing: razorpayMissing,
+      },
+      stripe: {
+        configured: stripeMissing.length === 0,
+        missing: stripeMissing,
+      },
+    },
+  };
+};
+
+const serializeServiceError = (error: unknown) => {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+    };
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    return {
+      code: typeof record.code === "string" ? record.code : null,
+      details: record.details ?? null,
+      hint: typeof record.hint === "string" ? record.hint : null,
+      message: typeof record.message === "string" ? record.message : String(error),
+      name: typeof record.name === "string" ? record.name : null,
+    };
+  }
+
+  return {
+    message: String(error),
+    name: null,
+  };
 };
 
 export const buildServiceClient = (env: EnvLike = process.env) => {
@@ -8962,6 +9023,188 @@ export const getBillingCenterData = async (
     gstRatePercent: parseSettingNumber(settingsMap.get("gst_rate_percent")?.value) ?? 18,
     operations: operational.billingOperations,
   });
+};
+
+export const getBillingDiagnosticsData = async (
+  env: EnvLike,
+): Promise<StructuredApiResponse<{
+  billingProviderStatus: ReturnType<typeof buildBillingProviderDiagnostics>;
+  dbIntegrity: Record<string, unknown> | null;
+  envValidation: ReturnType<typeof validateServerStartupEnv>;
+  paymentConfigStatus: {
+    activeProviderConfigured: boolean;
+    clientRazorpayKeyConfigured: boolean;
+    clientSupabaseUrlConfigured: boolean;
+    serviceRoleConfigured: boolean;
+    webhookConfigured: boolean;
+  };
+  planCount: number;
+  quoteGenerationHealth: {
+    detail: string;
+    ok: boolean;
+  };
+  rpcHealth: {
+    detail: string;
+    ok: boolean;
+  };
+  sourceOfTruth: {
+    adminSupabaseConfigOk: boolean;
+    adminSupabaseUrl: string | null;
+    clientSupabaseUrl: string | null;
+    sameSupabaseProject: boolean;
+  };
+  supabaseConnectivity: {
+    detail: string;
+    ok: boolean;
+  };
+}>> => {
+  const envValidation = validateServerStartupEnv(env);
+  const providerStatus = buildBillingProviderDiagnostics(env);
+  const activeProvider = providerStatus.activeProvider;
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  const serverSupabaseUrl = readEnv(env, "SUPABASE_URL");
+  const clientSupabaseUrl = readEnv(env, "VITE_SUPABASE_URL");
+  const sameSupabaseProject =
+    Boolean(serverSupabaseUrl && clientSupabaseUrl) &&
+    normalizeComparableUrl(serverSupabaseUrl) === normalizeComparableUrl(clientSupabaseUrl);
+
+  const diagnostics = {
+    billingProviderStatus: providerStatus,
+    dbIntegrity: null as Record<string, unknown> | null,
+    envValidation,
+    paymentConfigStatus: {
+      activeProviderConfigured: providerStatus.providers[activeProvider].configured,
+      clientRazorpayKeyConfigured: hasConfiguredEnvValue(env.VITE_RAZORPAY_KEY_ID),
+      clientSupabaseUrlConfigured: hasConfiguredEnvValue(env.VITE_SUPABASE_URL),
+      serviceRoleConfigured: hasConfiguredEnvValue(env.SUPABASE_SERVICE_ROLE_KEY),
+      webhookConfigured:
+        activeProvider === "stripe"
+          ? hasConfiguredEnvValue(env.STRIPE_WEBHOOK_SECRET)
+          : hasConfiguredEnvValue(env.RAZORPAY_WEBHOOK_SECRET),
+    },
+    planCount: 0,
+    quoteGenerationHealth: {
+      detail: adminConfig.ok
+        ? "Awaiting billing database diagnostics."
+        : adminConfig.detail,
+      ok: false,
+    },
+    rpcHealth: {
+      detail: adminConfig.ok
+        ? "Awaiting billing database diagnostics."
+        : adminConfig.detail,
+      ok: false,
+    },
+    sourceOfTruth: {
+      adminSupabaseConfigOk: adminConfig.ok,
+      adminSupabaseUrl: adminConfig.ok ? adminConfig.config.supabaseUrl : serverSupabaseUrl || null,
+      clientSupabaseUrl: clientSupabaseUrl || null,
+      sameSupabaseProject,
+    },
+    supabaseConnectivity: {
+      detail: adminConfig.ok
+        ? "Awaiting Supabase connectivity check."
+        : adminConfig.detail,
+      ok: false,
+    },
+  };
+
+  if (!adminConfig.ok) {
+    return buildApiSuccess("Billing diagnostics loaded.", diagnostics);
+  }
+
+  const client = buildServiceClient(env);
+
+  try {
+    const { count, error } = await client
+      .from("subscription_plans")
+      .select("id", { count: "exact", head: true });
+    if (error) {
+      diagnostics.supabaseConnectivity = {
+        detail: `subscription_plans probe failed: ${serializeServiceError(error).message}`,
+        ok: false,
+      };
+    } else {
+      diagnostics.planCount = Number(count ?? 0);
+      diagnostics.supabaseConnectivity = {
+        detail: "Supabase billing tables are reachable from the admin service.",
+        ok: true,
+      };
+    }
+  } catch (error) {
+    diagnostics.supabaseConnectivity = {
+      detail: `Supabase connectivity probe failed: ${serializeServiceError(error).message}`,
+      ok: false,
+    };
+  }
+
+  try {
+    const { data, error } = await client.rpc("get_billing_runtime_diagnostics", {
+      p_library_id: null,
+    });
+    if (error) {
+      diagnostics.dbIntegrity = {
+        error: serializeServiceError(error),
+      };
+      diagnostics.rpcHealth = {
+        detail: `get_billing_runtime_diagnostics failed: ${serializeServiceError(error).message}`,
+        ok: false,
+      };
+    } else {
+      const dbIntegrity =
+        data && typeof data === "object" && !Array.isArray(data)
+          ? (data as Record<string, unknown>)
+          : {};
+      diagnostics.dbIntegrity = dbIntegrity;
+      const rpcState =
+        dbIntegrity.rpcs && typeof dbIntegrity.rpcs === "object" && !Array.isArray(dbIntegrity.rpcs)
+          ? (dbIntegrity.rpcs as Record<string, unknown>)
+          : {};
+      const planCountFromRpc = Number(
+        dbIntegrity.plan_count ??
+        dbIntegrity.planCount ??
+        diagnostics.planCount,
+      );
+      if (Number.isFinite(planCountFromRpc) && planCountFromRpc >= 0) {
+        diagnostics.planCount = planCountFromRpc;
+      }
+
+      const ensureSubscriptionRpc = rpcState.ensure_library_subscription === true;
+      const captureRpc = rpcState.process_subscription_payment_capture === true;
+      const diagnosticsRpc = rpcState.get_billing_runtime_diagnostics === true;
+
+      diagnostics.rpcHealth = {
+        detail:
+          ensureSubscriptionRpc && captureRpc && diagnosticsRpc
+            ? "Billing RPCs are present and callable by the admin billing service."
+            : "One or more billing RPCs are missing or not visible in the active Supabase project.",
+        ok: ensureSubscriptionRpc && captureRpc && diagnosticsRpc,
+      };
+      diagnostics.quoteGenerationHealth = {
+        detail:
+          diagnostics.planCount > 0 && ensureSubscriptionRpc
+            ? "Quote generation prerequisites are healthy."
+            : diagnostics.planCount === 0
+              ? "No subscription plans are active in the billing catalog."
+              : "Quote generation is blocked because ensure_library_subscription is unavailable.",
+        ok: diagnostics.planCount > 0 && ensureSubscriptionRpc,
+      };
+    }
+  } catch (error) {
+    diagnostics.dbIntegrity = {
+      error: serializeServiceError(error),
+    };
+    diagnostics.rpcHealth = {
+      detail: `Billing diagnostics RPC failed: ${serializeServiceError(error).message}`,
+      ok: false,
+    };
+    diagnostics.quoteGenerationHealth = {
+      detail: "Billing diagnostics RPC failed before quote health could be confirmed.",
+      ok: false,
+    };
+  }
+
+  return buildApiSuccess("Billing diagnostics loaded.", diagnostics);
 };
 
 export const getAutomationCenterData = async (

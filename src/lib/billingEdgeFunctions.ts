@@ -4,33 +4,82 @@ import { buildBearerAuthorizationHeader, sanitizeHeaders } from "@/lib/httpHeade
 import { evaluateSubscriptionAccess, type LibrarySubscriptionRecord } from "@/lib/subscription";
 
 type FunctionErrorLike = Error | { message: string; context?: Response };
+type BillingFunctionFailure = {
+  code: string | null;
+  detail: string | null;
+  diagnostics: Record<string, unknown> | null;
+  hint: string | null;
+  layer: string | null;
+  message: string | null;
+  requestId: string | null;
+  retryable: boolean;
+  status: number | null;
+};
 
 const EDGE_FUNCTION_SEND_FAILURE = "Failed to send a request to the Edge Function";
-const EDGE_FUNCTION_AUTH_ALLOWED_HEADERS = ["Authorization"] as const;
+const EDGE_FUNCTION_AUTH_ALLOWED_HEADERS = [
+  "Authorization",
+  "x-correlation-id",
+  "x-request-id",
+  "x-trace-id",
+] as const;
 
 const normalizeFunctionErrorBody = async (context?: Response) => {
   if (!context) {
     return {
-      code: null as number | null,
+      code: null as string | null,
       detail: null as string | null,
+      diagnostics: null as Record<string, unknown> | null,
       error: null as string | null,
       hint: null as string | null,
+      layer: null as string | null,
       message: null as string | null,
+      requestId: null as string | null,
+      retryable: false,
+      status: null as number | null,
     };
   }
 
   try {
     const body = await context.clone().json();
     return {
-      code: typeof body?.code === "number" ? body.code : null,
+      code: body?.code ? String(body.code) : null,
       error: body?.error ? String(body.error) : null,
       detail: body?.detail ? String(body.detail) : null,
+      diagnostics:
+        body?.diagnostics && typeof body.diagnostics === "object" && !Array.isArray(body.diagnostics)
+          ? (body.diagnostics as Record<string, unknown>)
+          : null,
       hint: body?.hint ? String(body.hint) : null,
+      layer: body?.layer ? String(body.layer) : null,
       message: body?.message ? String(body.message) : null,
+      requestId: body?.requestId ? String(body.requestId) : null,
+      retryable: Boolean(body?.retryable),
+      status: typeof body?.status === "number" ? body.status : context.status,
     };
   } catch {
-    return { code: null, detail: null, error: null, hint: null, message: null };
+    return {
+      code: null,
+      detail: null,
+      diagnostics: null,
+      error: null,
+      hint: null,
+      layer: null,
+      message: null,
+      requestId: null,
+      retryable: false,
+      status: context.status,
+    };
   }
+};
+
+const createBillingTraceHeaders = () => {
+  const requestId = crypto.randomUUID();
+  return {
+    "x-correlation-id": requestId,
+    "x-request-id": requestId,
+    "x-trace-id": crypto.randomUUID(),
+  };
 };
 
 const getUnavailableFunctionMessage = (functionName?: string) => {
@@ -46,15 +95,48 @@ export const isFunctionUnavailableError = (error: { message?: string; context?: 
   return error.context?.status === 404 || message.includes(EDGE_FUNCTION_SEND_FAILURE);
 };
 
+export const readBillingFunctionFailure = async (
+  error: FunctionErrorLike,
+  functionName?: string,
+): Promise<BillingFunctionFailure> => {
+  const context = (error as { context?: Response }).context;
+  const body = await normalizeFunctionErrorBody(context);
+  const fallbackMessage = String(error.message ?? "Edge Function request failed.");
+
+  return {
+    code: body.code,
+    detail: body.detail,
+    diagnostics: body.diagnostics,
+    hint: body.hint,
+    layer: body.layer,
+    message: body.error ?? body.message ?? fallbackMessage,
+    requestId: body.requestId,
+    retryable: body.retryable,
+    status: body.status ?? context?.status ?? null,
+  };
+};
+
 export const readFunctionErrorMessage = async (error: FunctionErrorLike, functionName?: string) => {
   const context = (error as { context?: Response }).context;
-  let message = String(error.message ?? "Edge Function request failed.");
+  const failure = await readBillingFunctionFailure(error, functionName);
+  let message = failure.message ?? "Edge Function request failed.";
 
-  const body = await normalizeFunctionErrorBody(context);
-  if (body.error) message = body.error;
-  if (!body.error && body.message) message = body.message;
-  if (body.detail) message = `${message}: ${body.detail}`;
-  if (body.hint) message = `${message} Hint: ${body.hint}`;
+  if (failure.layer || failure.code) {
+    const label = functionName ? `${functionName} failed` : "Billing request failed";
+    const layerLabel = failure.layer ? ` at ${failure.layer}` : "";
+    const codeLabel = failure.code ? ` [${failure.code}]` : "";
+    message = `${label}${layerLabel}${codeLabel}. ${message}`;
+  }
+
+  if (failure.detail && failure.detail !== failure.message) {
+    message = `${message} Details: ${failure.detail}`;
+  }
+  if (failure.hint) {
+    message = `${message} Hint: ${failure.hint}`;
+  }
+  if (failure.requestId) {
+    message = `${message} Request ID: ${failure.requestId}`;
+  }
 
   if (isFunctionUnavailableError({ message, context })) {
     return getUnavailableFunctionMessage(functionName);
@@ -74,6 +156,7 @@ export const getEdgeFunctionAuthHeaders = async () => {
   return accessToken
     ? sanitizeHeaders({
         Authorization: buildBearerAuthorizationHeader(accessToken, "Missing access token."),
+        ...createBillingTraceHeaders(),
       }, {
         allowedHeaders: EDGE_FUNCTION_AUTH_ALLOWED_HEADERS,
       })
@@ -106,19 +189,34 @@ export const waitForActiveLibrarySubscription = async (
   libraryId: string,
   { attempts = 5, intervalMs = 2_000 }: { attempts?: number; intervalMs?: number } = {},
 ) => {
+  let lastError: unknown = null;
+
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const subscription = await fetchLibrarySubscription(libraryId);
       if (evaluateSubscriptionAccess(subscription).isPlanActive) {
         return subscription;
       }
-    } catch {
-      // Best-effort polling after payment. Keep retrying a few times before giving up.
+    } catch (error) {
+      lastError = error;
+      console.warn("[billing] waitForActiveLibrarySubscription attempt failed", {
+        attempt: attempt + 1,
+        error: error instanceof Error ? error.message : String(error),
+        libraryId,
+      });
     }
 
     if (attempt < attempts - 1) {
       await sleep(intervalMs);
     }
+  }
+
+  if (lastError) {
+    console.warn("[billing] waitForActiveLibrarySubscription exhausted retries", {
+      attempts,
+      error: lastError instanceof Error ? lastError.message : String(lastError),
+      libraryId,
+    });
   }
 
   return null;

@@ -29,6 +29,7 @@ vi.mock("@/lib/superAdmin/service.server", () => ({
   deletePlanData: vi.fn(),
   deleteTemplateData: vi.fn(),
   getAutomationCenterData: vi.fn(),
+  getBillingDiagnosticsData: vi.fn(),
   getBillingCenterData: vi.fn(),
   getCommunicationCenterData: vi.fn(),
   getControlCenterData: vi.fn(),
@@ -62,6 +63,7 @@ import { resolveSuperAdminSessionRequest } from "@/lib/otpAuth.server";
 import { isSuperAdminIpAllowed } from "@/lib/platformSettings.server";
 import {
   getAutomationCenterData,
+  getBillingDiagnosticsData,
   getBillingCenterData,
   getCommunicationCenterData,
   getControlCenterData,
@@ -74,6 +76,7 @@ const mockedEvaluateMaintenanceRequest = vi.mocked(evaluateMaintenanceRequest);
 const mockedResolveSuperAdminSessionRequest = vi.mocked(resolveSuperAdminSessionRequest);
 const mockedIsSuperAdminIpAllowed = vi.mocked(isSuperAdminIpAllowed);
 const mockedGetAutomationCenterData = vi.mocked(getAutomationCenterData);
+const mockedGetBillingDiagnosticsData = vi.mocked(getBillingDiagnosticsData);
 const mockedGetBillingCenterData = vi.mocked(getBillingCenterData);
 const mockedGetCommunicationCenterData = vi.mocked(getCommunicationCenterData);
 const mockedGetControlCenterData = vi.mocked(getControlCenterData);
@@ -177,17 +180,95 @@ describe("centralized super admin API route", () => {
       success: true,
     });
     mockedResolveSuperAdminOperatorAccessData.mockResolvedValue({
-      allowedPages: ["dashboard"],
+      allowedPages: ["dashboard", "billing"],
       legacyFallbackAccess: false,
-      permissions: ["dashboard.read"],
+      permissions: ["dashboard.read", "billing.read"],
       roles: ["read_only_ops"],
+    });
+    mockedGetBillingDiagnosticsData.mockResolvedValue({
+      data: {
+        billingProviderStatus: {
+          activeProvider: "razorpay",
+          providers: {
+            razorpay: {
+              configured: true,
+              missing: [],
+            },
+            stripe: {
+              configured: false,
+              missing: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+            },
+          },
+        },
+        dbIntegrity: {
+          suspected_issue: null,
+        },
+        envValidation: {
+          missing: [],
+          ok: true,
+        },
+        paymentConfigStatus: {
+          activeProviderConfigured: true,
+          clientRazorpayKeyConfigured: true,
+          clientSupabaseUrlConfigured: true,
+          serviceRoleConfigured: true,
+          webhookConfigured: true,
+        },
+        planCount: 3,
+        quoteGenerationHealth: {
+          detail: "Quote generation prerequisites are healthy.",
+          ok: true,
+        },
+        rpcHealth: {
+          detail: "Billing RPCs are present and callable by the admin billing service.",
+          ok: true,
+        },
+        sourceOfTruth: {
+          adminSupabaseConfigOk: true,
+          adminSupabaseUrl: "https://example.supabase.co",
+          clientSupabaseUrl: "https://example.supabase.co",
+          sameSupabaseProject: true,
+        },
+        supabaseConnectivity: {
+          detail: "Supabase billing tables are reachable from the admin service.",
+          ok: true,
+        },
+      },
+      errorCode: null,
+      message: "Billing diagnostics loaded.",
+      success: true,
     });
   });
 
   it("supports only the centralized admin API surface", () => {
     expect(isSupportedAdminApiPath("/api/admin/platform")).toBe(true);
     expect(isSupportedAdminApiPath("/api/admin/feature-flags")).toBe(true);
+    expect(isSupportedAdminApiPath("/api/admin/billing/diagnostics")).toBe(true);
     expect(isSupportedAdminApiPath("/api/admin/settings")).toBe(false);
+  });
+
+  it("serves billing diagnostics from the centralized billing route", async () => {
+    const { response } = createMockResponse();
+
+    await handleAdminApiRequest(buildRequest({
+      url: "/api/admin/billing/diagnostics",
+    }), response, {});
+
+    expect(response.statusCode).toBe(200);
+    expect(parseBody(response.body)).toMatchObject({
+      data: {
+        billingProviderStatus: {
+          activeProvider: "razorpay",
+        },
+        planCount: 3,
+        quoteGenerationHealth: {
+          ok: true,
+        },
+      },
+      message: "Billing diagnostics loaded.",
+      success: true,
+    });
+    expect(mockedGetBillingDiagnosticsData).toHaveBeenCalledOnce();
   });
 
   it("requires a verified super admin session", async () => {
@@ -199,7 +280,7 @@ describe("centralized super admin API route", () => {
     expect(response.statusCode).toBe(401);
     expect(parseBody(response.body)).toMatchObject({
       errorCode: "UNAUTHORIZED",
-      message: "Super admin verification is required.",
+      message: "No session cookie present. Please sign in.",
       success: false,
     });
     expect(headers.get("x-request-id")).toBeTruthy();

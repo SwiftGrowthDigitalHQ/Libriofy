@@ -7,14 +7,34 @@ describe("validateServerStartupEnv", () => {
     const result = validateServerStartupEnv({
       APP_ENV: "test",
       APP_URL: "https://www.libriofy.com",
+      RAZORPAY_KEY_ID: "rzp_live_example",
+      RAZORPAY_KEY_SECRET: "secret",
+      RAZORPAY_WEBHOOK_SECRET: "webhook-secret",
       STUDENT_QR_PRIVATE_KEY: "qr-private-key",
       SUPABASE_SERVICE_ROLE_KEY: "service-role",
       SUPABASE_URL: "https://example.supabase.co",
+      VITE_SUPABASE_URL: "https://example.supabase.co",
     } as NodeJS.ProcessEnv);
 
     expect(result.ok).toBe(false);
     expect(result.missing).toContain("REDIS_URL");
     expect(result.missing).toContain("SUPABASE_JWT_SECRET|JWT_SECRET|APP_JWT_SECRET");
     expect(result.missing).toContain("RESEND_API_KEY+AUTH_EMAIL_FROM|RESEND_FROM_EMAIL=hello@libriofy.com");
+  });
+
+  it("hard-fails startup when live billing secrets are missing", () => {
+    const result = validateServerStartupEnv({
+      APP_ENV: "test",
+      APP_URL: "https://www.libriofy.com",
+      STUDENT_QR_PRIVATE_KEY: "qr-private-key",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role",
+      SUPABASE_URL: "https://example.supabase.co",
+      VITE_SUPABASE_URL: "https://example.supabase.co",
+    } as NodeJS.ProcessEnv);
+
+    expect(result.ok).toBe(false);
+    expect(result.missing).toContain("RAZORPAY_KEY_ID");
+    expect(result.missing).toContain("RAZORPAY_KEY_SECRET");
+    expect(result.missing).toContain("RAZORPAY_WEBHOOK_SECRET");
   });
 });

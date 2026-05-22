@@ -30,6 +30,7 @@ import {
   createRevenueAdjustmentData,
   deletePlanData,
   deleteTemplateData,
+  getBillingDiagnosticsData,
   getAutomationCenterData,
   getBillingCenterData,
   getCommunicationCenterData,
@@ -164,6 +165,7 @@ const ADMIN_API_ROUTE_PATHS = [
   "/api/admin/incidents",
   "/api/admin/analytics",
   "/api/admin/billing",
+  "/api/admin/billing/diagnostics",
   "/api/admin/jobs",
 ] as const;
 
@@ -1260,6 +1262,7 @@ const canReadAdminPath = (pathname: AdminApiRoutePath, actor: SuperAdminActorCon
     case "/api/admin/analytics":
       return canAccessControlPlanePage(actor.operatorPermissions, "analytics");
     case "/api/admin/billing":
+    case "/api/admin/billing/diagnostics":
       return canAccessControlPlanePage(actor.operatorPermissions, "billing");
     case "/api/admin/jobs":
       return canAccessControlPlanePage(actor.operatorPermissions, "automation");
@@ -2613,6 +2616,24 @@ export const handleAdminApiRequest = async (
         } catch (error) {
           console.error("[admin-api] /api/admin/billing FAILED:", error instanceof Error ? error.stack ?? error.message : String(error));
           sendJson(res, 500, buildErrorBody(requestId, `Billing data failed to load: ${error instanceof Error ? error.message : "Unknown error"}`, "BILLING_LOAD_FAILED"));
+        }
+        return;
+      }
+      case "/api/admin/billing/diagnostics": {
+        try {
+          const result = await getBillingDiagnosticsData(env);
+          sendServiceResponse(res, requestId, result);
+        } catch (error) {
+          console.error("[admin-api] /api/admin/billing/diagnostics FAILED:", error instanceof Error ? error.stack ?? error.message : String(error));
+          sendJson(
+            res,
+            500,
+            buildErrorBody(
+              requestId,
+              `Billing diagnostics failed to load: ${error instanceof Error ? error.message : "Unknown error"}`,
+              "BILLING_DIAGNOSTICS_FAILED",
+            ),
+          );
         }
         return;
       }

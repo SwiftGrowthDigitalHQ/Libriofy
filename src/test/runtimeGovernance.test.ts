@@ -32,6 +32,9 @@ const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
   AUTH_EMAIL_FROM: "hello@libriofy.com",
   REDIS_URL: "redis://runtime.test:6379",
   RELEASE_SHA: "release-2026-05-09",
+  RAZORPAY_KEY_ID: "rzp_live_key",
+  RAZORPAY_KEY_SECRET: "secret",
+  RAZORPAY_WEBHOOK_SECRET: "webhook-secret",
   RESEND_API_KEY: "resend-key",
   SITE_URL: "https://www.libriofy.com",
   STUDENT_QR_PRIVATE_KEY: "qr-private-key",
@@ -39,6 +42,7 @@ const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
   SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
   SUPABASE_URL: "https://libriofy.supabase.co",
   SENTRY_RELEASE: "release-2026-05-09",
+  VITE_SUPABASE_URL: "https://libriofy.supabase.co",
   ...overrides,
 });
 

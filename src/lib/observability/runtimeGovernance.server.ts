@@ -260,11 +260,51 @@ export const validateRuntimeConfiguration = (
 
   requireValue("supabase_url", "SUPABASE_URL", env.SUPABASE_URL, "SUPABASE_URL is missing or placeholder.");
   requireValue(
+    "vite_supabase_url",
+    "VITE_SUPABASE_URL",
+    env.VITE_SUPABASE_URL,
+    "VITE_SUPABASE_URL is missing or placeholder.",
+  );
+  requireValue(
     "supabase_service_role",
     "SUPABASE_SERVICE_ROLE_KEY",
     env.SUPABASE_SERVICE_ROLE_KEY,
     "SUPABASE_SERVICE_ROLE_KEY is missing or placeholder.",
   );
+  const activeBillingProvider = trimText(env.BILLING_PROVIDER).toLowerCase() === "stripe" ? "stripe" : "razorpay";
+  if (activeBillingProvider === "stripe") {
+    requireValue(
+      "stripe_secret_key",
+      "STRIPE_SECRET_KEY",
+      env.STRIPE_SECRET_KEY,
+      "STRIPE_SECRET_KEY is missing or placeholder.",
+    );
+    requireValue(
+      "stripe_webhook_secret",
+      "STRIPE_WEBHOOK_SECRET",
+      env.STRIPE_WEBHOOK_SECRET,
+      "STRIPE_WEBHOOK_SECRET is missing or placeholder.",
+    );
+  } else {
+    requireValue(
+      "razorpay_key_id",
+      "RAZORPAY_KEY_ID",
+      env.RAZORPAY_KEY_ID,
+      "RAZORPAY_KEY_ID is missing or placeholder.",
+    );
+    requireValue(
+      "razorpay_key_secret",
+      "RAZORPAY_KEY_SECRET",
+      env.RAZORPAY_KEY_SECRET,
+      "RAZORPAY_KEY_SECRET is missing or placeholder.",
+    );
+    requireValue(
+      "razorpay_webhook_secret",
+      "RAZORPAY_WEBHOOK_SECRET",
+      env.RAZORPAY_WEBHOOK_SECRET,
+      "RAZORPAY_WEBHOOK_SECRET is missing or placeholder.",
+    );
+  }
   requireValue(
     "student_qr_signing",
     "STUDENT_QR_PRIVATE_KEY",
