@@ -14,6 +14,21 @@ export type CameraDeviceOption = {
 
 export type ScanDetectionSource = "barcode_detector" | "jsqr";
 
+export type ScanDecodeMode = "focused-square" | "wide-square" | "full-frame";
+
+export type ScanDetectionPoint = {
+  x: number;
+  y: number;
+};
+
+export type ScanDetectionBounds = {
+  height: number;
+  left: number;
+  points: ScanDetectionPoint[];
+  top: number;
+  width: number;
+};
+
 export type ScanFrameAnalysis = {
   brightness: number;
   blurry: boolean;
@@ -28,6 +43,10 @@ export type ScanDetectionPayload = {
   source: ScanDetectionSource;
   timingMs: number;
   analysis: ScanFrameAnalysis;
+  bounds?: ScanDetectionBounds | null;
+  captureMode?: ScanDecodeMode;
+  confidence?: number | null;
+  decodePass?: string | null;
 };
 
 export type ScanControllerError = {

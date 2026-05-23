@@ -3,6 +3,7 @@ import jsQR from "jsqr";
 import { getReadableCameraError } from "@/lib/cameraStartup";
 import type {
   ScanControllerLogLevel,
+  ScanDecodeMode,
   ScanDetectionPayload,
 } from "./types";
 
@@ -19,6 +20,10 @@ type WorkerResultMessage = {
   requestId: number;
   rawValue: string | null;
   detector: "barcode_detector" | "jsqr" | null;
+  decodePass: string | null;
+  confidence: number | null;
+  failureReason: "blur" | "glare" | "low_light" | "not_found" | "worker_error" | null;
+  bounds: ScanDetectionPayload["bounds"];
   timingMs: number;
   brightness: number;
   blurry: boolean;
@@ -47,6 +52,26 @@ type EngineLog = (
   detail?: Record<string, unknown>,
 ) => void;
 
+type PendingDecodeRequest = {
+  captureMode: ScanDecodeMode;
+  requestId: number;
+  sourceRect: {
+    height: number;
+    left: number;
+    top: number;
+    width: number;
+  };
+  targetSize: {
+    height: number;
+    width: number;
+  };
+  transport: "bitmap" | "image_data";
+  videoSize: {
+    height: number;
+    width: number;
+  };
+};
+
 type ScannerEngineOptions = {
   onDetect: (payload: ScanDetectionPayload) => void;
   onError?: (error: unknown) => void;
@@ -58,13 +83,18 @@ const MOBILE_PREVIEW_BREAKPOINT = 640;
 const MOBILE_SCAN_BOX_MAX_EDGE = 480;
 const MOBILE_SCAN_BOX_MIN_EDGE = 280;
 const MOBILE_SCAN_BOX_RATIO = 0.82;
+const MOBILE_WIDE_SCAN_BOX_RATIO = 0.92;
 const DESKTOP_SCAN_BOX_MAX_EDGE = 600;
 const DESKTOP_SCAN_BOX_MIN_EDGE = 320;
 const DESKTOP_SCAN_BOX_RATIO = 0.78;
+const DESKTOP_WIDE_SCAN_BOX_RATIO = 0.9;
 const TARGET_SCAN_INTERVAL_MS = 60;
 const TARGET_DECODE_MAX_EDGE = 600;
+const TARGET_FULL_FRAME_MAX_EDGE = 720;
 const TARGET_DECODE_MIN_EDGE = 360;
 const MAX_UPLOAD_IMAGE_BYTES = 8 * 1024 * 1024;
+const MISS_STREAK_WIDE_SCAN_THRESHOLD = 4;
+const MISS_STREAK_FULL_FRAME_THRESHOLD = 10;
 const REQUIRED_VIDEO_READY_STATE =
   typeof HTMLMediaElement !== "undefined" ? HTMLMediaElement.HAVE_ENOUGH_DATA : 4;
 
@@ -80,6 +110,8 @@ export class ScannerEngine {
   private captureCanvas: HTMLCanvasElement | null = null;
   private detectionFrameHandle: number | null = null;
   private lastDecodeAttemptAt = 0;
+  private missStreak = 0;
+  private pendingDecodeRequest: PendingDecodeRequest | null = null;
   private paused = false;
   private requestId = 0;
   private running = false;
@@ -119,6 +151,8 @@ export class ScannerEngine {
     this.paused = false;
     this.workerBusy = false;
     this.lastDecodeAttemptAt = 0;
+    this.missStreak = 0;
+    this.pendingDecodeRequest = null;
     this.requestId = 0;
     this.lastFrameAt = null;
     this.clearTimers();
@@ -171,6 +205,9 @@ export class ScannerEngine {
       }
 
       this.workerBusy = false;
+      const pendingRequest =
+        this.pendingDecodeRequest?.requestId === message.requestId ? this.pendingDecodeRequest : null;
+      this.pendingDecodeRequest = null;
       if (!this.running || this.paused) {
         return;
       }
@@ -184,11 +221,7 @@ export class ScannerEngine {
       };
       this.options.onFrameAnalysis?.(analysis);
 
-      if (!message.rawValue || !message.detector) {
-        return;
-      }
-
-      this.options.log("info", "decode-success", {
+      const attemptDetail = {
         analysis: {
           brightness: Math.round(message.brightness),
           blurry: message.blurry,
@@ -196,12 +229,36 @@ export class ScannerEngine {
           glare: message.glare,
           lowLight: message.lowLight,
         },
+        bounds: message.bounds ?? null,
+        captureMode: pendingRequest?.captureMode ?? null,
+        confidence: message.confidence ?? null,
+        decodePass: message.decodePass ?? null,
+        failureReason: message.failureReason ?? null,
+        rawValuePreview: message.rawValue ? message.rawValue.slice(0, 40) : null,
+        requestId: message.requestId,
         source: message.detector,
+        sourceRect: pendingRequest?.sourceRect ?? null,
+        targetSize: pendingRequest?.targetSize ?? null,
         timingMs: message.timingMs,
-      });
+        transport: pendingRequest?.transport ?? null,
+        videoSize: pendingRequest?.videoSize ?? null,
+      };
+
+      if (!message.rawValue || !message.detector) {
+        this.missStreak += 1;
+        this.options.log("warn", "decode-miss", attemptDetail);
+        return;
+      }
+
+      this.missStreak = 0;
+      this.options.log("info", "decode-success", attemptDetail);
 
       this.options.onDetect({
         analysis,
+        bounds: message.bounds ?? null,
+        captureMode: pendingRequest?.captureMode ?? "focused-square",
+        confidence: message.confidence ?? null,
+        decodePass: message.decodePass ?? null,
         detectedAt: new Date().toISOString(),
         rawValue: message.rawValue,
         source: message.detector,
@@ -268,12 +325,42 @@ export class ScannerEngine {
     return this.videoElement;
   }
 
-  private resolveScanCropRect(video: HTMLVideoElement) {
+  private resolveCaptureMode(nextRequestId: number): ScanDecodeMode {
+    if (this.missStreak >= MISS_STREAK_FULL_FRAME_THRESHOLD) {
+      return nextRequestId % 2 === 0 ? "full-frame" : "wide-square";
+    }
+
+    if (this.missStreak >= MISS_STREAK_WIDE_SCAN_THRESHOLD) {
+      return "wide-square";
+    }
+
+    return "focused-square";
+  }
+
+  private resolveScanCropRect(video: HTMLVideoElement, captureMode: ScanDecodeMode) {
     const previewWidth = video.clientWidth || video.videoWidth;
     const previewHeight = video.clientHeight || video.videoHeight;
     const isMobilePreview = previewWidth < MOBILE_PREVIEW_BREAKPOINT;
+    if (captureMode === "full-frame") {
+      return {
+        captureMode,
+        sourceHeight: video.videoHeight,
+        sourceWidth: video.videoWidth,
+        sourceX: 0,
+        sourceY: 0,
+      };
+    }
+
+    const scanRatio =
+      captureMode === "wide-square"
+        ? isMobilePreview
+          ? MOBILE_WIDE_SCAN_BOX_RATIO
+          : DESKTOP_WIDE_SCAN_BOX_RATIO
+        : isMobilePreview
+          ? MOBILE_SCAN_BOX_RATIO
+          : DESKTOP_SCAN_BOX_RATIO;
     const scanBoxEdge = clampScanBoxEdge(
-      Math.min(previewWidth, previewHeight) * (isMobilePreview ? MOBILE_SCAN_BOX_RATIO : DESKTOP_SCAN_BOX_RATIO),
+      Math.min(previewWidth, previewHeight) * scanRatio,
       isMobilePreview,
     );
     const widthScale = previewWidth ? video.videoWidth / previewWidth : 1;
@@ -285,10 +372,23 @@ export class ScannerEngine {
     );
 
     return {
-      cropEdge,
-      displayEdge: scanBoxEdge,
+      captureMode,
+      sourceHeight: cropEdge,
+      sourceWidth: cropEdge,
       sourceX: Math.max(0, Math.floor((video.videoWidth - cropEdge) / 2)),
       sourceY: Math.max(0, Math.floor((video.videoHeight - cropEdge) / 2)),
+    };
+  }
+
+  private resolveTargetSize(sourceWidth: number, sourceHeight: number, captureMode: ScanDecodeMode) {
+    const longestEdge = Math.max(sourceWidth, sourceHeight);
+    const maxTargetEdge = captureMode === "full-frame" ? TARGET_FULL_FRAME_MAX_EDGE : TARGET_DECODE_MAX_EDGE;
+    const targetLongestEdge = Math.max(TARGET_DECODE_MIN_EDGE, Math.min(maxTargetEdge, longestEdge));
+    const scale = targetLongestEdge / longestEdge;
+
+    return {
+      targetHeight: Math.max(1, Math.round(sourceHeight * scale)),
+      targetWidth: Math.max(1, Math.round(sourceWidth * scale)),
     };
   }
 
@@ -305,18 +405,46 @@ export class ScannerEngine {
     }
 
     this.lastFrameAt = Date.now();
-    const { cropEdge, sourceX, sourceY } = this.resolveScanCropRect(video);
-    const targetEdge = Math.max(TARGET_DECODE_MIN_EDGE, Math.min(TARGET_DECODE_MAX_EDGE, cropEdge));
     const nextRequestId = this.requestId + 1;
+    const captureMode = this.resolveCaptureMode(nextRequestId);
+    const { sourceHeight, sourceWidth, sourceX, sourceY } = this.resolveScanCropRect(video, captureMode);
+    const { targetHeight, targetWidth } = this.resolveTargetSize(sourceWidth, sourceHeight, captureMode);
     this.requestId = nextRequestId;
     this.workerBusy = true;
+    this.pendingDecodeRequest = {
+      captureMode,
+      requestId: nextRequestId,
+      sourceRect: {
+        height: sourceHeight,
+        left: sourceX,
+        top: sourceY,
+        width: sourceWidth,
+      },
+      targetSize: {
+        height: targetHeight,
+        width: targetWidth,
+      },
+      transport: this.workerSupport.offscreenCanvas && typeof createImageBitmap === "function" ? "bitmap" : "image_data",
+      videoSize: {
+        height: video.videoHeight,
+        width: video.videoWidth,
+      },
+    };
+    this.options.log("info", "decode-attempt", {
+      captureMode,
+      requestId: nextRequestId,
+      sourceRect: this.pendingDecodeRequest.sourceRect,
+      targetSize: this.pendingDecodeRequest.targetSize,
+      transport: this.pendingDecodeRequest.transport,
+      videoSize: this.pendingDecodeRequest.videoSize,
+    });
 
     if (this.workerSupport.offscreenCanvas && typeof createImageBitmap === "function") {
       try {
-        const bitmap = await createImageBitmap(video, sourceX, sourceY, cropEdge, cropEdge, {
-          resizeHeight: targetEdge,
+        const bitmap = await createImageBitmap(video, sourceX, sourceY, sourceWidth, sourceHeight, {
+          resizeHeight: targetHeight,
           resizeQuality: "high",
-          resizeWidth: targetEdge,
+          resizeWidth: targetWidth,
         });
         const message: WorkerDecodeBitmapMessage = {
           type: "decode-bitmap",
@@ -325,20 +453,41 @@ export class ScannerEngine {
         };
         if (!this.isRunActive(runToken, worker)) {
           this.workerBusy = false;
+          this.pendingDecodeRequest = null;
           bitmap.close();
           return;
         }
 
         worker.postMessage(message, [bitmap]);
         return;
-      } catch {
+      } catch (error) {
+        this.options.log("warn", "decode-bitmap-fallback", {
+          captureMode,
+          message: getReadableCameraError(error, "Unable to transfer frame as bitmap."),
+          requestId: nextRequestId,
+        });
+        if (this.pendingDecodeRequest) {
+          this.pendingDecodeRequest = {
+            ...this.pendingDecodeRequest,
+            transport: "image_data",
+          };
+        }
         // Fall through to ImageData transfer below.
       }
     }
 
-    const imageData = this.captureImageData(video, sourceX, sourceY, cropEdge, targetEdge);
+    const imageData = this.captureImageData(
+      video,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      targetWidth,
+      targetHeight,
+    );
     if (!imageData) {
       this.workerBusy = false;
+      this.pendingDecodeRequest = null;
       return;
     }
 
@@ -349,6 +498,7 @@ export class ScannerEngine {
     };
     if (!this.isRunActive(runToken, worker)) {
       this.workerBusy = false;
+      this.pendingDecodeRequest = null;
       return;
     }
 
@@ -363,16 +513,18 @@ export class ScannerEngine {
     video: HTMLVideoElement,
     sourceX: number,
     sourceY: number,
-    cropEdge: number,
-    targetEdge: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    targetWidth: number,
+    targetHeight: number,
   ) {
     const canvas = this.captureCanvas ?? document.createElement("canvas");
     this.captureCanvas = canvas;
-    if (canvas.width !== targetEdge) {
-      canvas.width = targetEdge;
+    if (canvas.width !== targetWidth) {
+      canvas.width = targetWidth;
     }
-    if (canvas.height !== targetEdge) {
-      canvas.height = targetEdge;
+    if (canvas.height !== targetHeight) {
+      canvas.height = targetHeight;
     }
 
     const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -381,9 +533,9 @@ export class ScannerEngine {
     }
 
     context.imageSmoothingEnabled = false;
-    context.clearRect(0, 0, targetEdge, targetEdge);
-    context.drawImage(video, sourceX, sourceY, cropEdge, cropEdge, 0, 0, targetEdge, targetEdge);
-    return context.getImageData(0, 0, targetEdge, targetEdge);
+    context.clearRect(0, 0, targetWidth, targetHeight);
+    context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, targetWidth, targetHeight);
+    return context.getImageData(0, 0, targetWidth, targetHeight);
   }
 }
 

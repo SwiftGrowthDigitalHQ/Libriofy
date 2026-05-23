@@ -35,7 +35,12 @@ import { sendDeviceHeartbeat } from "@/lib/deviceHeartbeat";
 import { readOfflineVerifiedStudent, rememberOfflineVerifiedStudent } from "@/lib/offlineVerifiedStudentCache";
 import { resolvePublicScanDenial, sanitizeScanDisplayText, SCAN_BINDING_RESET_CODES } from "@/lib/scanDenial";
 import { ScanController } from "@/lib/scan/ScanController";
-import type { ScanControllerState, ScanDetectionPayload } from "@/lib/scan/types";
+import type {
+  ScanControllerLogLevel,
+  ScanControllerState,
+  ScanDecodeMode,
+  ScanDetectionPayload,
+} from "@/lib/scan/types";
 import { cn } from "@/lib/utils";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -86,6 +91,37 @@ type ScanDebugState = {
   verificationStatus: string;
 };
 
+type LiveScannerDebugState = {
+  activeCameraId: string | null;
+  activeCameraLabel: string | null;
+  blurry: boolean | null;
+  bounds: NonNullable<ScanDetectionPayload["bounds"]> | null;
+  brightness: number | null;
+  decodeAttempts: number;
+  decodeSuccesses: number;
+  edgeScore: number | null;
+  facingMode: string | null;
+  focusMode: string | null;
+  frameRate: number | null;
+  glare: boolean | null;
+  lastCaptureMode: ScanDecodeMode | null;
+  lastConfidence: number | null;
+  lastDecodePass: string | null;
+  lastFailureReason: string | null;
+  lastRawPreview: string | null;
+  lastTimingMs: number | null;
+  lowLight: boolean | null;
+  mirrored: boolean | null;
+  resolutionHeight: number | null;
+  resolutionWidth: number | null;
+  torchEnabled: boolean;
+  torchSupported: boolean;
+  workerSupport: {
+    barcodeDetector: boolean;
+    offscreenCanvas: boolean;
+  } | null;
+};
+
 const createEmptyDebugState = (): ScanDebugState => ({
   attendanceResponse: null,
   clientStages: [],
@@ -102,6 +138,34 @@ const createEmptyDebugState = (): ScanDebugState => ({
   rawQrValue: null,
   serverDebug: null,
   verificationStatus: "idle",
+});
+
+const createLiveScannerDebugState = (): LiveScannerDebugState => ({
+  activeCameraId: null,
+  activeCameraLabel: null,
+  blurry: null,
+  bounds: null,
+  brightness: null,
+  decodeAttempts: 0,
+  decodeSuccesses: 0,
+  edgeScore: null,
+  facingMode: null,
+  focusMode: null,
+  frameRate: null,
+  glare: null,
+  lastCaptureMode: null,
+  lastConfidence: null,
+  lastDecodePass: null,
+  lastFailureReason: null,
+  lastRawPreview: null,
+  lastTimingMs: null,
+  lowLight: null,
+  mirrored: null,
+  resolutionHeight: null,
+  resolutionWidth: null,
+  torchEnabled: false,
+  torchSupported: false,
+  workerSupport: null,
 });
 
 const toneOf = (p: AttendanceScanPayload): ScannerUiTone =>
@@ -158,6 +222,8 @@ const ScanKioskPageV2 = () => {
   const redirectRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const liveScannerDebugRef = useRef<LiveScannerDebugState>(createLiveScannerDebugState());
+  const liveScannerSyncAtRef = useRef(0);
 
   const [ctrl, setCtrl] = useState<ScanControllerState>({ activeCameraId: null, activeCameraLabel: null, devices: [], error: null, lastFrameAt: null, permissionState: null, status: "idle", torchBusy: false, torchEnabled: false, torchSupported: false });
   const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
@@ -167,6 +233,7 @@ const ScanKioskPageV2 = () => {
   const [pending, setPending] = useState(0);
   const [now, setNow] = useState(Date.now);
   const [debugPanel, setDebugPanel] = useState<ScanDebugState>(() => createEmptyDebugState());
+  const [liveScannerDebug, setLiveScannerDebug] = useState<LiveScannerDebugState>(() => createLiveScannerDebugState());
   const [manualStudentId, setManualStudentId] = useState("");
   const [manualPhone, setManualPhone] = useState("");
   const [manualLoading, setManualLoading] = useState<"attendance" | "roundtrip" | null>(null);
@@ -191,9 +258,63 @@ const ScanKioskPageV2 = () => {
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
   // Online
   useEffect(() => { const on = () => setOnline(true); const off = () => setOnline(false); window.addEventListener("online", on); window.addEventListener("offline", off); return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); }; }, []);
+  useEffect(() => {
+    updateLiveScannerDebug((current) => ({
+      ...current,
+      activeCameraId: ctrl.activeCameraId,
+      activeCameraLabel: ctrl.activeCameraLabel,
+      torchEnabled: ctrl.torchEnabled,
+      torchSupported: ctrl.torchSupported,
+    }), true);
+  }, [ctrl.activeCameraId, ctrl.activeCameraLabel, ctrl.torchEnabled, ctrl.torchSupported, updateLiveScannerDebug]);
+  useEffect(() => {
+    const syncTrackSettings = () => {
+      const track = ctrlRef.current?.getActiveTrack();
+      if (!track) {
+        return;
+      }
+
+      const settings = track.getSettings() as MediaTrackSettings & {
+        focusMode?: string;
+      };
+      updateLiveScannerDebug((current) => ({
+        ...current,
+        activeCameraId:
+          typeof settings.deviceId === "string" && settings.deviceId.trim()
+            ? settings.deviceId
+            : current.activeCameraId,
+        facingMode: typeof settings.facingMode === "string" ? settings.facingMode : current.facingMode,
+        focusMode: typeof settings.focusMode === "string" ? settings.focusMode : current.focusMode,
+        frameRate: typeof settings.frameRate === "number" ? Number(settings.frameRate.toFixed(1)) : current.frameRate,
+        mirrored: settings.facingMode === "user",
+        resolutionHeight: typeof settings.height === "number" ? settings.height : current.resolutionHeight,
+        resolutionWidth: typeof settings.width === "number" ? settings.width : current.resolutionWidth,
+      }));
+    };
+
+    syncTrackSettings();
+    const intervalId = window.setInterval(syncTrackSettings, 1200);
+    return () => window.clearInterval(intervalId);
+  }, [updateLiveScannerDebug]);
 
   const refreshQ = useCallback(async () => { const c = await countAttendanceQueueEntries().catch(() => 0); if (mountRef.current) setPending(c); }, []);
   const clearResume = useCallback(() => { if (resumeRef.current !== null) { clearTimeout(resumeRef.current); resumeRef.current = null; } }, []);
+  const commitLiveScannerDebug = useCallback((force = false) => {
+    const timestamp = Date.now();
+    if (!force && timestamp - liveScannerSyncAtRef.current < 220) {
+      return;
+    }
+
+    liveScannerSyncAtRef.current = timestamp;
+    setLiveScannerDebug({ ...liveScannerDebugRef.current });
+  }, []);
+  const updateLiveScannerDebug = useCallback((
+    updater: (current: LiveScannerDebugState) => LiveScannerDebugState,
+    force = false,
+  ) => {
+    liveScannerDebugRef.current = updater(liveScannerDebugRef.current);
+    commitLiveScannerDebug(force);
+  }, [commitLiveScannerDebug]);
   const appendDebugStage = useCallback((stage: string, detail?: Record<string, unknown>) => {
     if (!debugMode) {
       return;
@@ -226,6 +347,106 @@ const ScanKioskPageV2 = () => {
       verificationStatus: rawQrValue ? "detected" : "idle",
     });
   }, [debugMode]);
+  const handleScannerLog = useCallback((
+    level: ScanControllerLogLevel,
+    event: string,
+    detail?: Record<string, unknown>,
+  ) => {
+    const detailRecord = detail ?? {};
+
+    updateLiveScannerDebug((current) => {
+      const next: LiveScannerDebugState = {
+        ...current,
+      };
+
+      if (event === "worker-ready") {
+        next.workerSupport = {
+          barcodeDetector: Boolean(detailRecord.barcodeDetector),
+          offscreenCanvas: Boolean(detailRecord.offscreenCanvas),
+        };
+      }
+
+      if (event === "camera-started") {
+        next.activeCameraId =
+          typeof detailRecord.activeCameraId === "string" ? detailRecord.activeCameraId : current.activeCameraId;
+        next.activeCameraLabel =
+          typeof detailRecord.activeCameraLabel === "string"
+            ? detailRecord.activeCameraLabel
+            : current.activeCameraLabel;
+        next.focusMode =
+          typeof detailRecord.activeFocusMode === "string" ? detailRecord.activeFocusMode : current.focusMode;
+        next.frameRate =
+          typeof detailRecord.activeFrameRate === "number" ? detailRecord.activeFrameRate : current.frameRate;
+        next.resolutionWidth =
+          typeof detailRecord.activeWidth === "number" ? detailRecord.activeWidth : current.resolutionWidth;
+        next.resolutionHeight =
+          typeof detailRecord.activeHeight === "number" ? detailRecord.activeHeight : current.resolutionHeight;
+        next.torchSupported =
+          typeof detailRecord.torchSupported === "boolean" ? detailRecord.torchSupported : current.torchSupported;
+      }
+
+      if (event === "camera-ready") {
+        next.activeCameraId =
+          typeof detailRecord.activeCameraId === "string" ? detailRecord.activeCameraId : next.activeCameraId;
+        next.activeCameraLabel =
+          typeof detailRecord.activeCameraLabel === "string"
+            ? detailRecord.activeCameraLabel
+            : next.activeCameraLabel;
+      }
+
+      if (event === "decode-attempt" || event === "decode-miss" || event === "decode-success") {
+        next.decodeAttempts = event === "decode-attempt" ? current.decodeAttempts + 1 : current.decodeAttempts;
+        next.lastCaptureMode =
+          typeof detailRecord.captureMode === "string"
+            ? (detailRecord.captureMode as ScanDecodeMode)
+            : current.lastCaptureMode;
+        next.lastRawPreview =
+          typeof detailRecord.rawValuePreview === "string" ? detailRecord.rawValuePreview : current.lastRawPreview;
+        next.lastTimingMs =
+          typeof detailRecord.timingMs === "number" ? detailRecord.timingMs : current.lastTimingMs;
+      }
+
+      if (event === "decode-miss" || event === "decode-success") {
+        const analysis =
+          detailRecord.analysis && typeof detailRecord.analysis === "object" && !Array.isArray(detailRecord.analysis)
+            ? (detailRecord.analysis as Record<string, unknown>)
+            : null;
+        next.brightness =
+          typeof analysis?.brightness === "number" ? analysis.brightness : current.brightness;
+        next.blurry = typeof analysis?.blurry === "boolean" ? analysis.blurry : current.blurry;
+        next.edgeScore = typeof analysis?.edgeScore === "number" ? analysis.edgeScore : current.edgeScore;
+        next.glare = typeof analysis?.glare === "boolean" ? analysis.glare : current.glare;
+        next.lowLight = typeof analysis?.lowLight === "boolean" ? analysis.lowLight : current.lowLight;
+        next.lastConfidence =
+          typeof detailRecord.confidence === "number" ? detailRecord.confidence : current.lastConfidence;
+        next.lastDecodePass =
+          typeof detailRecord.decodePass === "string" ? detailRecord.decodePass : current.lastDecodePass;
+        next.lastFailureReason =
+          typeof detailRecord.failureReason === "string"
+            ? detailRecord.failureReason
+            : event === "decode-success"
+              ? null
+              : current.lastFailureReason;
+        next.bounds =
+          detailRecord.bounds && typeof detailRecord.bounds === "object" && !Array.isArray(detailRecord.bounds)
+            ? (detailRecord.bounds as NonNullable<ScanDetectionPayload["bounds"]>)
+            : event === "decode-success"
+              ? current.bounds
+              : null;
+      }
+
+      if (event === "decode-success") {
+        next.decodeSuccesses = current.decodeSuccesses + 1;
+      }
+
+      if (event === "engine-error" || event === "decode-fail") {
+        next.lastFailureReason =
+          typeof detailRecord.message === "string" ? detailRecord.message : current.lastFailureReason;
+      }
+
+      return next;
+    }, event === "decode-success" || event === "camera-started" || event === "worker-ready" || level === "error");
+  }, [updateLiveScannerDebug]);
   const playFeedbackTone = useCallback(async (variant: "success" | "error") => {
     if (typeof window === "undefined") {
       return;
@@ -409,9 +630,66 @@ const ScanKioskPageV2 = () => {
       setManualLoading(null);
     }
   }, [appendDebugStage, goSetup, manualPhone, manualStudentId]);
+  const handleToggleTorch = useCallback(async () => {
+    const controller = ctrlRef.current;
+    if (!controller || !ctrl.torchSupported || ctrl.torchBusy) {
+      return;
+    }
 
-  const processRef = useRef<(raw: string, detection?: Pick<ScanDetectionPayload, "analysis" | "detectedAt" | "source" | "timingMs">) => void>(() => {});
-  const process = useCallback(async (raw: string, detection?: Pick<ScanDetectionPayload, "analysis" | "detectedAt" | "source" | "timingMs">) => {
+    appendDebugStage("torch_toggle_requested", {
+      enabled: !ctrl.torchEnabled,
+    });
+    try {
+      await controller.toggleTorch();
+    } catch (error) {
+      appendDebugStage("torch_toggle_failed", {
+        message: error instanceof Error ? error.message : "Unable to toggle torch.",
+      });
+    }
+  }, [appendDebugStage, ctrl.torchBusy, ctrl.torchEnabled, ctrl.torchSupported]);
+  const handleSwitchCamera = useCallback(async (cameraId?: string | null) => {
+    const controller = ctrlRef.current;
+    if (!controller) {
+      return;
+    }
+
+    appendDebugStage("camera_switch_requested", {
+      cameraId: cameraId ?? null,
+    });
+    try {
+      await controller.switchCamera(cameraId ?? null);
+    } catch (error) {
+      appendDebugStage("camera_switch_failed", {
+        message: error instanceof Error ? error.message : "Unable to switch camera.",
+      });
+    }
+  }, [appendDebugStage]);
+  const copyDebugLog = useCallback(async () => {
+    const debugSnapshot = {
+      copiedAt: new Date().toISOString(),
+      controller: ctrl,
+      device: {
+        deviceId: DEVICE_ID,
+        deviceName: DEVICE_NAME,
+      },
+      liveScannerDebug,
+      panel: debugPanel,
+    };
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(debugSnapshot, null, 2));
+      appendDebugStage("debug_log_copied", {
+        bytes: JSON.stringify(debugSnapshot).length,
+      });
+    } catch (error) {
+      appendDebugStage("debug_log_copy_failed", {
+        message: error instanceof Error ? error.message : "Unable to copy debug log.",
+      });
+    }
+  }, [appendDebugStage, ctrl, debugPanel, liveScannerDebug]);
+
+  const processRef = useRef<(raw: string, detection?: Pick<ScanDetectionPayload, "analysis" | "bounds" | "captureMode" | "confidence" | "decodePass" | "detectedAt" | "source" | "timingMs">) => void>(() => {});
+  const process = useCallback(async (raw: string, detection?: Pick<ScanDetectionPayload, "analysis" | "bounds" | "captureMode" | "confidence" | "decodePass" | "detectedAt" | "source" | "timingMs">) => {
     if (procRef.current) return;
     const val = trim(raw);
     if (!val || val.length > 4096 || Date.now() < coolRef.current) return;
@@ -422,7 +700,10 @@ const ScanKioskPageV2 = () => {
     setPayload(null);
     resetDebugPanel(val, detection?.timingMs ?? null);
     appendDebugStage("scan_detected", {
+      captureMode: detection?.captureMode ?? null,
+      confidence: detection?.confidence ?? null,
       decodeMs: detection?.timingMs ?? null,
+      decodePass: detection?.decodePass ?? null,
       detector: detection?.source ?? null,
       hasAnalysis: Boolean(detection?.analysis),
     });
@@ -637,7 +918,23 @@ const ScanKioskPageV2 = () => {
   // Scanner init
   useEffect(() => {
     mountRef.current = true;
-    const sc = new ScanController({ onDetect: (d: ScanDetectionPayload) => { console.log("[scan] onDetect fired:", d.rawValue?.slice(0, 30)); processRef.current(d.rawValue, { analysis: d.analysis, detectedAt: d.detectedAt, source: d.source, timingMs: d.timingMs }); }, onLog: () => {}, onStateChange: (s: ScanControllerState) => { if (mountRef.current) setCtrl(s); } });
+    const sc = new ScanController({
+      onDetect: (d: ScanDetectionPayload) => {
+        console.log("[scan] onDetect fired:", d.rawValue?.slice(0, 30));
+        processRef.current(d.rawValue, {
+          analysis: d.analysis,
+          bounds: d.bounds,
+          captureMode: d.captureMode,
+          confidence: d.confidence,
+          decodePass: d.decodePass,
+          detectedAt: d.detectedAt,
+          source: d.source,
+          timingMs: d.timingMs,
+        });
+      },
+      onLog: handleScannerLog,
+      onStateChange: (s: ScanControllerState) => { if (mountRef.current) setCtrl(s); },
+    });
     ctrlRef.current = sc;
 
     const boot = async () => {
@@ -663,7 +960,7 @@ const ScanKioskPageV2 = () => {
       audioContextRef.current?.close().catch(() => undefined);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleScannerLog]);
 
   // ─── Derived state ─────────────────────────────────────────────────────────
   const live = ctrl.status === "ready" || ctrl.status === "paused";
@@ -688,11 +985,71 @@ const ScanKioskPageV2 = () => {
           : null;
   const resultHeadline = payload?.status === "error" ? activeDenial?.title ?? "ACCESS DENIED" : payload?.status === "queued" ? "SAVED OFFLINE" : payload?.status === "success" ? (payload.duplicate ? "ALREADY MARKED" : "ACCESS GRANTED") : null;
   const resultMessage = payload ? titleOf(payload) : null;
-  const resultMeta = payload?.status === "success" ? `${payload.duplicate ? "Attendance already recorded" : "Granted"}${seatOf(payload) ? ` • Seat ${seatOf(payload)}` : ""}` : payload?.status === "queued" ? "Stored securely for background sync" : null;
+  const resultMeta = payload?.status === "success" ? `${payload.duplicate ? "Attendance already recorded" : "Granted"}${seatOf(payload) ? ` | Seat ${seatOf(payload)}` : ""}` : payload?.status === "queued" ? "Stored securely for background sync" : null;
   const parsedPayloadJson = useMemo(() => JSON.stringify(debugPanel.parsedPayload, null, 2), [debugPanel.parsedPayload]);
   const attendanceResponseJson = useMemo(() => JSON.stringify(debugPanel.attendanceResponse, null, 2), [debugPanel.attendanceResponse]);
   const serverDebugJson = useMemo(() => JSON.stringify(debugPanel.serverDebug, null, 2), [debugPanel.serverDebug]);
   const manualResponseJson = useMemo(() => JSON.stringify(debugPanel.manualResponse, null, 2), [debugPanel.manualResponse]);
+  const rawQrMeta = useMemo(() => {
+    const rawValue = trim(debugPanel.rawQrValue);
+    if (!rawValue) {
+      return {
+        isJwtLike: false,
+        length: 0,
+        preview: "--",
+        segments: 0,
+      };
+    }
+
+    const segments = rawValue.split(".").filter(Boolean).length;
+    return {
+      isJwtLike: segments === 3,
+      length: rawValue.length,
+      preview: rawValue.slice(0, 20),
+      segments,
+    };
+  }, [debugPanel.rawQrValue]);
+  const isCompactPreview = typeof window !== "undefined" ? window.innerWidth < 640 : false;
+  const guideSizePercent = liveScannerDebug.lastCaptureMode === "full-frame"
+    ? 100
+    : liveScannerDebug.lastCaptureMode === "wide-square"
+      ? isCompactPreview
+        ? 92
+        : 90
+      : isCompactPreview
+        ? 82
+        : 78;
+  const guidanceMessage =
+    ctrl.error?.detail ||
+    (liveScannerDebug.lowLight
+      ? "Increase lighting"
+      : liveScannerDebug.blurry
+        ? "Hold steady"
+        : liveScannerDebug.lastFailureReason === "not_found" && liveScannerDebug.decodeAttempts > 4
+          ? "Move closer and center the QR"
+          : liveScannerDebug.mirrored
+            ? "Switch to the rear camera"
+            : null);
+  const guidanceToneClass = ctrl.error
+    ? "border-rose-400/30 bg-rose-500/14 text-rose-100"
+    : liveScannerDebug.lowLight || liveScannerDebug.blurry || liveScannerDebug.lastFailureReason === "not_found"
+      ? "border-amber-300/30 bg-amber-400/12 text-amber-100"
+      : "border-cyan-400/25 bg-cyan-500/10 text-cyan-100";
+  const detectionOverlayStyle = useMemo(() => {
+    if (!liveScannerDebug.bounds) {
+      return null;
+    }
+
+    const overlayPercent = liveScannerDebug.lastCaptureMode === "full-frame" ? 100 : guideSizePercent;
+    const offset = liveScannerDebug.lastCaptureMode === "full-frame" ? 0 : (100 - overlayPercent) / 2;
+
+    return {
+      left: `${offset + liveScannerDebug.bounds.left * overlayPercent}%`,
+      top: `${offset + liveScannerDebug.bounds.top * overlayPercent}%`,
+      width: `${Math.max(4, liveScannerDebug.bounds.width * overlayPercent)}%`,
+      height: `${Math.max(4, liveScannerDebug.bounds.height * overlayPercent)}%`,
+    };
+  }, [guideSizePercent, liveScannerDebug.bounds, liveScannerDebug.lastCaptureMode]);
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
@@ -731,16 +1088,52 @@ const ScanKioskPageV2 = () => {
                 transition={{ duration: 0.3, ease: "easeOut" }}
               />
             ) : null}
+            {guidanceMessage ? (
+              <div className={cn("absolute left-3 top-3 z-[2] rounded-full border px-2.5 py-1 text-[10px] font-medium backdrop-blur-md", guidanceToneClass)}>
+                {guidanceMessage}
+              </div>
+            ) : null}
+            {debugMode ? (
+              <div className="absolute right-3 top-3 z-[2] rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[10px] text-white/70 backdrop-blur-md">
+                {liveScannerDebug.lastCaptureMode ?? "focused-square"}{liveScannerDebug.lastDecodePass ? ` | ${liveScannerDebug.lastDecodePass}` : ""}
+              </div>
+            ) : null}
             {/* Corners */}
-            <div className="absolute inset-0 flex items-center justify-center"><div className="relative h-[60%] w-[60%]">
+            <div className="absolute inset-0 flex items-center justify-center"><div className="relative" style={{ height: `${guideSizePercent}%`, width: `${guideSizePercent}%` }}>
               <div className={cn("absolute left-0 top-0 h-6 w-6 rounded-tl-lg border-l-2 border-t-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "warning" ? "border-amber-300" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
               <div className={cn("absolute right-0 top-0 h-6 w-6 rounded-tr-lg border-r-2 border-t-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "warning" ? "border-amber-300" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
               <div className={cn("absolute bottom-0 left-0 h-6 w-6 rounded-bl-lg border-b-2 border-l-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "warning" ? "border-amber-300" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
               <div className={cn("absolute bottom-0 right-0 h-6 w-6 rounded-br-lg border-b-2 border-r-2 sm:h-8 sm:w-8", tone === "danger" ? "border-rose-400" : tone === "warning" ? "border-amber-300" : tone === "info" ? "border-cyan-300" : "border-emerald-300")} />
               {live && <motion.div className={cn("absolute inset-x-2 h-[2px] rounded-full bg-gradient-to-r from-transparent via-current to-transparent", toneColor)} animate={{ top: ["10%", "88%", "10%"] }} transition={{ duration: 2, ease: "linear", repeat: Infinity }} />}
             </div></div>
+            {debugMode && detectionOverlayStyle ? (
+              <div
+                className="pointer-events-none absolute z-[2] rounded-lg border border-emerald-300/80 bg-emerald-400/10"
+                style={detectionOverlayStyle}
+              />
+            ) : null}
             {/* Idle state */}
             {!live && <div className="absolute inset-0 z-10 grid place-items-center bg-black/50 backdrop-blur-sm"><p className="text-xs text-white/60">{ctrl.error ? "Camera error" : "Starting camera..."}</p></div>}
+            {debugMode ? (
+              <div className="absolute inset-x-3 bottom-3 z-[2] grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/40 p-2 text-[10px] text-white/65 backdrop-blur-md">
+                <div>
+                  <p className="text-white/30">Camera</p>
+                  <p className="mt-0.5">
+                    {liveScannerDebug.resolutionWidth && liveScannerDebug.resolutionHeight
+                      ? `${liveScannerDebug.resolutionWidth}x${liveScannerDebug.resolutionHeight}`
+                      : "--"}
+                    {liveScannerDebug.frameRate ? ` | ${liveScannerDebug.frameRate} fps` : ""}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-white/30">Frame</p>
+                  <p className="mt-0.5">
+                    {liveScannerDebug.brightness !== null ? `B ${Math.round(liveScannerDebug.brightness)}` : "B --"}
+                    {liveScannerDebug.edgeScore !== null ? ` | E ${liveScannerDebug.edgeScore.toFixed(1)}` : ""}
+                  </p>
+                </div>
+              </div>
+            ) : null}
             {payload ? (
               <div className="pointer-events-none absolute inset-x-4 bottom-4 z-10 rounded-xl border border-white/10 bg-[#07111c]/86 px-4 py-3 text-center shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl">
                 <p className={cn("text-[11px] font-semibold tracking-[0.28em]", payload.status === "error" ? "text-rose-300" : payload.status === "queued" ? "text-cyan-300" : payload.duplicate ? "text-amber-200" : "text-emerald-200")}>{resultHeadline}</p>
@@ -750,7 +1143,32 @@ const ScanKioskPageV2 = () => {
             ) : null}
           </div>
           {/* Instruction */}
-          <p className="text-center text-xs text-white/40">Position QR code 6–10 inches from camera</p>
+          <p className="text-center text-xs text-white/40">Position QR code 6-10 inches from camera</p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {ctrl.devices.length > 1 ? (
+              <select
+                value={ctrl.activeCameraId ?? ""}
+                onChange={(event) => void handleSwitchCamera(event.target.value || null)}
+                className="h-8 rounded-full border border-white/10 bg-white/[0.04] px-3 text-[11px] text-white/75 outline-none transition hover:bg-white/[0.06] focus:border-cyan-400/35"
+              >
+                {ctrl.devices.map((device) => (
+                  <option key={device.id} value={device.id} className="bg-[#0a0f1a] text-white">
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {ctrl.torchSupported ? (
+              <button
+                type="button"
+                onClick={() => void handleToggleTorch()}
+                disabled={ctrl.torchBusy}
+                className="inline-flex h-8 items-center rounded-full border border-white/10 bg-white/[0.04] px-3 text-[11px] font-medium text-white/75 transition hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {ctrl.torchBusy ? "Torch..." : ctrl.torchEnabled ? "Torch On" : "Torch Off"}
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {/* Info column */}
@@ -794,7 +1212,7 @@ const ScanKioskPageV2 = () => {
                   {item.tone === "success" ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" /> : item.tone === "danger" ? <CircleX className="h-3.5 w-3.5 shrink-0 text-rose-400" /> : <Clock className={cn("h-3.5 w-3.5 shrink-0", item.tone === "warning" ? "text-amber-300" : "text-cyan-400")} />}
                   <div className="min-w-0 flex-1">
                     <p className={cn("truncate text-xs font-medium", item.tone === "danger" ? "text-rose-100" : "text-white/70")}>{item.title}</p>
-                    <p className="text-[10px] text-white/30">{item.label}{item.seat ? ` · Seat ${item.seat}` : ""}</p>
+                    <p className="text-[10px] text-white/30">{item.label}{item.seat ? ` | Seat ${item.seat}` : ""}</p>
                   </div>
                   <span className="shrink-0 text-[10px] text-white/25">{timeFmt(item.at)}</span>
                 </div>
@@ -804,13 +1222,22 @@ const ScanKioskPageV2 = () => {
 
           {debugMode ? (
             <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-cyan-300/80">Debug Panel</p>
                   <p className="mt-1 text-[11px] text-white/45">Live scan diagnostics, manual fallback, and QR roundtrip probes.</p>
                 </div>
-                <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] text-cyan-200">
-                  {debugPanel.verificationStatus}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copyDebugLog()}
+                    className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.05] px-2.5 text-[10px] font-medium text-white/75 transition hover:bg-white/[0.08]"
+                  >
+                    Copy Log
+                  </button>
+                  <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] text-cyan-200">
+                    {debugPanel.verificationStatus}
+                  </div>
                 </div>
               </div>
 
@@ -830,6 +1257,50 @@ const ScanKioskPageV2 = () => {
                 <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
                   <p className="text-white/30">Round Trip</p>
                   <p className="mt-1 font-medium text-white">{debugPanel.metrics.roundTripMs ?? "--"} ms</p>
+                </div>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-white/45">
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Camera</p>
+                  <p className="mt-1 font-medium text-white">{liveScannerDebug.activeCameraLabel || ctrl.activeCameraLabel || "--"}</p>
+                  <p className="mt-1 text-white/40">
+                    {liveScannerDebug.resolutionWidth && liveScannerDebug.resolutionHeight
+                      ? `${liveScannerDebug.resolutionWidth}x${liveScannerDebug.resolutionHeight}`
+                      : "--"}
+                    {liveScannerDebug.frameRate ? ` | ${liveScannerDebug.frameRate} fps` : ""}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Scanner</p>
+                  <p className="mt-1 font-medium text-white">
+                    {liveScannerDebug.decodeSuccesses}/{liveScannerDebug.decodeAttempts} reads
+                  </p>
+                  <p className="mt-1 text-white/40">
+                    {liveScannerDebug.lastCaptureMode || "--"}
+                    {liveScannerDebug.lastFailureReason ? ` | ${liveScannerDebug.lastFailureReason}` : ""}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Frame Quality</p>
+                  <p className="mt-1 font-medium text-white">
+                    {liveScannerDebug.brightness !== null ? Math.round(liveScannerDebug.brightness) : "--"} brightness
+                  </p>
+                  <p className="mt-1 text-white/40">
+                    {liveScannerDebug.edgeScore !== null ? `edge ${liveScannerDebug.edgeScore.toFixed(1)}` : "edge --"}
+                    {liveScannerDebug.blurry ? " | blurry" : ""}
+                    {liveScannerDebug.lowLight ? " | low-light" : ""}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Support</p>
+                  <p className="mt-1 font-medium text-white">
+                    {liveScannerDebug.workerSupport?.barcodeDetector ? "Native QR" : "jsQR fallback"}
+                  </p>
+                  <p className="mt-1 text-white/40">
+                    {liveScannerDebug.workerSupport?.offscreenCanvas ? "worker canvas" : "main-thread canvas"}
+                    {liveScannerDebug.focusMode ? ` | focus ${liveScannerDebug.focusMode}` : ""}
+                  </p>
                 </div>
               </div>
 
@@ -870,12 +1341,18 @@ const ScanKioskPageV2 = () => {
               <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
                 <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Scanned Payload</p>
+                  <p className="mt-1 text-[10px] text-white/40">
+                    length {rawQrMeta.length} | first 20 {rawQrMeta.preview} | jwt {rawQrMeta.isJwtLike ? "yes" : "no"} | segments {rawQrMeta.segments}
+                  </p>
                   <p className="mt-1 break-all font-mono text-[11px] text-white/75">{debugPanel.rawQrValue || "--"}</p>
                 </div>
                 <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Matched Student</p>
                   <p className="mt-1 font-mono text-[11px] text-white/75">{debugPanel.matchedStudentId || "--"}</p>
-                  <p className="mt-1 text-[11px] text-rose-200/80">{debugPanel.failureReason || ""}</p>
+                  <p className="mt-1 text-[11px] text-white/45">
+                    confidence {liveScannerDebug.lastConfidence ?? "--"} | decode {liveScannerDebug.lastDecodePass || "--"}
+                  </p>
+                  <p className="mt-1 text-[11px] text-rose-200/80">{debugPanel.failureReason || liveScannerDebug.lastFailureReason || ""}</p>
                 </div>
                 <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Parsed JSON</p>
@@ -915,7 +1392,7 @@ const ScanKioskPageV2 = () => {
       {/* ── Footer ── */}
       <footer className="flex items-center justify-center gap-2 border-t border-white/5 px-4 py-2">
         <Shield className="h-3 w-3 text-white/20" />
-        <span className="text-[10px] tracking-wider text-white/20">Secure · Smart · Seamless</span>
+        <span className="text-[10px] tracking-wider text-white/20">Secure | Smart | Seamless</span>
       </footer>
     </div>
   );

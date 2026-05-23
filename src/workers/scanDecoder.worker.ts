@@ -3,6 +3,10 @@
 import jsQR from "jsqr";
 
 type BarcodeDetectorResult = {
+  cornerPoints?: Array<{
+    x: number;
+    y: number;
+  }>;
   rawValue?: string;
 };
 
@@ -43,6 +47,19 @@ type DecodeResultMessage = {
   requestId: number;
   rawValue: string | null;
   detector: "barcode_detector" | "jsqr" | null;
+  decodePass: string | null;
+  confidence: number | null;
+  failureReason: "blur" | "glare" | "low_light" | "not_found" | "worker_error" | null;
+  bounds: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    points: Array<{
+      x: number;
+      y: number;
+    }>;
+  } | null;
   timingMs: number;
   brightness: number;
   blurry: boolean;
@@ -94,6 +111,94 @@ const getDecodeContext = (width: number, height: number) => {
   return decodeContext;
 };
 
+const clampRatio = (value: number) => Math.max(0, Math.min(1, Number(value.toFixed(4))));
+
+const buildNormalizedBounds = (
+  points: Array<{
+    x: number;
+    y: number;
+  }>,
+  width: number,
+  height: number,
+) => {
+  if (!points.length || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const left = Math.max(0, Math.min(...xs));
+  const right = Math.min(width, Math.max(...xs));
+  const top = Math.max(0, Math.min(...ys));
+  const bottom = Math.min(height, Math.max(...ys));
+
+  return {
+    left: clampRatio(left / width),
+    top: clampRatio(top / height),
+    width: clampRatio((right - left) / width),
+    height: clampRatio((bottom - top) / height),
+    points: points.map((point) => ({
+      x: clampRatio(point.x / width),
+      y: clampRatio(point.y / height),
+    })),
+  };
+};
+
+const resolveFailureReason = ({
+  blurry,
+  glare,
+  lowLight,
+}: {
+  blurry: boolean;
+  glare: boolean;
+  lowLight: boolean;
+}) => {
+  if (lowLight) {
+    return "low_light" as const;
+  }
+
+  if (blurry) {
+    return "blur" as const;
+  }
+
+  if (glare) {
+    return "glare" as const;
+  }
+
+  return "not_found" as const;
+};
+
+const computeConfidence = ({
+  detector,
+  blurry,
+  edgeScore,
+  glare,
+  lowLight,
+}: {
+  detector: "barcode_detector" | "jsqr";
+  blurry: boolean;
+  edgeScore: number;
+  glare: boolean;
+  lowLight: boolean;
+}) => {
+  let confidence = detector === "barcode_detector" ? 0.96 : 0.88;
+
+  if (blurry) {
+    confidence -= 0.2;
+  }
+
+  if (lowLight) {
+    confidence -= 0.12;
+  }
+
+  if (glare) {
+    confidence -= 0.08;
+  }
+
+  confidence += Math.min(edgeScore / 60, 0.08);
+  return Number(Math.max(0.2, Math.min(0.99, confidence)).toFixed(2));
+};
+
 const detectWithBarcodeDetector = async (source: ImageBitmapSource | OffscreenCanvas) => {
   const detector = getBarcodeDetector();
   if (!detector) {
@@ -102,9 +207,19 @@ const detectWithBarcodeDetector = async (source: ImageBitmapSource | OffscreenCa
 
   try {
     const nativeResults = await detector.detect(source);
-    return trimText(
-      nativeResults.find((entry) => typeof entry.rawValue === "string" && entry.rawValue.trim())?.rawValue,
-    );
+    const detection = nativeResults.find((entry) => typeof entry.rawValue === "string" && entry.rawValue.trim());
+    if (!detection) {
+      return null;
+    }
+
+    const width = "width" in source ? source.width : 0;
+    const height = "height" in source ? source.height : 0;
+
+    return {
+      rawValue: trimText(detection.rawValue),
+      bounds: buildNormalizedBounds(detection.cornerPoints ?? [], width, height),
+      decodePass: "barcode_detector" as const,
+    };
   } catch {
     return null;
   }
@@ -195,15 +310,46 @@ const analyzeImageData = (imageData: ImageData) => {
 const isFrameBlurry = (analysis: ReturnType<typeof analyzeImageData>) =>
   analysis.edgeScore < (analysis.lowLight ? MIN_SHARP_EDGE_SCORE_LOW_LIGHT : MIN_SHARP_EDGE_SCORE);
 
+const buildJsQrBounds = (
+  location:
+    | {
+        bottomLeftCorner: { x: number; y: number };
+        bottomRightCorner: { x: number; y: number };
+        topLeftCorner: { x: number; y: number };
+        topRightCorner: { x: number; y: number };
+      }
+    | undefined,
+  width: number,
+  height: number,
+) => {
+  if (!location) {
+    return null;
+  }
+
+  return buildNormalizedBounds(
+    [
+      location.topLeftCorner,
+      location.topRightCorner,
+      location.bottomRightCorner,
+      location.bottomLeftCorner,
+    ],
+    width,
+    height,
+  );
+};
+
 const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
   // First attempt: direct read with both inversion modes
-  const directRead = trimText(
-    jsQR(imageData.data, imageData.width, imageData.height, {
-      inversionAttempts: "attemptBoth",
-    })?.data,
-  );
+  const directResult = jsQR(imageData.data, imageData.width, imageData.height, {
+    inversionAttempts: "attemptBoth",
+  });
+  const directRead = trimText(directResult?.data);
   if (directRead) {
-    return directRead;
+    return {
+      rawValue: directRead,
+      bounds: buildJsQrBounds(directResult?.location, imageData.width, imageData.height),
+      decodePass: "jsqr_direct" as const,
+    };
   }
 
   // Second attempt: enhanced contrast
@@ -211,13 +357,16 @@ const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
     contrast: brightness < 96 ? 1.4 : 1.25,
     brightnessOffset: brightness < 96 ? 12 : 6,
   });
-  const enhancedRead = trimText(
-    jsQR(enhanced.data, imageData.width, imageData.height, {
-      inversionAttempts: "attemptBoth",
-    })?.data,
-  );
+  const enhancedResult = jsQR(enhanced.data, imageData.width, imageData.height, {
+    inversionAttempts: "attemptBoth",
+  });
+  const enhancedRead = trimText(enhancedResult?.data);
   if (enhancedRead) {
-    return enhancedRead;
+    return {
+      rawValue: enhancedRead,
+      bounds: buildJsQrBounds(enhancedResult?.location, imageData.width, imageData.height),
+      decodePass: "jsqr_enhanced" as const,
+    };
   }
 
   // Third attempt: high contrast for screen-displayed QR codes
@@ -225,11 +374,20 @@ const decodeWithJsQr = (imageData: ImageData, brightness: number) => {
     contrast: 1.6,
     brightnessOffset: -10,
   });
-  return trimText(
-    jsQR(highContrast.data, imageData.width, imageData.height, {
-      inversionAttempts: "attemptBoth",
-    })?.data,
-  );
+  const highContrastResult = jsQR(highContrast.data, imageData.width, imageData.height, {
+    inversionAttempts: "attemptBoth",
+  });
+  const highContrastRead = trimText(highContrastResult?.data);
+
+  if (!highContrastRead) {
+    return null;
+  }
+
+  return {
+    rawValue: highContrastRead,
+    bounds: buildJsQrBounds(highContrastResult?.location, imageData.width, imageData.height),
+    decodePass: "jsqr_high_contrast" as const,
+  };
 };
 
 const decodePreparedFrame = async (
@@ -243,8 +401,18 @@ const decodePreparedFrame = async (
   const nativeValue = nativeSource ? await detectWithBarcodeDetector(nativeSource) : null;
   if (nativeValue) {
     return {
-      rawValue: nativeValue,
+      rawValue: nativeValue.rawValue,
       detector: "barcode_detector" as const,
+      decodePass: nativeValue.decodePass,
+      bounds: nativeValue.bounds,
+      confidence: computeConfidence({
+        detector: "barcode_detector",
+        blurry,
+        edgeScore: analysis.edgeScore,
+        glare: analysis.glare,
+        lowLight: analysis.lowLight,
+      }),
+      failureReason: null,
       brightness: analysis.brightness,
       blurry,
       edgeScore: analysis.edgeScore,
@@ -256,8 +424,20 @@ const decodePreparedFrame = async (
   const rawValue = decodeWithJsQr(imageData, analysis.brightness);
 
   return {
-    rawValue,
+    rawValue: rawValue?.rawValue ?? null,
     detector: rawValue ? ("jsqr" as const) : null,
+    decodePass: rawValue?.decodePass ?? null,
+    bounds: rawValue?.bounds ?? null,
+    confidence: rawValue
+      ? computeConfidence({
+          detector: "jsqr",
+          blurry,
+          edgeScore: analysis.edgeScore,
+          glare: analysis.glare,
+          lowLight: analysis.lowLight,
+        })
+      : null,
+    failureReason: rawValue ? null : resolveFailureReason(analysis),
     brightness: analysis.brightness,
     blurry,
     edgeScore: analysis.edgeScore,
@@ -272,6 +452,10 @@ const decodeBitmap = async (bitmap: ImageBitmap) => {
     return {
       rawValue: null,
       detector: null,
+      decodePass: null,
+      bounds: null,
+      confidence: null,
+      failureReason: "worker_error" as const,
       brightness: 0,
       blurry: false,
       edgeScore: 0,
@@ -312,6 +496,10 @@ const postEmptyDecodeResult = (requestId: number, startedAt: number) => {
     requestId,
     rawValue: null,
     detector: null,
+    decodePass: null,
+    confidence: null,
+    failureReason: "worker_error",
+    bounds: null,
     timingMs,
     brightness: 0,
     blurry: false,
@@ -334,6 +522,10 @@ const handleDecodeMessage = async (message: DecodeMessage) => {
       requestId: message.requestId,
       rawValue: result.rawValue,
       detector: result.detector,
+      decodePass: result.decodePass,
+      confidence: result.confidence,
+      failureReason: result.failureReason,
+      bounds: result.bounds,
       timingMs,
       brightness: result.brightness,
       blurry: result.blurry,
@@ -372,6 +564,10 @@ const handleImageDataDecodeMessage = async (message: DecodeImageDataMessage) => 
       requestId: message.requestId,
       rawValue: result.rawValue,
       detector: result.detector,
+      decodePass: result.decodePass,
+      confidence: result.confidence,
+      failureReason: result.failureReason,
+      bounds: result.bounds,
       timingMs,
       brightness: result.brightness,
       blurry: result.blurry,
