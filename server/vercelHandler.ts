@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { handleAuthApiRequest, isSupportedAuthApiPath, type AuthApiRoutePath } from "../src/lib/authApiRoute.server.js";
+import {
+  resolveAttendanceRuntimeIntegrityRequest,
+  warmAttendanceRuntimeIntegrity,
+} from "../src/lib/attendanceRuntimeIntegrity.server.js";
 import { logAttendanceFailure } from "../src/lib/attendanceFailureLogger.js";
 import { resolveDeviceHeartbeatRequest } from "../src/lib/deviceHeartbeat.server.js";
 import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
@@ -59,6 +63,8 @@ type ResolverResult = {
   cookies?: string[];
   statusCode: number;
 };
+
+void warmAttendanceRuntimeIntegrity(process.env);
 
 type AuthContext = {
   authorization?: string;
@@ -577,6 +583,30 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
         sendJson(res, 500, {
           status: "error",
           message: error instanceof Error ? error.message : "Unexpected attendance scan failure",
+        });
+      }
+      return;
+    }
+
+    case "/api/attendance/integrity": {
+      if (req.method !== "GET" && req.method !== "POST") {
+        sendMethodNotAllowed(res, "GET, POST");
+        return;
+      }
+
+      try {
+        const requestInput =
+          req.method === "GET"
+            ? Object.fromEntries(new URL(req.url || "/", "http://localhost").searchParams.entries())
+            : (readParsedBody(req) as Record<string, unknown>);
+        const result = await resolveAttendanceRuntimeIntegrityRequest(process.env, requestInput);
+        sendJson(res, result.statusCode, result.body);
+      } catch (error) {
+        await logServerlessAttendanceFailure(pathname, "attendance-integrity-api", error);
+        sendJson(res, 500, {
+          detail: error instanceof Error ? error.message : "Unexpected attendance integrity failure",
+          status: "failed",
+          suspected_issue: "server_error",
         });
       }
       return;

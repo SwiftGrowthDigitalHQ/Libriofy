@@ -353,6 +353,57 @@ const buildRequestHeaders = (deviceToken?: string) => {
   return headers;
 };
 
+const parseFunctionsFallbackResponse = async (response: Response) => {
+  try {
+    const payload = (await response.json()) as Record<string, unknown>;
+    return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeFunctionsFallbackFailure = async (
+  error: unknown,
+): Promise<AttendanceScanSubmissionResult | null> => {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const errorRecord = error as {
+    context?: unknown;
+    message?: unknown;
+  };
+  const response =
+    typeof Response !== "undefined" && errorRecord.context instanceof Response
+      ? errorRecord.context
+      : null;
+
+  if (!response) {
+    return null;
+  }
+
+  const payload = await parseFunctionsFallbackResponse(response);
+  const rawCode = trimText(payload?.code);
+  const rawMessage = trimText(payload?.message) || trimText(errorRecord.message);
+  const code =
+    response.status === 404 && rawCode === "NOT_FOUND"
+      ? "RPC_RUNTIME_ERROR"
+      : rawCode || "RPC_RUNTIME_ERROR";
+  const message =
+    response.status === 404 && rawCode === "NOT_FOUND"
+      ? "Supabase scan-attendance function is not deployed for this project."
+      : rawMessage || "The fallback scan runtime is unavailable.";
+
+  return {
+    debug:
+      payload && typeof payload.debug === "object" && !Array.isArray(payload.debug)
+        ? (payload.debug as AttendanceScanDebugPayload)
+        : null,
+    payload: normalizeErrorPayload({ code, message }, message),
+    responseStatus: response.status,
+  };
+};
+
 const invokeSupabaseFallback = async (
   entry: AttendanceQueueEntry,
   deviceToken?: string,
@@ -370,6 +421,11 @@ const invokeSupabaseFallback = async (
   });
 
   if (error) {
+    const normalizedFailure = await normalizeFunctionsFallbackFailure(error);
+    if (normalizedFailure) {
+      return normalizedFailure;
+    }
+
     throw new Error(error.message || "Unable to reach the scan handler.");
   }
 

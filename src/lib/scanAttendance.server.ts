@@ -276,6 +276,7 @@ const resolveErrorStatusCode = (code?: string) => {
     case "DEVICE_MISMATCH":
     case "ACCESS_DENIED":
     case "SUBSCRIPTION_EXPIRED":
+    case "RLS_DENIED":
       return 403;
     case "ALREADY_INSIDE":
     case "ALREADY_CHECKED_IN":
@@ -287,6 +288,8 @@ const resolveErrorStatusCode = (code?: string) => {
     case "ENTRY_CONFLICT":
       return 409;
     case "SERVER_ERROR":
+    case "RPC_MISSING":
+    case "SCHEMA_MISSING":
     case "INTERNAL_ERROR":
       return 500;
     case "STUDENT_NOT_FOUND":
@@ -311,6 +314,67 @@ const isMissingRpcFunctionError = (error: unknown) => {
     message.includes("could not find the function") ||
     details.includes("no matches were found in the schema cache")
   );
+};
+
+const isSchemaContractError = (error: unknown) => {
+  const record = getRpcErrorRecord(error);
+  const code = normalizeString(record.code).toUpperCase();
+  const message = normalizeString(record.message).toLowerCase();
+  const details = normalizeString(record.details).toLowerCase();
+
+  return (
+    code === "42703" ||
+    code === "42P01" ||
+    code === "PGRST205" ||
+    isMissingRpcFunctionError(error) ||
+    message.includes("schema cache") ||
+    message.includes("does not exist") ||
+    message.includes("could not find the table") ||
+    message.includes("could not find the function") ||
+    details.includes("schema cache")
+  );
+};
+
+const isRlsDeniedError = (error: unknown) => {
+  const record = getRpcErrorRecord(error);
+  const code = normalizeString(record.code).toUpperCase();
+  const message = normalizeString(record.message).toLowerCase();
+  const details = normalizeString(record.details).toLowerCase();
+
+  return (
+    code === "42501" ||
+    message.includes("permission denied") ||
+    message.includes("row level security") ||
+    details.includes("row level security")
+  );
+};
+
+const classifyAttendanceRuntimeError = (error: unknown) => {
+  if (isMissingRpcFunctionError(error)) {
+    return {
+      code: "RPC_MISSING",
+      message: "Attendance RPC missing in this Supabase project.",
+    };
+  }
+
+  if (isSchemaContractError(error)) {
+    return {
+      code: "SCHEMA_MISSING",
+      message: "Attendance schema is missing required tables or columns.",
+    };
+  }
+
+  if (isRlsDeniedError(error)) {
+    return {
+      code: "RLS_DENIED",
+      message: "Attendance access is blocked by Supabase permissions.",
+    };
+  }
+
+  return {
+    code: "SERVER_ERROR",
+    message: normalizeString(getRpcErrorRecord(error).message) || "Unable to record the scan",
+  };
 };
 
 const normalizeRpcPayload = (result: unknown): ScanAttendanceResponseBody => {
@@ -1224,8 +1288,10 @@ export const resolveScanAttendanceRequest = async (
       parsedQr,
     });
   } catch (error) {
-    const lookupMessage = error instanceof Error ? error.message : "Unable to resolve the scanned student";
+    const classifiedError = classifyAttendanceRuntimeError(error);
+    const lookupMessage = error instanceof Error ? error.message : classifiedError.message;
     pushDebugStage(debug, "student_resolution", "error", {
+      classifiedCode: classifiedError.code,
       message: lookupMessage,
       resolvedStudentIdentifier,
     });
@@ -1234,7 +1300,7 @@ export const resolveScanAttendanceRequest = async (
       client: supabase,
       route,
       message: lookupMessage,
-      code: "SERVER_ERROR",
+      code: classifiedError.code,
       source: "scan-attendance-server",
       metadata: {
         device_id: deviceId,
@@ -1245,7 +1311,12 @@ export const resolveScanAttendanceRequest = async (
       },
     });
 
-    return buildError("Unable to verify this QR right now.", 500, "SERVER_ERROR", debug);
+    return buildError(
+      classifiedError.message,
+      resolveErrorStatusCode(classifiedError.code),
+      classifiedError.code,
+      debug,
+    );
   }
 
   pushDebugStage(debug, "student_resolution", "ok", {
@@ -1328,11 +1399,13 @@ export const resolveScanAttendanceRequest = async (
   }
 
   if (scanError) {
+    const classifiedError = classifyAttendanceRuntimeError(scanError);
     const scanErrorRecord = getRpcErrorRecord(scanError);
-    const scanErrorMessage = normalizeString(scanErrorRecord.message) || "Unable to record the scan";
+    const scanErrorMessage = normalizeString(scanErrorRecord.message) || classifiedError.message;
     const scanErrorCode = normalizeString(scanErrorRecord.code);
     const scanErrorDetails = normalizeString(scanErrorRecord.details);
     pushDebugStage(debug, "attendance_write", "error", {
+      classifiedCode: classifiedError.code,
       message: scanErrorMessage,
       rpcErrorCode: scanErrorCode || null,
       rpcVariant,
@@ -1342,7 +1415,7 @@ export const resolveScanAttendanceRequest = async (
       client: supabase,
       route,
       message: scanErrorMessage,
-      code: "SERVER_ERROR",
+      code: classifiedError.code,
       source: "scan-attendance-server",
       metadata: {
         device_id: deviceId,
@@ -1357,7 +1430,12 @@ export const resolveScanAttendanceRequest = async (
       },
     });
 
-    return buildError(scanErrorMessage || "Unable to record the scan", 500, "SERVER_ERROR", debug);
+    return buildError(
+      classifiedError.message,
+      resolveErrorStatusCode(classifiedError.code),
+      classifiedError.code,
+      debug,
+    );
   }
 
   await supabase

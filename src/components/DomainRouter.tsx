@@ -21,7 +21,7 @@ const DomainRouter = ({ children }: { children: ReactNode }) => {
     hostname === "partner.libriofy.com" ||
     hostname === "www.libriofy.com";
 
-  if (pathname === "/scan") return <>{children}</>;
+  if (pathname === "/scan" || pathname === "/debug/scan-single") return <>{children}</>;
 
   if (isAppDomain) return <>{children}</>;
 

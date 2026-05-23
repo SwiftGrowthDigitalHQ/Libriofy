@@ -11,6 +11,10 @@ export type PublicScanDenialCode =
   | "ENTRY_CONFLICT"
   | "DUPLICATE_SCAN"
   | "TOKEN_EXPIRED"
+  | "SCHEMA_MISSING"
+  | "RPC_MISSING"
+  | "RPC_RUNTIME_ERROR"
+  | "RLS_DENIED"
   | "INTERNAL_ERROR";
 
 type ResolvePublicScanDenialInput = {
@@ -39,6 +43,10 @@ const PUBLIC_SCAN_DENIAL_MESSAGES: Record<PublicScanDenialCode, string> = {
   ENTRY_CONFLICT: "Entry Conflict Detected",
   DUPLICATE_SCAN: "Duplicate Scan",
   TOKEN_EXPIRED: "Pass Expired",
+  SCHEMA_MISSING: "Scanner Schema Missing",
+  RPC_MISSING: "Scan RPC Missing",
+  RPC_RUNTIME_ERROR: "Scan Runtime Missing",
+  RLS_DENIED: "Scanner Access Blocked",
   INTERNAL_ERROR: "Verification Failed",
 };
 
@@ -64,6 +72,10 @@ const PUBLIC_SCAN_CODE_ALIASES: Record<string, PublicScanDenialCode> = {
   ACCESS_REVOKED: "ACCESS_DENIED",
   USER_NOT_FOUND: "USER_NOT_FOUND",
   STUDENT_NOT_FOUND: "USER_NOT_FOUND",
+  SCHEMA_MISSING: "SCHEMA_MISSING",
+  RPC_MISSING: "RPC_MISSING",
+  RPC_RUNTIME_ERROR: "RPC_RUNTIME_ERROR",
+  RLS_DENIED: "RLS_DENIED",
   SERVER_ERROR: "INTERNAL_ERROR",
   CONFIG_ERROR: "INTERNAL_ERROR",
   INTERNAL_ERROR: "INTERNAL_ERROR",
@@ -185,6 +197,40 @@ const resolvePublicScanDenialCodeFromMessage = (message: string) => {
 
   if (normalizedMessage.includes("not found")) {
     return "USER_NOT_FOUND";
+  }
+
+  if (
+    normalizedMessage.includes("schema missing") ||
+    normalizedMessage.includes("schema mismatch") ||
+    normalizedMessage.includes("missing required tables") ||
+    normalizedMessage.includes("missing required columns")
+  ) {
+    return "SCHEMA_MISSING";
+  }
+
+  if (
+    normalizedMessage.includes("rpc missing") ||
+    normalizedMessage.includes("missing rpc") ||
+    normalizedMessage.includes("could not find the function")
+  ) {
+    return "RPC_MISSING";
+  }
+
+  if (
+    normalizedMessage.includes("requested function was not found") ||
+    normalizedMessage.includes("scan-attendance function is not deployed") ||
+    normalizedMessage.includes("fallback scan runtime is unavailable") ||
+    normalizedMessage.includes("edge function returned a non-2xx status code")
+  ) {
+    return "RPC_RUNTIME_ERROR";
+  }
+
+  if (
+    normalizedMessage.includes("row level security") ||
+    normalizedMessage.includes("permission denied") ||
+    normalizedMessage.includes("rls denied")
+  ) {
+    return "RLS_DENIED";
   }
 
   if (

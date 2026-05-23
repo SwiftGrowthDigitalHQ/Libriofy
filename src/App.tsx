@@ -97,6 +97,8 @@ const DeviceSetupRoute = () => {
   return <SetupDevicePage />;
 };
 
+const DebugScanSingleRoute = () => <Navigate to="/scan?scanDebug=1" replace />;
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
@@ -124,6 +126,7 @@ const App = () => (
                     <Route path="/setup-device" element={<DeviceSetupRoute />} />
                     <Route path="/scan" element={<DeviceScanRoute />} />
                     <Route path="/scan-v2" element={<ScanPageV2 />} />
+                    <Route path="/debug/scan-single" element={<DebugScanSingleRoute />} />
                     <Route
                       path="/auth"
                       element={

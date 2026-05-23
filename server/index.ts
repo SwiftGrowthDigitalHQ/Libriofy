@@ -12,6 +12,10 @@ import { validateAndBindScannerDevice } from "../src/lib/deviceSetup.server.js";
 import { buildMaintenanceApiError, evaluateMaintenanceRequest, readMaintenanceContextFromHeaders } from "../src/lib/maintenanceGuard.server.js";
 import { parseBooleanSetting } from "../src/lib/maintenance.js";
 import { readSafeMaintenanceStatus } from "../src/lib/maintenanceRuntime.server.js";
+import {
+  resolveAttendanceRuntimeIntegrityRequest,
+  warmAttendanceRuntimeIntegrity,
+} from "../src/lib/attendanceRuntimeIntegrity.server.js";
 import { sendAdminAlert } from "../src/lib/observability/alertService.server.js";
 import { getCriticalDatabaseHealth, warmCriticalDatabaseHealth } from "../src/lib/observability/databaseHealth.server.js";
 import { logEvent } from "../src/lib/observability/eventLogger.server.js";
@@ -56,6 +60,7 @@ await assertAuthSchemaIntegrity(process.env, {
 const app = express();
 initializeServerMonitoring(process.env);
 warmCriticalDatabaseHealth(process.env);
+void warmAttendanceRuntimeIntegrity(process.env);
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -549,6 +554,28 @@ app.use(async (req, res, next) => {
 
 app.post("/api/attendance/scan", handleAttendanceScan);
 app.post("/api/scan-attendance", handleAttendanceScan);
+app.get("/api/attendance/integrity", async (req, res) => {
+  try {
+    const result = await resolveAttendanceRuntimeIntegrityRequest(process.env, req.query as Record<string, unknown>);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(result.statusCode).json(result.body);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected attendance integrity failure", {
+      source: "attendance_integrity",
+    });
+  }
+});
+app.post("/api/attendance/integrity", async (req, res) => {
+  try {
+    const result = await resolveAttendanceRuntimeIntegrityRequest(process.env, req.body as Record<string, unknown>);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(result.statusCode).json(result.body);
+  } catch (error) {
+    sendServerError(req, res, error, "Unexpected attendance integrity failure", {
+      source: "attendance_integrity",
+    });
+  }
+});
 app.post("/api/attendance/scan-debug", async (req, res) => {
   try {
     const result = await resolveScanAttendanceDebugRequest(process.env, req.body, {
