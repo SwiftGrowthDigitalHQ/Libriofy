@@ -90,6 +90,13 @@ const EMPTY_FORM: StudentEditFormState = {
   seatNumber: "",
 };
 
+const fieldClassName =
+  "h-11 rounded-xl border-border/60 bg-background shadow-none transition-colors hover:border-border focus-visible:ring-1 focus-visible:ring-ring";
+const fieldLabelClassName = "text-[13px] font-medium text-foreground";
+const fieldErrorClassName = "text-xs font-medium text-destructive";
+const textAreaClassName =
+  "min-h-[96px] rounded-xl border-border/60 bg-background px-3 py-2 shadow-none transition-colors hover:border-border focus-visible:ring-1 focus-visible:ring-ring";
+
 const toNullableText = (value: string) => {
   const normalized = value.trim();
   return normalized ? normalized : null;
@@ -155,18 +162,17 @@ const getValidationErrors = (form: StudentEditFormState) => {
 };
 
 const DialogBodySkeleton = () => (
-  <div className="space-y-5 px-6 pb-6 pt-2">
-    <Skeleton className="h-20 rounded-3xl" />
-    <div className="grid gap-4 sm:grid-cols-2">
-      <Skeleton className="h-24 rounded-3xl" />
-      <Skeleton className="h-24 rounded-3xl" />
-    </div>
-    <div className="grid gap-4 sm:grid-cols-2">
-      <Skeleton className="h-24 rounded-3xl" />
-      <Skeleton className="h-24 rounded-3xl" />
-    </div>
-    <Skeleton className="h-32 rounded-3xl" />
-    <Skeleton className="h-28 rounded-3xl" />
+  <div className="grid grid-cols-1 gap-4 px-6 py-5 lg:grid-cols-2">
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[76px] rounded-2xl" />
+    <Skeleton className="h-[120px] rounded-2xl lg:col-span-2" />
+    <Skeleton className="h-[132px] rounded-2xl lg:col-span-2" />
   </div>
 );
 
@@ -297,17 +303,13 @@ const EditStudentDialog = ({
   };
 
   const contentBody = (
-    <>
-      <div className="space-y-1 px-6 pt-1">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Student Ledger Editor</p>
-      </div>
-
+    <div className="flex-1 overflow-y-auto">
       {studentDetailQuery.isLoading && !studentDetailQuery.data ? (
         <DialogBodySkeleton />
       ) : (
-        <div className="space-y-5 overflow-y-auto px-6 pb-6 pt-2">
+        <div className="grid grid-cols-1 gap-4 px-6 py-5 lg:grid-cols-2">
           {studentDetailQuery.isError ? (
-            <Alert variant="destructive" className="rounded-3xl">
+            <Alert variant="destructive" className="rounded-2xl border-destructive/30 lg:col-span-2">
               <AlertTitle>Saved student details could not be loaded</AlertTitle>
               <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <span>{studentDetailQuery.error instanceof Error ? studentDetailQuery.error.message : "Try again in a moment."}</span>
@@ -318,183 +320,170 @@ const EditStudentDialog = ({
             </Alert>
           ) : null}
 
-          <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="edit-student-name">Student Name *</Label>
-                <Input
-                  id="edit-student-name"
-                  value={form.name}
-                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="Student full name"
-                />
-                {validationErrors.name ? <p className="text-xs font-medium text-destructive">{validationErrors.name}</p> : null}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-student-phone">Phone *</Label>
-                <Input
-                  id="edit-student-phone"
-                  value={form.phone}
-                  onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
-                  placeholder="9876543210"
-                />
-                {validationErrors.phone ? <p className="text-xs font-medium text-destructive">{validationErrors.phone}</p> : null}
-              </div>
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-student-name" className={fieldLabelClassName}>
+              Student Name *
+            </Label>
+            <Input
+              id="edit-student-name"
+              value={form.name}
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              placeholder="Student full name"
+              className={fieldClassName}
+            />
+            {validationErrors.name ? <p className={fieldErrorClassName}>{validationErrors.name}</p> : null}
           </div>
 
-          <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-            <div className="space-y-3">
-              <Label>Gender</Label>
-              <RadioGroup
-                value={form.gender}
-                onValueChange={(value) => setForm((current) => ({ ...current, gender: value as StudentGender }))}
-                className="grid grid-cols-1 gap-3 sm:grid-cols-2"
-              >
-                {STUDENT_GENDER_OPTIONS.map((option) => {
-                  const inputId = `edit-student-gender-${option.value}`;
-
-                  return (
-                    <label
-                      key={option.value}
-                      htmlFor={inputId}
-                      className={cn(
-                        "flex cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 transition-colors",
-                        form.gender === option.value ? "border-primary bg-primary/5" : "border-border/70 hover:bg-muted/40",
-                      )}
-                    >
-                      <RadioGroupItem id={inputId} value={option.value} />
-                      <span className="text-sm font-medium text-foreground">{option.label}</span>
-                    </label>
-                  );
-                })}
-              </RadioGroup>
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-student-phone" className={fieldLabelClassName}>
+              Phone *
+            </Label>
+            <Input
+              id="edit-student-phone"
+              value={form.phone}
+              onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
+              placeholder="9876543210"
+              className={fieldClassName}
+            />
+            {validationErrors.phone ? <p className={fieldErrorClassName}>{validationErrors.phone}</p> : null}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-              <div className="space-y-2">
-                <Label htmlFor="edit-student-seat">Seat Number</Label>
-                <Input
-                  id="edit-student-seat"
-                  value={form.seatNumber}
-                  onChange={(event) => setForm((current) => ({ ...current, seatNumber: event.target.value }))}
-                  placeholder="A1"
-                />
-                <p className="text-xs text-muted-foreground">Seat availability stays validated on save so we do not disturb existing slot rules.</p>
-              </div>
-            </div>
+          <div className="space-y-2">
+            <Label className={fieldLabelClassName}>Gender</Label>
+            <RadioGroup
+              value={form.gender}
+              onValueChange={(value) => setForm((current) => ({ ...current, gender: value as StudentGender }))}
+              className="grid grid-cols-2 gap-2"
+            >
+              {STUDENT_GENDER_OPTIONS.map((option) => {
+                const inputId = `edit-student-gender-${option.value}`;
 
-            <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-              <div className="space-y-2">
-                <Label htmlFor="edit-student-plan">Plan</Label>
-                <Input
-                  id="edit-student-plan"
-                  list={planSuggestionsId}
-                  value={form.planName}
-                  onChange={(event) => setForm((current) => ({ ...current, planName: event.target.value }))}
-                  placeholder={plansQuery.isLoading ? "Loading plans..." : "Starter"}
-                />
-                <datalist id={planSuggestionsId}>
-                  {activePlans.map((plan) => (
-                    <option
-                      key={plan.id}
-                      value={plan.name}
-                      label={`${plan.name}${Number(plan.price || 0) > 0 ? ` - Rs ${Number(plan.price).toLocaleString("en-IN")}` : ""}`}
-                    />
-                  ))}
-                </datalist>
-                <p className="text-xs text-muted-foreground">
-                  {activePlans.length > 0
-                    ? "Choose an existing plan name or keep the saved value."
-                    : "No active plans are available for quick suggestions yet."}
-                </p>
-              </div>
-            </div>
+                return (
+                  <label
+                    key={option.value}
+                    htmlFor={inputId}
+                    className={cn(
+                      "flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-border/60 px-3 text-sm font-medium transition-colors",
+                      form.gender === option.value ? "border-primary bg-primary/5 text-foreground" : "hover:bg-muted/40",
+                    )}
+                  >
+                    <RadioGroupItem id={inputId} value={option.value} />
+                    <span>{option.label}</span>
+                  </label>
+                );
+              })}
+            </RadioGroup>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-              <div className="space-y-2">
-                <Label htmlFor="edit-student-due-date">Due Date</Label>
-                <Input
-                  id="edit-student-due-date"
-                  type="date"
-                  value={form.dueDate}
-                  onChange={(event) => setForm((current) => ({ ...current, dueDate: event.target.value }))}
-                />
-                {validationErrors.dueDate ? <p className="text-xs font-medium text-destructive">{validationErrors.dueDate}</p> : null}
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-              <div className="space-y-2">
-                <Label>Payment Status</Label>
-                <Select
-                  value={form.paymentStatus}
-                  onValueChange={(value) => setForm((current) => ({ ...current, paymentStatus: value as StudentPaymentStatus }))}
-                >
-                  <SelectTrigger className="rounded-xl">
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Paid">Paid</SelectItem>
-                    <SelectItem value="Unpaid">Unpaid</SelectItem>
-                    <SelectItem value="Overdue">Overdue</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Saving as paid records any outstanding balance without forcing a page reload.
-                </p>
-                {validationErrors.paymentStatus ? <p className="text-xs font-medium text-destructive">{validationErrors.paymentStatus}</p> : null}
-              </div>
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-student-seat" className={fieldLabelClassName}>
+              Seat Number
+            </Label>
+            <Input
+              id="edit-student-seat"
+              value={form.seatNumber}
+              onChange={(event) => setForm((current) => ({ ...current, seatNumber: event.target.value }))}
+              placeholder="A1"
+              className={fieldClassName}
+            />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-              <div className="space-y-2">
-                <Label htmlFor="edit-student-aadhaar-number">Aadhaar Number</Label>
-                <Input
-                  id="edit-student-aadhaar-number"
-                  value={form.aadhaarNumber}
-                  onChange={(event) => setForm((current) => ({ ...current, aadhaarNumber: event.target.value }))}
-                  placeholder="1234 5678 9012"
+          <div className="space-y-2">
+            <Label htmlFor="edit-student-plan" className={fieldLabelClassName}>
+              Plan
+            </Label>
+            <Input
+              id="edit-student-plan"
+              list={planSuggestionsId}
+              value={form.planName}
+              onChange={(event) => setForm((current) => ({ ...current, planName: event.target.value }))}
+              placeholder={plansQuery.isLoading ? "Loading plans..." : "Starter"}
+              className={fieldClassName}
+            />
+            <datalist id={planSuggestionsId}>
+              {activePlans.map((plan) => (
+                <option
+                  key={plan.id}
+                  value={plan.name}
+                  label={`${plan.name}${Number(plan.price || 0) > 0 ? ` - Rs ${Number(plan.price).toLocaleString("en-IN")}` : ""}`}
                 />
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-              <div className="space-y-2">
-                <Label htmlFor="edit-student-address">Address</Label>
-                <Textarea
-                  id="edit-student-address"
-                  value={form.address}
-                  onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
-                  placeholder="Current address"
-                  className="min-h-[110px] rounded-2xl"
-                />
-              </div>
-            </div>
+              ))}
+            </datalist>
           </div>
 
-          <div className="rounded-3xl border border-border/70 bg-card/70 p-5 shadow-sm">
-            <div className="space-y-2">
-              <Label htmlFor="edit-student-notes">Notes</Label>
-              <Textarea
-                id="edit-student-notes"
-                value={form.notes}
-                onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
-                placeholder="Operational notes, parent follow-ups, or membership context"
-                className="min-h-[130px] rounded-2xl"
-              />
-            </div>
+          <div className="space-y-2">
+            <Label className={fieldLabelClassName}>Payment Status</Label>
+            <Select
+              value={form.paymentStatus}
+              onValueChange={(value) => setForm((current) => ({ ...current, paymentStatus: value as StudentPaymentStatus }))}
+            >
+              <SelectTrigger className={cn(fieldClassName, "justify-between")}>
+                <SelectValue placeholder="Select status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Paid">Paid</SelectItem>
+                <SelectItem value="Unpaid">Unpaid</SelectItem>
+                <SelectItem value="Overdue">Overdue</SelectItem>
+              </SelectContent>
+            </Select>
+            {validationErrors.paymentStatus ? <p className={fieldErrorClassName}>{validationErrors.paymentStatus}</p> : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-student-due-date" className={fieldLabelClassName}>
+              Due Date
+            </Label>
+            <Input
+              id="edit-student-due-date"
+              type="date"
+              value={form.dueDate}
+              onChange={(event) => setForm((current) => ({ ...current, dueDate: event.target.value }))}
+              className={fieldClassName}
+            />
+            {validationErrors.dueDate ? <p className={fieldErrorClassName}>{validationErrors.dueDate}</p> : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-student-aadhaar-number" className={fieldLabelClassName}>
+              Aadhaar Number
+            </Label>
+            <Input
+              id="edit-student-aadhaar-number"
+              value={form.aadhaarNumber}
+              onChange={(event) => setForm((current) => ({ ...current, aadhaarNumber: event.target.value }))}
+              placeholder="1234 5678 9012"
+              className={fieldClassName}
+            />
+          </div>
+
+          <div className="space-y-2 lg:col-span-2">
+            <Label htmlFor="edit-student-address" className={fieldLabelClassName}>
+              Address
+            </Label>
+            <Textarea
+              id="edit-student-address"
+              value={form.address}
+              onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
+              placeholder="Current address"
+              className={textAreaClassName}
+            />
+          </div>
+
+          <div className="space-y-2 lg:col-span-2">
+            <Label htmlFor="edit-student-notes" className={fieldLabelClassName}>
+              Notes
+            </Label>
+            <Textarea
+              id="edit-student-notes"
+              value={form.notes}
+              onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
+              placeholder="Operational notes"
+              className={cn(textAreaClassName, "min-h-[120px]")}
+            />
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 
   const footerContent = (
@@ -512,13 +501,13 @@ const EditStudentDialog = ({
   if (isMobile) {
     return (
       <Drawer open={isOpen} onOpenChange={onOpenChange}>
-        <DrawerContent className="max-h-[92vh] rounded-t-[28px] border-border/70 bg-background">
-          <DrawerHeader className="px-6 pt-4 text-left">
-            <DrawerTitle className="font-display text-xl">Edit Student</DrawerTitle>
-            <DrawerDescription>Update the student profile and ledger fields while keeping the current table view intact.</DrawerDescription>
+        <DrawerContent className="flex max-h-[90vh] flex-col overflow-hidden rounded-t-[28px] border-border/60 bg-background">
+          <DrawerHeader className="border-b border-border/60 px-6 py-4 text-left">
+            <DrawerTitle className="font-display text-[1.35rem] font-semibold tracking-tight">Edit Student</DrawerTitle>
+            <DrawerDescription className="text-sm">Update profile, billing, and seat details.</DrawerDescription>
           </DrawerHeader>
           {contentBody}
-          <DrawerFooter className="border-t border-border/70 px-6 py-4">{footerContent}</DrawerFooter>
+          <DrawerFooter className="sticky bottom-0 border-t border-border/60 bg-background px-6 py-4">{footerContent}</DrawerFooter>
         </DrawerContent>
       </Drawer>
     );
@@ -526,13 +515,13 @@ const EditStudentDialog = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-hidden rounded-[28px] border border-border/70 bg-background p-0 sm:max-w-2xl">
-        <DialogHeader className="px-6 pt-6 text-left">
-          <DialogTitle className="font-display text-xl">Edit Student</DialogTitle>
-          <DialogDescription>Update the student profile and ledger fields while keeping the current table view intact.</DialogDescription>
+      <DialogContent className="flex max-h-[90vh] w-full max-w-[920px] flex-col gap-0 overflow-hidden rounded-[24px] border border-border/60 bg-background p-0 shadow-xl sm:max-w-[920px]">
+        <DialogHeader className="border-b border-border/60 px-7 py-5 text-left">
+          <DialogTitle className="font-display text-2xl font-semibold tracking-tight">Edit Student</DialogTitle>
+          <DialogDescription className="text-sm">Update profile, billing, and seat details.</DialogDescription>
         </DialogHeader>
         {contentBody}
-        <DialogFooter className="border-t border-border/70 px-6 py-4">{footerContent}</DialogFooter>
+        <DialogFooter className="sticky bottom-0 border-t border-border/60 bg-background px-7 py-4">{footerContent}</DialogFooter>
       </DialogContent>
     </Dialog>
   );
