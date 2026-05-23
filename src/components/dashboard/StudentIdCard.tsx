@@ -952,20 +952,20 @@ const StudentIdCard = forwardRef<HTMLDivElement, StudentIdCardProps>(
                   <div
                     style={{
                       position: "relative",
-                      padding: "12px",
+                      padding: "18px",
                       borderRadius: "16px",
-                      background: "#a7bfd3",
-                      border: "1px solid rgba(255,255,255,0.18)",
+                      background: "#ffffff",
+                      border: "1px solid rgba(255,255,255,0.28)",
                       boxShadow:
-                        "0 0 25px rgba(0,180,255,0.16), 0 0 0 1px rgba(15,23,42,0.05), inset 0 1px 0 rgba(255,255,255,0.24)",
+                        "0 0 25px rgba(0,180,255,0.12), 0 0 0 1px rgba(15,23,42,0.05), inset 0 1px 0 rgba(255,255,255,0.4)",
                       backdropFilter: "blur(10px) saturate(135%)",
                     }}
                   >
                     <QRCodeSVG
                       value={qrValue}
-                      size={180}
+                      size={196}
                       level="H"
-                      bgColor="#a7bfd3"
+                      bgColor="#ffffff"
                       fgColor="#000000"
                     />
                   </div>

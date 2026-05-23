@@ -346,6 +346,7 @@ export class CameraService {
           activeCameraId: this.activeCameraId,
           activeCameraLabel: activeCamera?.label ?? candidate.label,
           activeExposureMode: trackSettings.exposureMode ?? null,
+          activeFrameRate: typeof trackSettings.frameRate === "number" ? Number(trackSettings.frameRate.toFixed(1)) : null,
           activeFocusMode: trackSettings.focusMode ?? null,
           activeHeight: typeof trackSettings.height === "number" ? trackSettings.height : null,
           activeWhiteBalanceMode: trackSettings.whiteBalanceMode ?? null,
