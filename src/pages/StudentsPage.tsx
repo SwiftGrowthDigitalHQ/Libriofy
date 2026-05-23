@@ -9,13 +9,16 @@ import {
   buildStudentsSummaryFromPage,
   fetchStudentsPage,
   markStudentPaid,
+  updateStudent,
   type StudentListItem,
+  type StudentEditPayload,
   type StudentPaymentStatusFilter,
   type StudentsListParams,
   type StudentsListResponse,
 } from "@/api/students";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import AddStudentDialog from "@/components/students/AddStudentDialog";
+import EditStudentDialog from "@/components/students/EditStudentDialog";
 import StudentSummaryCards from "@/components/students/StudentSummaryCards";
 import StudentsFilters from "@/components/students/StudentsFilters";
 import StudentsPagination from "@/components/students/StudentsPagination";
@@ -27,6 +30,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useToast } from "@/hooks/use-toast";
+import { useUserRole } from "@/hooks/useUserRole";
 import { supabase } from "@/integrations/supabase/client";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { buildAadhaarDocumentPath, getStudentAadhaarValidationError, STUDENT_DOCUMENTS_BUCKET } from "@/lib/studentDocuments";
@@ -171,11 +175,13 @@ const StudentsPage = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { libraryId, isLoading: currentLibraryLoading } = useCurrentLibraryId();
+  const { data: userRoles = [] } = useUserRole();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialState = useMemo(() => parseTableState(searchParams), [searchParams]);
   const [tableState, setTableState] = useState<StudentTableState>(initialState);
   const [searchValue, setSearchValue] = useState(initialState.search);
   const [aadhaarJobs, setAadhaarJobs] = useState<Record<string, StudentAadhaarJob>>({});
+  const [editingStudent, setEditingStudent] = useState<StudentListItem | null>(null);
   const [photoJobs, setPhotoJobs] = useState<Record<string, StudentPhotoJob>>({});
   const photoJobsRef = useRef<Record<string, StudentPhotoJob>>({});
   const photoJobTimeoutsRef = useRef<Record<string, number>>({});
@@ -299,6 +305,7 @@ const StudentsPage = () => {
   const isSummaryApproximate = !studentsQuery.data?.summary;
   const loading = currentLibraryLoading || fallbackLoading;
   const isEmpty = !studentsQuery.isLoading && students.length === 0;
+  const canEditStudents = userRoles.some((role) => role.role === "super_admin" || role.role === "library_owner");
   const hasActiveFilters =
     tableState.gender !== "all" || tableState.search.length > 0 || tableState.paymentStatus !== "all" || tableState.seatNumber.length > 0;
 
@@ -323,6 +330,28 @@ const StudentsPage = () => {
     },
     [queryClient],
   );
+
+  const restoreStudentTableSnapshots = useCallback(
+    (snapshots: Array<[readonly unknown[], StudentsListResponse | undefined]>) => {
+      snapshots.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+    },
+    [queryClient],
+  );
+
+  const invalidateStudentRelatedQueries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["students-dashboard-table"] });
+    queryClient.invalidateQueries({ queryKey: ["students-form-students", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["seat-map-students", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-overview", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["analytics-overview", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["finance-dashboard", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["recovery-queue", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["payments-ledger", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["payments-ledger-summary", resolvedLibraryId] });
+    queryClient.invalidateQueries({ queryKey: ["students-payment-tracking", resolvedLibraryId] });
+  }, [queryClient, resolvedLibraryId]);
 
   const upsertPhotoJob = useCallback((studentId: string, nextJob: StudentPhotoJob) => {
     const timeoutId = photoJobTimeoutsRef.current[studentId];
@@ -570,9 +599,112 @@ const StudentsPage = () => {
     },
   });
 
+  const editStudentMutation = useMutation({
+    mutationFn: async ({
+      optimisticPatch,
+      payload,
+      student,
+    }: {
+      optimisticPatch: Partial<Pick<StudentListItem, "dueDate" | "gender" | "name" | "phone" | "plan" | "seatNo" | "status">>;
+      payload: StudentEditPayload;
+      student: StudentListItem;
+    }) =>
+      updateStudent({
+        payload,
+        studentId: student.id,
+      }),
+    onMutate: async ({ optimisticPatch, student }) => {
+      await queryClient.cancelQueries({ queryKey: ["students-dashboard-table"] });
+
+      const snapshots = queryClient.getQueriesData<StudentsListResponse>({
+        queryKey: ["students-dashboard-table"],
+      });
+      const savingToast = toast({
+        title: "Saving student changes...",
+        description: `Updating ${optimisticPatch.name ?? student.name}.`,
+      });
+
+      patchStudentAcrossCaches(student.id, (current) => ({
+        ...current,
+        ...optimisticPatch,
+      }));
+
+      return {
+        savingToast,
+        snapshots,
+      };
+    },
+    onError: (error: Error, _variables, context) => {
+      if (context?.snapshots) {
+        restoreStudentTableSnapshots(context.snapshots);
+      }
+
+      context?.savingToast.update({
+        title: "Unable to update student",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+    onSuccess: (response, variables, context) => {
+      patchStudentAcrossCaches(variables.student.id, (current) => ({
+        ...current,
+        amountDue: response.student.amountDue,
+        amountPaid: response.student.amountPaid,
+        dueDate: response.student.dueDate,
+        gender: response.student.gender,
+        name: response.student.name,
+        phone: response.student.phone,
+        plan: response.student.plan,
+        seatNo: response.student.seatNo,
+        status: response.student.status,
+      }));
+
+      context?.savingToast.update({
+        title: "Student updated",
+        description: `${response.student.name}'s ledger row has been refreshed.`,
+      });
+      setEditingStudent(null);
+      invalidateStudentRelatedQueries();
+    },
+  });
+
   const handleMarkPaid = (student: StudentListItem) => {
     markPaidMutation.mutate(student);
   };
+
+  const handleOpenEditStudent = useCallback(
+    (student: StudentListItem) => {
+      if (!canEditStudents) {
+        toast({
+          title: "Editing is restricted",
+          description: "Only admins or superadmins can edit student records.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setEditingStudent(student);
+    },
+    [canEditStudents, toast],
+  );
+
+  const handleSaveStudent = useCallback(
+    async (
+      payload: StudentEditPayload,
+      optimisticPatch: Partial<Pick<StudentListItem, "dueDate" | "gender" | "name" | "phone" | "plan" | "seatNo" | "status">>,
+    ) => {
+      if (!editingStudent) {
+        throw new Error("Select a student before saving edits.");
+      }
+
+      await editStudentMutation.mutateAsync({
+        optimisticPatch,
+        payload,
+        student: editingStudent,
+      });
+    },
+    [editStudentMutation, editingStudent],
+  );
 
   const handleQueuedPhotoUpload = useCallback(
     ({ file, studentId }: { file: File; studentId: string }) => {
@@ -908,8 +1040,10 @@ const StudentsPage = () => {
           <StudentsTable
             aadhaarJobs={aadhaarJobs}
             actionStudentId={markPaidMutation.isPending ? markPaidMutation.variables?.id ?? null : null}
+            canEditStudents={canEditStudents}
             isFetching={studentsQuery.isFetching && !studentsQuery.isLoading}
             isLoading={loading || studentsQuery.isLoading}
+            onEditStudent={handleOpenEditStudent}
             onMarkPaid={handleMarkPaid}
             onReplacePhoto={handleReplacePhoto}
             onResetFilters={resetFilters}
@@ -935,6 +1069,19 @@ const StudentsPage = () => {
             />
           ) : null}
         </section>
+
+        <EditStudentDialog
+          isOpen={!!editingStudent}
+          isSaving={editStudentMutation.isPending}
+          libraryId={resolvedLibraryId}
+          onOpenChange={(open) => {
+            if (!open && !editStudentMutation.isPending) {
+              setEditingStudent(null);
+            }
+          }}
+          onSave={handleSaveStudent}
+          student={editingStudent}
+        />
       </div>
     </DashboardLayout>
   );

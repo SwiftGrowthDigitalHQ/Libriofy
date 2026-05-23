@@ -1,6 +1,6 @@
 import { memo, useState, type ChangeEvent } from "react";
 import { format } from "date-fns";
-import { Camera, CheckCircle2, Eye, Loader2, RefreshCcw, RotateCcw, Upload } from "lucide-react";
+import { Camera, CheckCircle2, Eye, Loader2, Pencil, RefreshCcw, RotateCcw, Upload } from "lucide-react";
 
 import type { StudentListItem } from "@/api/students";
 import { Badge } from "@/components/ui/badge";
@@ -14,8 +14,10 @@ import { cn } from "@/lib/utils";
 type StudentsTableProps = {
   aadhaarJobs: Record<string, { status: "opening" | "uploading" }>;
   actionStudentId: string | null;
+  canEditStudents: boolean;
   isFetching: boolean;
   isLoading: boolean;
+  onEditStudent: (student: StudentListItem) => void;
   onMarkPaid: (student: StudentListItem) => void;
   onReplacePhoto: (student: StudentListItem, file: File) => void;
   onResetFilters: () => void;
@@ -103,6 +105,8 @@ const StudentTableRow = memo(
   ({
     aadhaarJob,
     actionStudentId,
+    canEditStudents,
+    onEditStudent,
     onMarkPaid,
     onReplacePhoto,
     onRetryPhotoUpload,
@@ -113,6 +117,8 @@ const StudentTableRow = memo(
   }: {
     aadhaarJob?: { status: "opening" | "uploading" };
     actionStudentId: string | null;
+    canEditStudents: boolean;
+    onEditStudent: (student: StudentListItem) => void;
     onMarkPaid: (student: StudentListItem) => void;
     onReplacePhoto: (student: StudentListItem, file: File) => void;
     onRetryPhotoUpload: (student: StudentListItem) => void;
@@ -294,6 +300,12 @@ const StudentTableRow = memo(
                 {isAadhaarOpening ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
                 View
               </Button>
+              {canEditStudents ? (
+                <Button type="button" size="sm" variant="outline" className="rounded-xl" onClick={() => onEditStudent(student)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 size="sm"
@@ -315,8 +327,10 @@ StudentTableRow.displayName = "StudentTableRow";
 const StudentsTable = ({
   aadhaarJobs,
   actionStudentId,
+  canEditStudents,
   isFetching,
   isLoading,
+  onEditStudent,
   onMarkPaid,
   onReplacePhoto,
   onResetFilters,
@@ -361,6 +375,8 @@ const StudentsTable = ({
                 aadhaarJob={aadhaarJobs[student.id]}
                 key={student.id}
                 actionStudentId={actionStudentId}
+                canEditStudents={canEditStudents}
+                onEditStudent={onEditStudent}
                 onMarkPaid={onMarkPaid}
                 onReplacePhoto={onReplacePhoto}
                 onRetryPhotoUpload={onRetryPhotoUpload}

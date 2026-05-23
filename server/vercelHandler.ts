@@ -32,6 +32,7 @@ import {
   resolveVerifyOtpRequest,
 } from "../src/lib/otpAuth.server.js";
 import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
+import { handleStudentApiRequest, isSupportedStudentApiPath } from "../src/lib/studentApiRoute.server.js";
 import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
 import { handleAdminApiRequest, isSupportedAdminApiPath } from "../src/lib/superAdmin/apiRoute.server.js";
 
@@ -467,6 +468,11 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
 
   if (isSupportedAdminApiPath(pathname)) {
     await handleAdminApiRequest(req, res, process.env, pathname);
+    return;
+  }
+
+  if (isSupportedStudentApiPath(pathname)) {
+    await handleStudentApiRequest(req, res, process.env, pathname);
     return;
   }
 

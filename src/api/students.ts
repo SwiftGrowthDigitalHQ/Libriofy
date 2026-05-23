@@ -1,5 +1,7 @@
 import type { Database } from "@/integrations/supabase/types";
 import { supabase } from "@/integrations/supabase/client";
+import { getStoredAccessToken } from "@/lib/authSession";
+import { buildBearerAuthorizationHeader, sanitizeHeaders } from "@/lib/httpHeaders";
 import { normalizeStudentGender, type StudentGender, type StudentGenderFilter } from "@/lib/studentGender";
 import { createPlanPriceLookup, derivePaymentSummary, getDefaultPaymentDueDate, groupPaymentsByStudent } from "@/lib/paymentRecovery";
 
@@ -51,6 +53,39 @@ export type StudentsListParams = {
   paymentStatus: StudentPaymentStatusFilter;
   search: string;
   seatNumber: string;
+};
+
+export type StudentEditPayload = {
+  aadhaarNumber: string | null;
+  address: string | null;
+  dueDate: string | null;
+  gender: StudentGender | null;
+  name: string;
+  notes: string | null;
+  paymentStatus: StudentPaymentStatus;
+  phone: string;
+  planName: string | null;
+  seatNumber: string | null;
+};
+
+export type StudentEditResponse = {
+  message: string;
+  student: {
+    aadhaarNumber: string | null;
+    address: string | null;
+    amountDue: number;
+    amountPaid: number;
+    dueDate: string | null;
+    gender: StudentGender | null;
+    id: string;
+    name: string;
+    notes: string | null;
+    phone: string | null;
+    plan: string | null;
+    seatNo: string | null;
+    status: StudentPaymentStatus;
+  };
+  success: true;
 };
 
 const STUDENTS_LIST_PATH = "/students";
@@ -229,6 +264,19 @@ const createStudentsUrl = (path: string, params?: Record<string, string | number
 
   return url.toString();
 };
+
+const getStudentsAuthHeaders = async () =>
+  sanitizeHeaders(
+    {
+      Authorization: buildBearerAuthorizationHeader(
+        await getStoredAccessToken(),
+        "Please sign in again to edit this student.",
+      ),
+    },
+    {
+      allowedHeaders: ["Authorization"],
+    },
+  );
 
 const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
@@ -600,3 +648,24 @@ export const markStudentPaid = async ({
   const { error } = await supabase.from("payments").insert(payload);
   if (error) throw error;
 };
+
+export const updateStudent = async ({
+  payload,
+  studentId,
+}: {
+  payload: StudentEditPayload;
+  studentId: string;
+}) =>
+  requestJson<StudentEditResponse>(createStudentsUrl(`/api/students/${encodeURIComponent(studentId)}`), {
+    body: JSON.stringify(payload),
+    headers: sanitizeHeaders(
+      {
+        "Content-Type": "application/json",
+        ...(await getStudentsAuthHeaders()),
+      },
+      {
+        allowedHeaders: ["Authorization", "Content-Type"],
+      },
+    ),
+    method: "PATCH",
+  });

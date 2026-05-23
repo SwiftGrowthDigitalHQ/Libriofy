@@ -27,6 +27,7 @@ import { assertServerStartupEnv } from "../src/lib/observability/startupValidati
 import { assertAuthSchemaIntegrity } from "../src/lib/authRuntimeIntegrity.server.js";
 import { ensureOtpAuthWorkerStarted, resolveSuperAdminSessionRequest } from "../src/lib/otpAuth.server.js";
 import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
+import { handleStudentApiRequest, isSupportedStudentApiPath } from "../src/lib/studentApiRoute.server.js";
 import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
 import { handleAdminApiRequest, isSupportedAdminApiPath } from "../src/lib/superAdmin/apiRoute.server.js";
 import {
@@ -512,6 +513,21 @@ app.use(async (req, res, next) => {
 
   if (isSupportedAdminApiPath(req.path)) {
     await handleAdminApiRequest(
+      {
+        body: req.body,
+        headers: req.headers,
+        method: req.method,
+        url: req.originalUrl,
+      },
+      res,
+      process.env,
+      req.path,
+    );
+    return;
+  }
+
+  if (isSupportedStudentApiPath(req.path)) {
+    await handleStudentApiRequest(
       {
         body: req.body,
         headers: req.headers,
