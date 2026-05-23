@@ -21,6 +21,8 @@ const resolveErrorStatusCode = (code?: string) => {
   switch (code) {
     case "EXPIRED":
       return 410;
+    case "SIGNATURE_INVALID":
+      return 401;
     case "WRONG_LIBRARY":
     case "INVALID_LIBRARY_ID":
     case "DEVICE_BLOCKED":
@@ -33,6 +35,9 @@ const resolveErrorStatusCode = (code?: string) => {
       return 409;
     case "SERVER_ERROR":
       return 500;
+    case "STUDENT_NOT_FOUND":
+    case "USER_NOT_FOUND":
+      return 404;
     default:
       return 400;
   }
@@ -159,8 +164,19 @@ const resolveStudentRpcTarget = async ({
   }
 
   if (parsedQr.source === "signed" && looksLikeUuid(submittedStudentIdentifier)) {
+    const { data: signedById, error: signedByIdError } = await supabase
+      .from("students")
+      .select("id, qr_code")
+      .eq("library_id", libraryId)
+      .eq("id", submittedStudentIdentifier)
+      .maybeSingle();
+
+    if (signedByIdError) {
+      throw signedByIdError;
+    }
+
     return {
-      fallbackQrCode: parsedQr.rawValue,
+      fallbackQrCode: normalizeString(signedById?.qr_code) || submittedStudentIdentifier,
       resolvedStudentIdentifier: submittedStudentIdentifier,
       rpcArgs: {
         p_student_id: submittedStudentIdentifier,

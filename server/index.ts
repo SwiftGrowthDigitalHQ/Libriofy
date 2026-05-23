@@ -26,7 +26,10 @@ import { isDatabaseCriticalError } from "../src/lib/observability/store.server.j
 import { assertServerStartupEnv } from "../src/lib/observability/startupValidation.js";
 import { assertAuthSchemaIntegrity } from "../src/lib/authRuntimeIntegrity.server.js";
 import { ensureOtpAuthWorkerStarted, resolveSuperAdminSessionRequest } from "../src/lib/otpAuth.server.js";
-import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
+import {
+  resolveScanAttendanceDebugRequest,
+  resolveScanAttendanceRequest,
+} from "../src/lib/scanAttendance.server.js";
 import { handleStudentApiRequest, isSupportedStudentApiPath } from "../src/lib/studentApiRoute.server.js";
 import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
 import { handleAdminApiRequest, isSupportedAdminApiPath } from "../src/lib/superAdmin/apiRoute.server.js";
@@ -546,6 +549,29 @@ app.use(async (req, res, next) => {
 
 app.post("/api/attendance/scan", handleAttendanceScan);
 app.post("/api/scan-attendance", handleAttendanceScan);
+app.post("/api/attendance/scan-debug", async (req, res) => {
+  try {
+    const result = await resolveScanAttendanceDebugRequest(process.env, req.body, {
+      deviceToken: readDeviceToken(req.headers),
+    });
+
+    res.status(result.statusCode).json(result.body);
+  } catch (error) {
+    captureServerError(error, {
+      method: req.method,
+      path: req.originalUrl || req.path,
+      requestId: res.locals.requestId,
+      source: "attendance_scan_debug",
+    });
+
+    res.status(500).json({
+      code: "SERVER_ERROR",
+      message: error instanceof Error ? error.message : "Unexpected attendance scan debug failure",
+      requestId: res.locals.requestId,
+      status: "error",
+    });
+  }
+});
 
 app.post("/api/device-setup", async (req, res) => {
   try {

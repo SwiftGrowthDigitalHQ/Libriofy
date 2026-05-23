@@ -58,6 +58,14 @@ export type AttendanceScanPayload =
   | AttendanceScanErrorPayload
   | AttendanceScanQueuedPayload;
 
+export type AttendanceScanDebugPayload = Record<string, unknown>;
+
+export type AttendanceScanSubmissionResult = {
+  debug: AttendanceScanDebugPayload | null;
+  payload: AttendanceScanPayload;
+  responseStatus: number | null;
+};
+
 export type AttendanceSyncStats = {
   attemptedCount: number;
   syncedCount: number;
@@ -66,6 +74,7 @@ export type AttendanceSyncStats = {
 };
 
 type AttendanceSubmissionOptions = {
+  debug?: boolean;
   scanApiUrl: string;
   deviceToken?: string;
   timeoutMs?: number;
@@ -328,6 +337,11 @@ const buildRequestBody = (entry: AttendanceQueueEntry) => {
   };
 };
 
+const appendDebugFlag = (
+  body: ReturnType<typeof buildRequestBody>,
+  debug?: boolean,
+) => (debug ? { ...body, debug: true } : body);
+
 const buildRequestHeaders = (deviceToken?: string) => {
   const headers = sanitizeHeaders({
     "Content-Type": "application/json",
@@ -342,7 +356,8 @@ const buildRequestHeaders = (deviceToken?: string) => {
 const invokeSupabaseFallback = async (
   entry: AttendanceQueueEntry,
   deviceToken?: string,
-): Promise<AttendanceScanPayload> => {
+  debug?: boolean,
+): Promise<AttendanceScanSubmissionResult> => {
   const headers = sanitizeHeaders({
     "x-device-token": deviceToken,
   }, {
@@ -350,7 +365,7 @@ const invokeSupabaseFallback = async (
   });
 
   const { data, error } = await supabase.functions.invoke("scan-attendance", {
-    body: buildRequestBody(entry),
+    body: appendDebugFlag(buildRequestBody(entry), debug),
     headers,
   });
 
@@ -358,7 +373,14 @@ const invokeSupabaseFallback = async (
     throw new Error(error.message || "Unable to reach the scan handler.");
   }
 
-  return normalizeServerPayload(data, entry);
+  return {
+    debug:
+      data && typeof data === "object" && !Array.isArray(data)
+        ? ((data as Record<string, unknown>).debug as AttendanceScanDebugPayload | null) ?? null
+        : null,
+    payload: normalizeServerPayload(data, entry),
+    responseStatus: null,
+  };
 };
 
 const normalizeServerPayload = (payload: unknown, entry: AttendanceQueueEntry): AttendanceScanPayload => {
@@ -387,7 +409,7 @@ const normalizeServerPayload = (payload: unknown, entry: AttendanceQueueEntry): 
 const sendAttendanceRequest = async (
   entry: AttendanceQueueEntry,
   options: AttendanceSubmissionOptions,
-): Promise<AttendanceScanPayload> => {
+): Promise<AttendanceScanSubmissionResult> => {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -396,12 +418,15 @@ const sendAttendanceRequest = async (
     const response = await fetch(options.scanApiUrl, {
       method: "POST",
       headers: buildRequestHeaders(options.deviceToken),
-      body: JSON.stringify(buildRequestBody(entry)),
+      body: JSON.stringify(appendDebugFlag(buildRequestBody(entry), options.debug)),
       signal: controller.signal,
     });
 
     if (response.status === 404) {
-      return invokeSupabaseFallback(entry, options.deviceToken);
+      return {
+        ...(await invokeSupabaseFallback(entry, options.deviceToken, options.debug)),
+        responseStatus: 404,
+      };
     }
 
     let payload: unknown = null;
@@ -414,24 +439,51 @@ const sendAttendanceRequest = async (
     if (response.status >= 500) {
       // In local/dev, middleware/API may fail while the deployed edge function still works.
       try {
-        return await invokeSupabaseFallback(entry, options.deviceToken);
+        return {
+          ...(await invokeSupabaseFallback(entry, options.deviceToken, options.debug)),
+          responseStatus: response.status,
+        };
       } catch {
-        return normalizeErrorPayload(payload, "Live verification is temporarily unavailable.");
+        return {
+          debug:
+            payload && typeof payload === "object" && !Array.isArray(payload)
+              ? ((payload as Record<string, unknown>).debug as AttendanceScanDebugPayload | null) ?? null
+              : null,
+          payload: normalizeErrorPayload(payload, "Live verification is temporarily unavailable."),
+          responseStatus: response.status,
+        };
       }
     }
 
     if (response.status >= 400) {
-      return normalizeErrorPayload(payload, "Unable to verify this ID right now.");
+      return {
+        debug:
+          payload && typeof payload === "object" && !Array.isArray(payload)
+            ? ((payload as Record<string, unknown>).debug as AttendanceScanDebugPayload | null) ?? null
+            : null,
+        payload: normalizeErrorPayload(payload, "Unable to verify this ID right now."),
+        responseStatus: response.status,
+      };
     }
 
-    return normalizeServerPayload(payload, entry);
+    return {
+      debug:
+        payload && typeof payload === "object" && !Array.isArray(payload)
+          ? ((payload as Record<string, unknown>).debug as AttendanceScanDebugPayload | null) ?? null
+          : null,
+      payload: normalizeServerPayload(payload, entry),
+      responseStatus: response.status,
+    };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("The scanner is taking too long to respond.");
     }
 
     if (error instanceof TypeError) {
-      return invokeSupabaseFallback(entry, options.deviceToken);
+      return {
+        ...(await invokeSupabaseFallback(entry, options.deviceToken, options.debug)),
+        responseStatus: null,
+      };
     }
 
     throw error;
@@ -594,22 +646,52 @@ export const submitAttendanceScan = async ({
   scanApiUrl,
   deviceToken,
   timeoutMs,
+  debug,
 }: {
+  debug?: boolean;
   entry: AttendanceQueueEntry;
   scanApiUrl: string;
   deviceToken?: string;
   timeoutMs?: number;
 }): Promise<AttendanceScanPayload> => {
+  const result = await submitAttendanceScanDetailed({
+    debug,
+    deviceToken,
+    entry,
+    scanApiUrl,
+    timeoutMs,
+  });
+
+  return result.payload;
+};
+
+export const submitAttendanceScanDetailed = async ({
+  entry,
+  scanApiUrl,
+  deviceToken,
+  timeoutMs,
+  debug,
+}: {
+  debug?: boolean;
+  entry: AttendanceQueueEntry;
+  scanApiUrl: string;
+  deviceToken?: string;
+  timeoutMs?: number;
+}): Promise<AttendanceScanSubmissionResult> => {
   if (!isBrowser() || !window.navigator.onLine) {
     await enqueueAttendanceQueueEntry(entry);
-    return buildQueuedPayload(
-      entry,
-      "Saved offline. The scan will sync automatically when the connection returns.",
-    );
+    return {
+      debug: null,
+      payload: buildQueuedPayload(
+        entry,
+        "Saved offline. The scan will sync automatically when the connection returns.",
+      ),
+      responseStatus: null,
+    };
   }
 
   try {
-    return await sendAttendanceRequest(entry, { scanApiUrl, deviceToken, timeoutMs });
+    return await sendAttendanceRequest(entry, { debug, scanApiUrl, deviceToken, timeoutMs });
   } catch (error) {
     const message =
       error instanceof Error && error.message.trim()
@@ -622,9 +704,13 @@ export const submitAttendanceScan = async ({
         message,
       });
       return {
-        status: "error",
-        code: denial.code,
-        message: denial.message,
+        debug: null,
+        payload: {
+          status: "error",
+          code: denial.code,
+          message: denial.message,
+        },
+        responseStatus: null,
       };
     }
 
@@ -635,12 +721,16 @@ export const submitAttendanceScan = async ({
       updated_at: nowIso(),
     });
 
-    return buildQueuedPayload(
-      entry,
-      message.includes("internet")
-        ? "Saved offline. The scan will sync automatically when the connection returns."
-        : "Connection issue detected. The scan was saved locally and will sync automatically.",
-    );
+    return {
+      debug: null,
+      payload: buildQueuedPayload(
+        entry,
+        message.includes("internet")
+          ? "Saved offline. The scan will sync automatically when the connection returns."
+          : "Connection issue detected. The scan was saved locally and will sync automatically.",
+      ),
+      responseStatus: null,
+    };
   }
 };
 
@@ -681,17 +771,17 @@ export const syncQueuedAttendance = async ({
       try {
         const payload = await sendAttendanceRequest(entry, { scanApiUrl, deviceToken, timeoutMs });
 
-        if (payload.status === "success") {
+        if (payload.payload.status === "success") {
           await removeAttendanceQueueEntry(entry.entry_id);
           syncedCount += 1;
           continue;
         }
 
-        if (payload.status === "error") {
+        if (payload.payload.status === "error") {
           await updateAttendanceQueueEntry(entry.entry_id, {
             status: "failed",
             retries: entry.retries + 1,
-            last_error: payload.message,
+            last_error: payload.payload.message,
             updated_at: nowIso(),
           });
           failedCount += 1;

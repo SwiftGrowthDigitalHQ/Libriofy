@@ -14,12 +14,13 @@ import { useNavigate } from "react-router-dom";
 import type { ScannerLiveState, ScannerUiTone } from "@/components/scanner/types";
 import {
   type AttendanceQueueEntry,
+  type AttendanceScanDebugPayload,
   type AttendanceScanPayload,
   countAttendanceQueueEntries,
   createAttendanceQueueEntry,
   enqueueAttendanceQueueEntry,
   readLastAttendanceSyncAt,
-  submitAttendanceScan,
+  submitAttendanceScanDetailed,
   syncQueuedAttendance,
 } from "@/lib/attendanceSync";
 import { getReadableCameraError } from "@/lib/cameraStartup";
@@ -41,6 +42,7 @@ import { cn } from "@/lib/utils";
 const DEVICE_ID = import.meta.env.VITE_SCAN_DEVICE_ID ?? "LIB_GATE_01";
 const DEVICE_NAME = import.meta.env.VITE_SCAN_DEVICE_NAME ?? "Library ID Scanner";
 const SCAN_API_URL = import.meta.env.VITE_SCAN_API_URL ?? "/api/attendance/scan";
+const SCAN_DEBUG_API_URL = import.meta.env.VITE_SCAN_DEBUG_API_URL ?? "/api/attendance/scan-debug";
 const HEARTBEAT_URL = import.meta.env.VITE_DEVICE_HEARTBEAT_API_URL ?? "/api/device-heartbeat";
 const DEVICE_TOKEN = import.meta.env.VITE_SCAN_DEVICE_TOKEN ?? "";
 const QR_PUBLIC_KEY = import.meta.env.VITE_QR_PUBLIC_KEY ?? import.meta.env.VITE_STUDENT_QR_PUBLIC_KEY ?? "";
@@ -65,6 +67,42 @@ const timeFmt = (iso: string) => { const d = new Date(iso); return isNaN(d.getTi
 
 type Phase = "idle" | "scanning" | "success" | "queued" | "error";
 type HistoryItem = { id: string; title: string; seat: string | null; tone: ScannerUiTone; at: string; label: string };
+type DebugStage = { at: string; detail?: Record<string, unknown>; stage: string };
+type ScanDebugState = {
+  attendanceResponse: Record<string, unknown> | null;
+  clientStages: DebugStage[];
+  failureReason: string | null;
+  manualResponse: Record<string, unknown> | null;
+  matchedStudentId: string | null;
+  metrics: {
+    attendanceMs: number | null;
+    decodeMs: number | null;
+    roundTripMs: number | null;
+    verificationMs: number | null;
+  };
+  parsedPayload: Record<string, unknown> | null;
+  rawQrValue: string | null;
+  serverDebug: AttendanceScanDebugPayload | null;
+  verificationStatus: string;
+};
+
+const createEmptyDebugState = (): ScanDebugState => ({
+  attendanceResponse: null,
+  clientStages: [],
+  failureReason: null,
+  manualResponse: null,
+  matchedStudentId: null,
+  metrics: {
+    attendanceMs: null,
+    decodeMs: null,
+    roundTripMs: null,
+    verificationMs: null,
+  },
+  parsedPayload: null,
+  rawQrValue: null,
+  serverDebug: null,
+  verificationStatus: "idle",
+});
 
 const toneOf = (p: AttendanceScanPayload): ScannerUiTone =>
   p.status === "success" ? (p.duplicate ? "warning" : "success") : p.status === "queued" ? "info" : "danger";
@@ -128,6 +166,18 @@ const ScanKioskPageV2 = () => {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [pending, setPending] = useState(0);
   const [now, setNow] = useState(Date.now);
+  const [debugPanel, setDebugPanel] = useState<ScanDebugState>(() => createEmptyDebugState());
+  const [manualStudentId, setManualStudentId] = useState("");
+  const [manualPhone, setManualPhone] = useState("");
+  const [manualLoading, setManualLoading] = useState<"attendance" | "roundtrip" | null>(null);
+  const debugMode = useMemo(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    const search = new URLSearchParams(window.location.search);
+    return search.get("scanDebug") === "1" || search.get("debugScan") === "1";
+  }, []);
 
   // Responsive activity count: 10 desktop, 5 tablet, 2 mobile
   const [visibleActivityCount, setVisibleActivityCount] = useState(() => typeof window === "undefined" ? 10 : window.innerWidth >= 1024 ? 10 : window.innerWidth >= 768 ? 5 : 2);
@@ -144,6 +194,38 @@ const ScanKioskPageV2 = () => {
 
   const refreshQ = useCallback(async () => { const c = await countAttendanceQueueEntries().catch(() => 0); if (mountRef.current) setPending(c); }, []);
   const clearResume = useCallback(() => { if (resumeRef.current !== null) { clearTimeout(resumeRef.current); resumeRef.current = null; } }, []);
+  const appendDebugStage = useCallback((stage: string, detail?: Record<string, unknown>) => {
+    if (!debugMode) {
+      return;
+    }
+
+    console.info("[scan-debug-ui]", {
+      at: new Date().toISOString(),
+      detail: detail ?? null,
+      stage,
+    });
+    setDebugPanel((prev) => ({
+      ...prev,
+      clientStages: [...prev.clientStages, { at: new Date().toISOString(), stage, ...(detail ? { detail } : {}) }].slice(-18),
+    }));
+  }, [debugMode]);
+  const resetDebugPanel = useCallback((rawQrValue: string | null, decodeMs: number | null) => {
+    if (!debugMode) {
+      return;
+    }
+
+    setDebugPanel({
+      ...createEmptyDebugState(),
+      metrics: {
+        attendanceMs: null,
+        decodeMs,
+        roundTripMs: null,
+        verificationMs: null,
+      },
+      rawQrValue,
+      verificationStatus: rawQrValue ? "detected" : "idle",
+    });
+  }, [debugMode]);
   const playFeedbackTone = useCallback(async (variant: "success" | "error") => {
     if (typeof window === "undefined") {
       return;
@@ -241,17 +323,149 @@ const ScanKioskPageV2 = () => {
   }, [online, refreshQ]);
 
   // Process scan — use ref to avoid stale closure in scanner callback
-  const processRef = useRef<(raw: string) => void>(() => {});
-  const process = useCallback(async (raw: string) => {
+  const runManualDebugRequest = useCallback(async (mode: "attendance" | "roundtrip") => {
+    const libraryId = readStoredLibraryId();
+    const libraryAccessKey = readStoredLibraryAccessKey();
+    if (!libraryId || !libraryAccessKey) {
+      await goSetup("Reconnect.");
+      return;
+    }
+
+    const trimmedStudentId = trim(manualStudentId);
+    const trimmedPhone = trim(manualPhone);
+    if (!trimmedStudentId && !trimmedPhone) {
+      setDebugPanel((prev) => ({
+        ...prev,
+        failureReason: "Enter a student ID or phone number for manual verification.",
+        manualResponse: {
+          status: "error",
+          message: "Enter a student ID or phone number for manual verification.",
+        },
+      }));
+      return;
+    }
+
+    setManualLoading(mode);
+    appendDebugStage("manual_debug_request_started", {
+      mode,
+      usingPhone: Boolean(trimmedPhone),
+      usingStudentId: Boolean(trimmedStudentId),
+    });
+
+    try {
+      const response = await fetch(SCAN_DEBUG_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(DEVICE_TOKEN ? { "x-device-token": DEVICE_TOKEN } : {}),
+        },
+        body: JSON.stringify({
+          action: mode === "roundtrip" ? "roundtrip" : "manual_verify",
+          debug: true,
+          device_id: DEVICE_ID,
+          library_access_key: libraryAccessKey,
+          library_id: libraryId,
+          phone: trimmedPhone || undefined,
+          student_id: trimmedStudentId || undefined,
+          write_attendance: mode === "attendance",
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+      appendDebugStage("manual_debug_response_received", {
+        mode,
+        ok: response.ok,
+        status: response.status,
+      });
+      setDebugPanel((prev) => ({
+        ...prev,
+        failureReason: typeof body?.message === "string" ? body.message : prev.failureReason,
+        manualResponse: body,
+        serverDebug:
+          body && typeof body.debug === "object" && !Array.isArray(body.debug)
+            ? (body.debug as AttendanceScanDebugPayload)
+            : prev.serverDebug,
+        verificationStatus:
+          typeof body?.status === "string"
+            ? body.status
+            : mode === "roundtrip"
+              ? "roundtrip_complete"
+              : prev.verificationStatus,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Manual debug request failed.";
+      appendDebugStage("manual_debug_request_failed", {
+        message,
+        mode,
+      });
+      setDebugPanel((prev) => ({
+        ...prev,
+        failureReason: message,
+        manualResponse: {
+          status: "error",
+          message,
+        },
+      }));
+    } finally {
+      setManualLoading(null);
+    }
+  }, [appendDebugStage, goSetup, manualPhone, manualStudentId]);
+
+  const processRef = useRef<(raw: string, detection?: Pick<ScanDetectionPayload, "analysis" | "detectedAt" | "source" | "timingMs">) => void>(() => {});
+  const process = useCallback(async (raw: string, detection?: Pick<ScanDetectionPayload, "analysis" | "detectedAt" | "source" | "timingMs">) => {
     if (procRef.current) return;
-    const val = trim(raw); if (!val || val.length > 4096 || Date.now() < coolRef.current) return;
-    procRef.current = true; clearResume(); setPhase("scanning"); setPayload(null);
+    const val = trim(raw);
+    if (!val || val.length > 4096 || Date.now() < coolRef.current) return;
+
+    procRef.current = true;
+    clearResume();
+    setPhase("scanning");
+    setPayload(null);
+    resetDebugPanel(val, detection?.timingMs ?? null);
+    appendDebugStage("scan_detected", {
+      decodeMs: detection?.timingMs ?? null,
+      detector: detection?.source ?? null,
+      hasAnalysis: Boolean(detection?.analysis),
+    });
+
     try { if (typeof navigator?.vibrate === "function") navigator.vibrate(20); } catch {}
     console.log("[scan] QR detected:", val.slice(0, 40));
 
     try {
-      const parsed = await parseStudentQrPayload(val, { allowLegacy: true, expectedLibraryId: readStoredLibraryId(), now: new Date(), publicKeyPem: QR_PUBLIC_KEY });
+      const verificationStartedAt = performance.now();
+      const parsed = await parseStudentQrPayload(val, {
+        allowLegacy: true,
+        expectedLibraryId: readStoredLibraryId(),
+        now: new Date(),
+        publicKeyPem: QR_PUBLIC_KEY,
+      });
+      const verificationMs = Math.round(performance.now() - verificationStartedAt);
       console.log("[scan] Parse result:", parsed ? { valid: parsed.valid, source: parsed.source, code: parsed.code } : "null");
+
+      if (debugMode) {
+        setDebugPanel((prev) => ({
+          ...prev,
+          failureReason: parsed && !parsed.valid ? parsed.message ?? null : null,
+          matchedStudentId:
+            parsed?.valid && parsed.source !== "legacy"
+              ? parsed.studentId
+              : parsed?.valid && parsed.source === "legacy"
+                ? parsed.qrCode
+                : null,
+          metrics: {
+            ...prev.metrics,
+            verificationMs,
+          },
+          parsedPayload: parsed ? (parsed as unknown as Record<string, unknown>) : null,
+          verificationStatus: parsed?.valid ? "parsed_valid" : "parsed_invalid",
+        }));
+      }
+      appendDebugStage("qr_parsed", {
+        code: parsed && !parsed.valid ? parsed.code ?? null : null,
+        source: parsed?.source ?? null,
+        valid: parsed?.valid ?? false,
+        verificationMs,
+      });
+
       if (!mountRef.current) return;
       if (!parsed || !parsed.valid) {
         const deniedPayload = buildDeniedPayload(parsed?.code ?? "INVALID_QR", parsed?.message ?? "Invalid ID");
@@ -264,8 +478,13 @@ const ScanKioskPageV2 = () => {
         return;
       }
 
-      const lid = readStoredLibraryId(); const lk = readStoredLibraryAccessKey();
-      if (!lid || !lk) { await goSetup("Reconnect."); return; }
+      const lid = readStoredLibraryId();
+      const lk = readStoredLibraryAccessKey();
+      if (!lid || !lk) {
+        await goSetup("Reconnect.");
+        return;
+      }
+
       const sid = parsed.source === "legacy" ? parsed.qrCode : parsed.studentId;
       if (!sid) {
         const deniedPayload = buildDeniedPayload("INVALID_QR", "Invalid ID");
@@ -277,30 +496,140 @@ const ScanKioskPageV2 = () => {
         coolRef.current = Date.now() + DEBOUNCE_MS;
         return;
       }
-      if (lastRef.current.val === sid && Date.now() - lastRef.current.at < DUP_WINDOW_MS) { setPhase("idle"); schedResume(); coolRef.current = Date.now() + DEBOUNCE_MS; return; }
+
+      if (lastRef.current.val === sid && Date.now() - lastRef.current.at < DUP_WINDOW_MS) {
+        appendDebugStage("duplicate_scan_blocked", {
+          studentId: sid,
+          windowMs: DUP_WINDOW_MS,
+        });
+        setPhase("idle");
+        schedResume();
+        coolRef.current = Date.now() + DEBOUNCE_MS;
+        return;
+      }
       lastRef.current = { at: Date.now(), val: sid };
 
-      const entry = createAttendanceQueueEntry({ deviceId: DEVICE_ID, libraryAccessKey: lk, libraryId: lid, qrCode: parsed.rawValue, studentId: sid, timestamp: new Date().toISOString() });
+      const entry = createAttendanceQueueEntry({
+        deviceId: DEVICE_ID,
+        libraryAccessKey: lk,
+        libraryId: lid,
+        qrCode: parsed.rawValue,
+        studentId: sid,
+        timestamp: new Date().toISOString(),
+      });
       let res: AttendanceScanPayload;
+      let serverDebug: AttendanceScanDebugPayload | null = null;
+      let responseStatus: number | null = null;
 
       if (online) {
         try {
           console.log("[scan] Submitting to API...");
-          res = await submitAttendanceScan({ deviceToken: DEVICE_TOKEN, entry, scanApiUrl: SCAN_API_URL });
+          const attendanceStartedAt = performance.now();
+          const detailed = await submitAttendanceScanDetailed({
+            debug: debugMode,
+            deviceToken: DEVICE_TOKEN,
+            entry,
+            scanApiUrl: SCAN_API_URL,
+          });
+          res = detailed.payload;
+          serverDebug = detailed.debug;
+          responseStatus = detailed.responseStatus;
+          const attendanceMs = Math.round(performance.now() - attendanceStartedAt);
           console.log("[scan] API response:", res.status, res.message);
-          if (SCAN_BINDING_RESET_CODES.has((res.code ?? "").toUpperCase())) { await goSetup(res.message || "Reconnect."); return; }
-        } catch (err) { console.log("[scan] API error, queuing:", err); await enqueueAttendanceQueueEntry(entry); const cached = readOfflineVerifiedStudent({ libraryId: lid, studentId: sid }); res = { status: "queued", message: "Queued.", time: timeFmt(entry.timestamp), entry_id: entry.entry_id, ...(cached ? { verifiedOffline: true, name: cached.name, studentName: cached.name, seat: cached.seat } : {}) }; }
-      } else { await enqueueAttendanceQueueEntry(entry); const cached = readOfflineVerifiedStudent({ libraryId: lid, studentId: sid }); res = { status: "queued", message: "Offline.", time: timeFmt(entry.timestamp), entry_id: entry.entry_id, ...(cached ? { verifiedOffline: true, name: cached.name, studentName: cached.name, seat: cached.seat } : {}) }; }
+          if (debugMode) {
+            setDebugPanel((prev) => ({
+              ...prev,
+              attendanceResponse: {
+                code: "code" in res ? res.code ?? null : null,
+                message: "message" in res ? res.message ?? null : null,
+                responseStatus,
+                status: res.status,
+              },
+              failureReason: res.status === "error" ? res.message : prev.failureReason,
+              metrics: {
+                ...prev.metrics,
+                attendanceMs,
+                roundTripMs:
+                  (prev.metrics.decodeMs ?? 0) + (prev.metrics.verificationMs ?? 0) + attendanceMs,
+              },
+              serverDebug,
+              verificationStatus:
+                res.status === "success"
+                  ? res.duplicate
+                    ? "duplicate_attendance"
+                    : "attendance_saved"
+                  : res.status === "queued"
+                    ? "queued_offline"
+                    : "attendance_denied",
+            }));
+          }
+          appendDebugStage("attendance_api_completed", {
+            attendanceMs,
+            responseStatus,
+            status: res.status,
+          });
+          if (SCAN_BINDING_RESET_CODES.has((res.code ?? "").toUpperCase())) {
+            await goSetup(res.message || "Reconnect.");
+            return;
+          }
+        } catch (err) {
+          console.log("[scan] API error, queuing:", err);
+          await enqueueAttendanceQueueEntry(entry);
+          const cached = readOfflineVerifiedStudent({ libraryId: lid, studentId: sid });
+          res = {
+            status: "queued",
+            message: "Queued.",
+            time: timeFmt(entry.timestamp),
+            entry_id: entry.entry_id,
+            ...(cached ? { verifiedOffline: true, name: cached.name, studentName: cached.name, seat: cached.seat } : {}),
+          };
+          appendDebugStage("attendance_api_failed", {
+            message: err instanceof Error ? err.message : "Unable to submit live scan.",
+          });
+        }
+      } else {
+        await enqueueAttendanceQueueEntry(entry);
+        const cached = readOfflineVerifiedStudent({ libraryId: lid, studentId: sid });
+        res = {
+          status: "queued",
+          message: "Offline.",
+          time: timeFmt(entry.timestamp),
+          entry_id: entry.entry_id,
+          ...(cached ? { verifiedOffline: true, name: cached.name, studentName: cached.name, seat: cached.seat } : {}),
+        };
+        appendDebugStage("offline_queue_write", {
+          entryId: entry.entry_id,
+        });
+      }
 
       if (!mountRef.current) return;
-      if (res.status === "success" && !res.duplicate) rememberOfflineVerifiedStudent({ libraryId: lid, name: nameOf(res) ?? SUCCESS_FALLBACK_TITLE, seat: seatOf(res), studentId: sid });
-      setPayload(res); setPhase(res.status === "error" ? "error" : res.status === "queued" ? "queued" : "success");
+      if (res.status === "success" && !res.duplicate) {
+        rememberOfflineVerifiedStudent({
+          libraryId: lid,
+          name: nameOf(res) ?? SUCCESS_FALLBACK_TITLE,
+          seat: seatOf(res),
+          studentId: sid,
+        });
+      }
+      appendDebugStage("ui_response_ready", {
+        code: "code" in res ? res.code ?? null : null,
+        message: "message" in res ? res.message ?? null : null,
+        status: res.status,
+      });
+      setPayload(res);
+      setPhase(res.status === "error" ? "error" : res.status === "queued" ? "queued" : "success");
       logVerificationOutcome(res);
       void playFeedbackTone(res.status === "error" ? "error" : "success");
-      startTransition(() => { setHistory(prev => [{ id: uid(), title: titleOf(res), seat: seatOf(res), tone: toneOf(res), at: new Date().toISOString(), label: labelOf(res) }, ...prev].slice(0, MAX_HISTORY)); });
-      schedResume(); coolRef.current = Date.now() + DEBOUNCE_MS;
-    } finally { procRef.current = false; void refreshQ(); }
-  }, [clearResume, goSetup, logVerificationOutcome, online, playFeedbackTone, refreshQ, schedResume]);
+      startTransition(() => {
+        setHistory(prev => [{ id: uid(), title: titleOf(res), seat: seatOf(res), tone: toneOf(res), at: new Date().toISOString(), label: labelOf(res) }, ...prev].slice(0, MAX_HISTORY));
+      });
+      schedResume();
+      coolRef.current = Date.now() + DEBOUNCE_MS;
+    } finally {
+      procRef.current = false;
+      void refreshQ();
+    }
+  }, [appendDebugStage, clearResume, debugMode, goSetup, logVerificationOutcome, online, playFeedbackTone, refreshQ, resetDebugPanel, schedResume]);
 
   // Keep ref in sync so scanner callback always calls latest version
   useEffect(() => { processRef.current = process; }, [process]);
@@ -308,7 +637,7 @@ const ScanKioskPageV2 = () => {
   // Scanner init
   useEffect(() => {
     mountRef.current = true;
-    const sc = new ScanController({ onDetect: (d: ScanDetectionPayload) => { console.log("[scan] onDetect fired:", d.rawValue?.slice(0, 30)); processRef.current(d.rawValue); }, onLog: () => {}, onStateChange: (s: ScanControllerState) => { if (mountRef.current) setCtrl(s); } });
+    const sc = new ScanController({ onDetect: (d: ScanDetectionPayload) => { console.log("[scan] onDetect fired:", d.rawValue?.slice(0, 30)); processRef.current(d.rawValue, { analysis: d.analysis, detectedAt: d.detectedAt, source: d.source, timingMs: d.timingMs }); }, onLog: () => {}, onStateChange: (s: ScanControllerState) => { if (mountRef.current) setCtrl(s); } });
     ctrlRef.current = sc;
 
     const boot = async () => {
@@ -360,6 +689,10 @@ const ScanKioskPageV2 = () => {
   const resultHeadline = payload?.status === "error" ? activeDenial?.title ?? "ACCESS DENIED" : payload?.status === "queued" ? "SAVED OFFLINE" : payload?.status === "success" ? (payload.duplicate ? "ALREADY MARKED" : "ACCESS GRANTED") : null;
   const resultMessage = payload ? titleOf(payload) : null;
   const resultMeta = payload?.status === "success" ? `${payload.duplicate ? "Attendance already recorded" : "Granted"}${seatOf(payload) ? ` • Seat ${seatOf(payload)}` : ""}` : payload?.status === "queued" ? "Stored securely for background sync" : null;
+  const parsedPayloadJson = useMemo(() => JSON.stringify(debugPanel.parsedPayload, null, 2), [debugPanel.parsedPayload]);
+  const attendanceResponseJson = useMemo(() => JSON.stringify(debugPanel.attendanceResponse, null, 2), [debugPanel.attendanceResponse]);
+  const serverDebugJson = useMemo(() => JSON.stringify(debugPanel.serverDebug, null, 2), [debugPanel.serverDebug]);
+  const manualResponseJson = useMemo(() => JSON.stringify(debugPanel.manualResponse, null, 2), [debugPanel.manualResponse]);
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
@@ -468,6 +801,114 @@ const ScanKioskPageV2 = () => {
               ))}
             </div>
           </div>
+
+          {debugMode ? (
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-cyan-300/80">Debug Panel</p>
+                  <p className="mt-1 text-[11px] text-white/45">Live scan diagnostics, manual fallback, and QR roundtrip probes.</p>
+                </div>
+                <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] text-cyan-200">
+                  {debugPanel.verificationStatus}
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-white/45">
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Decode</p>
+                  <p className="mt-1 font-medium text-white">{debugPanel.metrics.decodeMs ?? "--"} ms</p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Verify</p>
+                  <p className="mt-1 font-medium text-white">{debugPanel.metrics.verificationMs ?? "--"} ms</p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Attendance</p>
+                  <p className="mt-1 font-medium text-white">{debugPanel.metrics.attendanceMs ?? "--"} ms</p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2">
+                  <p className="text-white/30">Round Trip</p>
+                  <p className="mt-1 font-medium text-white">{debugPanel.metrics.roundTripMs ?? "--"} ms</p>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <input
+                  value={manualStudentId}
+                  onChange={(event) => setManualStudentId(event.target.value)}
+                  placeholder="Manual student ID"
+                  className="h-9 rounded-lg border border-white/10 bg-black/20 px-3 text-xs text-white outline-none transition focus:border-cyan-400/40"
+                />
+                <input
+                  value={manualPhone}
+                  onChange={(event) => setManualPhone(event.target.value)}
+                  placeholder="Manual phone"
+                  className="h-9 rounded-lg border border-white/10 bg-black/20 px-3 text-xs text-white outline-none transition focus:border-cyan-400/40"
+                />
+              </div>
+
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void runManualDebugRequest("attendance")}
+                  disabled={manualLoading !== null}
+                  className="inline-flex h-9 items-center rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 text-xs font-medium text-cyan-100 transition hover:bg-cyan-400/14 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {manualLoading === "attendance" ? "Marking..." : "Mark By ID / Phone"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runManualDebugRequest("roundtrip")}
+                  disabled={manualLoading !== null}
+                  className="inline-flex h-9 items-center rounded-lg border border-white/10 bg-white/[0.05] px-3 text-xs font-medium text-white/80 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {manualLoading === "roundtrip" ? "Testing..." : "Generate + Verify Test QR"}
+                </button>
+              </div>
+
+              <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Scanned Payload</p>
+                  <p className="mt-1 break-all font-mono text-[11px] text-white/75">{debugPanel.rawQrValue || "--"}</p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Matched Student</p>
+                  <p className="mt-1 font-mono text-[11px] text-white/75">{debugPanel.matchedStudentId || "--"}</p>
+                  <p className="mt-1 text-[11px] text-rose-200/80">{debugPanel.failureReason || ""}</p>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Parsed JSON</p>
+                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] text-white/65">{parsedPayloadJson}</pre>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Attendance API Response</p>
+                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] text-white/65">{attendanceResponseJson}</pre>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Manual / Test Route</p>
+                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] text-white/65">{manualResponseJson}</pre>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Server Debug</p>
+                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] text-white/65">{serverDebugJson}</pre>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Client Stages</p>
+                  <div className="mt-1 space-y-1">
+                    {debugPanel.clientStages.length === 0 ? <p className="text-[10px] text-white/35">No scan debug events yet.</p> : null}
+                    {debugPanel.clientStages.map((stage) => (
+                      <div key={`${stage.at}-${stage.stage}`} className="rounded-md border border-white/5 bg-white/[0.02] px-2 py-1.5">
+                        <p className="text-[10px] font-medium text-white/70">{stage.stage}</p>
+                        <p className="text-[10px] text-white/30">{timeFmt(stage.at)}</p>
+                        {stage.detail ? <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] text-white/50">{JSON.stringify(stage.detail, null, 2)}</pre> : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </main>
 

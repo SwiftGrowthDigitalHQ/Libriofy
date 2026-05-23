@@ -15,7 +15,11 @@ export type StudentQrTokenClaims = {
   nonce: string;
 };
 
-export type StudentQrVerificationFailureCode = "INVALID_QR" | "EXPIRED" | "WRONG_LIBRARY";
+export type StudentQrVerificationFailureCode =
+  | "INVALID_QR"
+  | "EXPIRED"
+  | "WRONG_LIBRARY"
+  | "SIGNATURE_INVALID";
 
 export type StudentQrVerifiedPayload = {
   code?: undefined;
@@ -71,6 +75,20 @@ export type StudentQrParseOptions = {
   allowLegacy?: boolean;
   publicKeyPem?: string | null;
   now?: Date | number | string;
+};
+
+export type StudentQrPayloadInspection = {
+  rawValue: string;
+  trimmedValue: string;
+  extractedLibraryId: string | null;
+  extractedToken: string | null;
+  header: Record<string, unknown> | null;
+  claims: Record<string, unknown> | null;
+  inputKind: "empty" | "jwt" | "legacy" | "structured_json" | "student_url" | "unknown";
+  parseError: string | null;
+  segmentLengths: [number, number, number] | null;
+  structuredLibraryId: string | null;
+  structuredStudentId: string | null;
 };
 
 export type StudentQrSigningClaims = Pick<StudentQrTokenClaims, "library_id" | "student_id"> & {
@@ -366,6 +384,85 @@ const buildInvalidResult = (
   message,
 });
 
+export const inspectStudentQrPayload = (rawValue: string): StudentQrPayloadInspection => {
+  const trimmedValue = trimText(rawValue);
+  const routeCandidate = extractStudentRouteCandidate(trimmedValue);
+  const structuredCandidate = extractStructuredStudentCandidate(trimmedValue);
+  const extractedToken = routeCandidate?.token ?? null;
+  const extractedLibraryId = routeCandidate?.libraryId ?? null;
+  const inputKind: StudentQrPayloadInspection["inputKind"] = !trimmedValue
+    ? "empty"
+    : structuredCandidate
+      ? "structured_json"
+      : routeCandidate?.source === "url"
+        ? "student_url"
+        : looksLikeJwt(routeCandidate?.token ?? trimmedValue)
+          ? "jwt"
+          : extractLegacyStudentCandidate(trimmedValue)
+            ? "legacy"
+            : "unknown";
+
+  if (!looksLikeJwt(extractedToken ?? trimmedValue)) {
+    return {
+      rawValue,
+      trimmedValue,
+      extractedLibraryId,
+      extractedToken,
+      header: null,
+      claims: null,
+      inputKind,
+      parseError: null,
+      segmentLengths: null,
+      structuredLibraryId: structuredCandidate?.libraryId ?? null,
+      structuredStudentId: structuredCandidate?.studentId ?? null,
+    };
+  }
+
+  const token = extractedToken ?? trimmedValue;
+  const segments = token.split(".");
+  const segmentLengths =
+    segments.length === 3
+      ? ([segments[0]?.length ?? 0, segments[1]?.length ?? 0, segments[2]?.length ?? 0] satisfies [
+          number,
+          number,
+          number,
+        ])
+      : null;
+
+  try {
+    const header = JSON.parse(decodeUtf8(base64UrlDecode(segments[0] ?? ""))) as Record<string, unknown>;
+    const claims = JSON.parse(decodeUtf8(base64UrlDecode(segments[1] ?? ""))) as Record<string, unknown>;
+
+    return {
+      rawValue,
+      trimmedValue,
+      extractedLibraryId,
+      extractedToken: token,
+      header,
+      claims,
+      inputKind,
+      parseError: null,
+      segmentLengths,
+      structuredLibraryId: structuredCandidate?.libraryId ?? null,
+      structuredStudentId: structuredCandidate?.studentId ?? null,
+    };
+  } catch (error) {
+    return {
+      rawValue,
+      trimmedValue,
+      extractedLibraryId,
+      extractedToken: token,
+      header: null,
+      claims: null,
+      inputKind,
+      parseError: error instanceof Error ? error.message : "Unable to decode QR token payload.",
+      segmentLengths,
+      structuredLibraryId: structuredCandidate?.libraryId ?? null,
+      structuredStudentId: structuredCandidate?.studentId ?? null,
+    };
+  }
+};
+
 export const buildStudentQrRouteValue = ({
   origin,
   signedToken,
@@ -515,7 +612,7 @@ export const verifyStudentQrToken = async (
     );
 
     if (!verified) {
-      return buildInvalidResult(trimmedToken, "signed", "INVALID_QR", "Invalid ID");
+      return buildInvalidResult(trimmedToken, "signed", "SIGNATURE_INVALID", "QR signature invalid");
     }
   } catch {
     return buildInvalidResult(trimmedToken, "signed", "INVALID_QR", "Invalid ID");

@@ -1,5 +1,6 @@
 export type PublicScanDenialCode =
   | "INVALID_QR"
+  | "SIGNATURE_INVALID"
   | "USER_NOT_FOUND"
   | "ACCESS_DENIED"
   | "ALREADY_CHECKED_IN"
@@ -26,7 +27,8 @@ export type PublicScanDenialPresentation = {
 };
 
 const PUBLIC_SCAN_DENIAL_MESSAGES: Record<PublicScanDenialCode, string> = {
-  INVALID_QR: "Invalid Library Pass",
+  INVALID_QR: "Invalid QR",
+  SIGNATURE_INVALID: "QR Signature Invalid",
   USER_NOT_FOUND: "Student Not Found",
   ACCESS_DENIED: "Access Denied",
   ALREADY_CHECKED_IN: "Already Checked In",
@@ -42,6 +44,7 @@ const PUBLIC_SCAN_DENIAL_MESSAGES: Record<PublicScanDenialCode, string> = {
 
 const PUBLIC_SCAN_CODE_ALIASES: Record<string, PublicScanDenialCode> = {
   INVALID_QR: "INVALID_QR",
+  SIGNATURE_INVALID: "SIGNATURE_INVALID",
   QR_TOO_LARGE: "INVALID_QR",
   INVALID_LIBRARY_ID: "LIBRARY_MISMATCH",
   WRONG_LIBRARY: "LIBRARY_MISMATCH",
@@ -164,11 +167,12 @@ const resolvePublicScanDenialCodeFromMessage = (message: string) => {
 
   if (
     normalizedMessage.includes("invalid qr") ||
+    normalizedMessage.includes("signature invalid") ||
     normalizedMessage.includes("invalid id") ||
     normalizedMessage.includes("invalid pass") ||
     normalizedMessage.includes("invalid library pass")
   ) {
-    return "INVALID_QR";
+    return normalizedMessage.includes("signature invalid") ? "SIGNATURE_INVALID" : "INVALID_QR";
   }
 
   if (

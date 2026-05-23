@@ -31,7 +31,10 @@ import {
   resolveTwilioStatusCallbackRequest,
   resolveVerifyOtpRequest,
 } from "../src/lib/otpAuth.server.js";
-import { resolveScanAttendanceRequest } from "../src/lib/scanAttendance.server.js";
+import {
+  resolveScanAttendanceDebugRequest,
+  resolveScanAttendanceRequest,
+} from "../src/lib/scanAttendance.server.js";
 import { handleStudentApiRequest, isSupportedStudentApiPath } from "../src/lib/studentApiRoute.server.js";
 import { resolveStudentQrSigningRequest } from "../src/lib/studentQr.server.js";
 import { handleAdminApiRequest, isSupportedAdminApiPath } from "../src/lib/superAdmin/apiRoute.server.js";
@@ -574,6 +577,34 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
         sendJson(res, 500, {
           status: "error",
           message: error instanceof Error ? error.message : "Unexpected attendance scan failure",
+        });
+      }
+      return;
+    }
+
+    case "/api/attendance/scan-debug": {
+      if (req.method === "OPTIONS") {
+        res.statusCode = 204;
+        res.setHeader("Cache-Control", "no-store");
+        res.end();
+        return;
+      }
+
+      if (req.method !== "POST") {
+        sendMethodNotAllowed(res, "POST");
+        return;
+      }
+
+      try {
+        const result = await resolveScanAttendanceDebugRequest(process.env, readParsedBody(req), {
+          deviceToken: readDeviceToken(req.headers ?? {}),
+        });
+        sendJson(res, result.statusCode, result.body);
+      } catch (error) {
+        await logServerlessAttendanceFailure(pathname, "scan-attendance-debug-api", error);
+        sendJson(res, 500, {
+          status: "error",
+          message: error instanceof Error ? error.message : "Unexpected attendance scan debug failure",
         });
       }
       return;
