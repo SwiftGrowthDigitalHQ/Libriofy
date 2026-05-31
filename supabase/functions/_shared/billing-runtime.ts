@@ -26,6 +26,12 @@ export type BillingProviderStatus = {
   }>;
 };
 
+export type BillingCheckoutAvailability = {
+  message: string | null;
+  provider: BillingProvider;
+  ready: boolean;
+};
+
 export type BillingFunctionErrorPayload = {
   code: string;
   detail?: string | null;
@@ -192,6 +198,23 @@ export const resolveBillingProviderStatus = (
         missing: stripeValidation.missing,
       },
     },
+  };
+};
+
+export const resolveBillingCheckoutAvailability = (
+  env: Record<string, string | undefined>,
+): BillingCheckoutAvailability => {
+  const providerStatus = resolveBillingProviderStatus(env);
+  const activeProvider = providerStatus.activeProvider;
+  const providerConfigured = providerStatus.providers[activeProvider].configured;
+  const providerLabel = activeProvider === "stripe" ? "Stripe" : "Razorpay";
+
+  return {
+    message: providerConfigured
+      ? null
+      : `${providerLabel} checkout is temporarily unavailable while the platform billing setup is being completed. Please contact Libriofy support before trying again.`,
+    provider: activeProvider,
+    ready: providerConfigured,
   };
 };
 

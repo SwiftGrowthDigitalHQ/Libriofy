@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeCouponDiscount,
   createSupabaseOperationError,
+  resolveBillingCheckoutAvailability,
   resolveBillingProviderStatus,
   validateBillingRuntimeEnv,
 } from "../../supabase/functions/_shared/billing-runtime";
@@ -50,6 +51,18 @@ describe("billing runtime helpers", () => {
     expect(status.activeProvider).toBe("razorpay");
     expect(status.providers.razorpay.configured).toBe(true);
     expect(status.providers.stripe.configured).toBe(false);
+  });
+
+  it("surfaces checkout availability for the active provider", () => {
+    const availability = resolveBillingCheckoutAvailability({
+      BILLING_PROVIDER: "razorpay",
+      SUPABASE_SERVICE_ROLE_KEY: "sb_secret_live_key",
+      SUPABASE_URL: "https://libriofy-prod.supabase.co",
+    });
+
+    expect(availability.provider).toBe("razorpay");
+    expect(availability.ready).toBe(false);
+    expect(availability.message).toContain("Razorpay checkout is temporarily unavailable");
   });
 
   it("preserves the real Supabase error code and layer in structured billing failures", () => {

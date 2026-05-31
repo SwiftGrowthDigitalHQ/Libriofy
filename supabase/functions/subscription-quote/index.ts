@@ -15,6 +15,7 @@ import {
   normalizeCouponCode,
   normalizePlanCode,
   readJsonRequestBody,
+  resolveBillingCheckoutAvailability,
   resolveBillingTraceContext,
   safeNumber,
   serializeSupabaseError,
@@ -628,7 +629,18 @@ serve(async (req) => {
     }
 
     const totalAmount = Math.max(1, Math.floor(subtotal - discountAmount));
+    const checkout = resolveBillingCheckoutAvailability({
+      BILLING_PROVIDER: Deno.env.get("BILLING_PROVIDER"),
+      RAZORPAY_KEY_ID: Deno.env.get("RAZORPAY_KEY_ID"),
+      RAZORPAY_KEY_SECRET: Deno.env.get("RAZORPAY_KEY_SECRET"),
+      RAZORPAY_WEBHOOK_SECRET: Deno.env.get("RAZORPAY_WEBHOOK_SECRET"),
+      STRIPE_SECRET_KEY: Deno.env.get("STRIPE_SECRET_KEY"),
+      STRIPE_WEBHOOK_SECRET: Deno.env.get("STRIPE_WEBHOOK_SECRET"),
+      SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+      SUPABASE_URL: Deno.env.get("SUPABASE_URL"),
+    });
     const responseBody = {
+      checkout,
       pricing: {
         coupon_code: coupon?.code ?? null,
         discount_amount: discountAmount,

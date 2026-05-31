@@ -81,6 +81,11 @@ type SubscriptionPlanDto = {
 };
 
 type SubscriptionQuoteResponse = {
+  checkout: {
+    message: string | null;
+    provider: "razorpay" | "stripe";
+    ready: boolean;
+  };
   success: true;
   plan: {
     code: string;
@@ -263,6 +268,9 @@ const BillingPage = () => {
   });
 
   const quoteErrorMessage = quoteError instanceof Error ? quoteError.message : null;
+  const checkoutUnavailableMessage = quote?.checkout.ready === false
+    ? quote.checkout.message ?? "Checkout is temporarily unavailable while billing setup is being completed."
+    : null;
 
   const applyCouponMutation = useMutation({
     mutationFn: async (code: string) => {
@@ -308,6 +316,14 @@ const BillingPage = () => {
 
   const handleActivatePlan = async () => {
     if (!libraryId || !selectedPlanConfig || !isOwner) return;
+    if (checkoutUnavailableMessage) {
+      toast({
+        title: "Checkout unavailable",
+        description: checkoutUnavailableMessage,
+        variant: "destructive",
+      });
+      return;
+    }
 
     setCheckoutLoading(true);
     let paymentContext: PaymentObservabilityContext = {
@@ -693,6 +709,25 @@ const BillingPage = () => {
                     </Alert>
                   ) : null}
 
+                  {checkoutUnavailableMessage ? (
+                    <Alert className="mt-3">
+                      <AlertTitle>Checkout unavailable</AlertTitle>
+                      <AlertDescription className="space-y-3">
+                        <span className="block">{checkoutUnavailableMessage}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            void refetchQuote();
+                          }}
+                        >
+                          Refresh billing status
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1 space-y-1">
                       <Label htmlFor="coupon" className="text-xs text-muted-foreground">
@@ -747,6 +782,7 @@ const BillingPage = () => {
                     plansLoading ||
                     !selectedPlanConfig ||
                     !planIsSelected ||
+                    !!checkoutUnavailableMessage ||
                     !!quoteErrorMessage ||
                     selectedPlanBlocked
                   }
@@ -757,7 +793,13 @@ const BillingPage = () => {
                       Opening checkout...
                     </>
                   ) : isOwner ? (
-                    selectedPlanBlocked ? "Reduce capacity first" : access.isPlanActive ? "Renew or switch plan" : "Activate plan"
+                    selectedPlanBlocked
+                      ? "Reduce capacity first"
+                      : checkoutUnavailableMessage
+                        ? "Checkout unavailable"
+                        : access.isPlanActive
+                          ? "Renew or switch plan"
+                          : "Activate plan"
                   ) : (
                     "Only the library owner can pay"
                   )}
