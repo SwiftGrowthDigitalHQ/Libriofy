@@ -109,7 +109,7 @@ const SubscriptionGate = ({ children }: { children: ReactNode }) => {
       if (!razorpayWindow.Razorpay) throw new Error("Razorpay SDK unavailable");
 
       const envKeyId = String(import.meta.env.VITE_RAZORPAY_KEY_ID ?? "").trim();
-      const checkoutKeyId = envKeyId || orderRes.keyId;
+      const checkoutKeyId = orderRes.keyId || envKeyId;
       if (!checkoutKeyId) throw new Error("Missing Razorpay key id.");
 
       const razorpay = new razorpayWindow.Razorpay({

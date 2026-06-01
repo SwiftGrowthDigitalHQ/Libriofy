@@ -36,6 +36,21 @@ describe("billing runtime helpers", () => {
     expect(result.missing).toContain("RAZORPAY_WEBHOOK_SECRET");
   });
 
+  it("rejects test-mode Razorpay provider keys", () => {
+    const result = validateBillingRuntimeEnv({
+      RAZORPAY_KEY_ID: "your_live_razorpay_key_id",
+      RAZORPAY_KEY_SECRET: "secret",
+      SUPABASE_SERVICE_ROLE_KEY: "sb_secret_live_key",
+      SUPABASE_URL: "https://libriofy-prod.supabase.co",
+    }, {
+      provider: "razorpay",
+      requireWebhookSecret: false,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missing).toContain("RAZORPAY_KEY_ID");
+  });
+
   it("tracks the active billing provider and its config status", () => {
     const status = resolveBillingProviderStatus({
       BILLING_PROVIDER: "razorpay",

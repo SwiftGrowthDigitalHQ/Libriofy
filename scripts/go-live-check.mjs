@@ -135,7 +135,7 @@ const looksLikePlaceholder = (key, rawValue) => {
     return true;
   }
 
-  if (key === "VITE_RAZORPAY_KEY_ID" && /rzp_test_example/i.test(value)) {
+  if ((key === "VITE_RAZORPAY_KEY_ID" || key === "RAZORPAY_KEY_ID") && (!/^rzp_live_/i.test(value) || /(example|placeholder|your)/i.test(value))) {
     return true;
   }
 

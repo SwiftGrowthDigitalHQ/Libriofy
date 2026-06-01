@@ -143,7 +143,7 @@ serve(async (req) => {
       return json(
         {
           error: "Razorpay secrets missing",
-          hint: "Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Supabase Function secrets (Test Mode keys start with rzp_test_...).",
+          hint: "Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Supabase Function secrets. Live-mode keys are required for production checkout.",
         },
         500,
       );

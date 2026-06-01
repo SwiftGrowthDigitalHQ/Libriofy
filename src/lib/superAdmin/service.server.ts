@@ -979,6 +979,7 @@ const readEnv = (env: EnvLike, ...names: string[]) => {
 };
 
 const hasConfiguredEnvValue = (value: string | undefined) => Boolean(value && value.trim());
+const isLiveRazorpayKeyId = (value: string | undefined) => /^rzp_live_/i.test(String(value ?? "").trim()) && !/(example|placeholder|your)/i.test(String(value ?? "").trim());
 
 const normalizeComparableUrl = (value: string) => {
   try {
@@ -991,9 +992,11 @@ const normalizeComparableUrl = (value: string) => {
 
 const buildBillingProviderDiagnostics = (env: EnvLike) => {
   const activeProvider = readEnv(env, "BILLING_PROVIDER").toLowerCase() === "stripe" ? "stripe" : "razorpay";
-  const razorpayMissing = ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"].filter(
-    (key) => !hasConfiguredEnvValue(env[key]),
-  );
+  const razorpayMissing = [
+    isLiveRazorpayKeyId(env.RAZORPAY_KEY_ID) ? null : "RAZORPAY_KEY_ID",
+    hasConfiguredEnvValue(env.RAZORPAY_KEY_SECRET) ? null : "RAZORPAY_KEY_SECRET",
+    hasConfiguredEnvValue(env.RAZORPAY_WEBHOOK_SECRET) ? null : "RAZORPAY_WEBHOOK_SECRET",
+  ].filter((key): key is string => Boolean(key));
   const stripeMissing = ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"].filter(
     (key) => !hasConfiguredEnvValue(env[key]),
   );
@@ -9074,7 +9077,7 @@ export const getBillingDiagnosticsData = async (
     envValidation,
     paymentConfigStatus: {
       activeProviderConfigured: providerStatus.providers[activeProvider].configured,
-      clientRazorpayKeyConfigured: hasConfiguredEnvValue(env.VITE_RAZORPAY_KEY_ID),
+      clientRazorpayKeyConfigured: isLiveRazorpayKeyId(env.VITE_RAZORPAY_KEY_ID),
       clientSupabaseUrlConfigured: hasConfiguredEnvValue(env.VITE_SUPABASE_URL),
       serviceRoleConfigured: hasConfiguredEnvValue(env.SUPABASE_SERVICE_ROLE_KEY),
       webhookConfigured:

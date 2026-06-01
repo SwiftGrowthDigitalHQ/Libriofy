@@ -117,6 +117,10 @@ serve(async (req) => {
 
     const headerSignature = req.headers.get("x-razorpay-signature") ?? "";
     if (!headerSignature) {
+      console.warn("[razorpay-webhook] missing signature", {
+        requestId: trace.requestId,
+        source: "razorpay_webhook",
+      });
       return new Response(JSON.stringify({ error: "Missing webhook signature" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -125,6 +129,10 @@ serve(async (req) => {
 
     const expectedSignature = await signHmacSha256(webhookSecret, rawBody);
     if (!timingSafeEqual(expectedSignature, headerSignature)) {
+      console.warn("[razorpay-webhook] invalid signature", {
+        requestId: trace.requestId,
+        source: "razorpay_webhook",
+      });
       return new Response(JSON.stringify({ error: "Invalid webhook signature" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -241,8 +249,14 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("razorpay-webhook error", error);
     const message = error instanceof Error ? error.message : String(error);
+    console.error("[razorpay-webhook] failed", {
+      error: message,
+      libraryId: observabilityLibraryId || null,
+      orderId: observabilityEntityId || null,
+      requestId: trace.requestId,
+      source: "razorpay_webhook",
+    });
     if (observabilitySupabase) {
       await logEdgeEvent(observabilitySupabase, {
         type: "PAYMENT_FAILED",

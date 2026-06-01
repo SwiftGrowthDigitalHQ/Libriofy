@@ -108,6 +108,21 @@ describe("runtime governance", () => {
     expect(normalizeChecks(expressConfig.checks)).toEqual(normalizeChecks(serverlessConfig.checks));
   });
 
+  it("flags test-mode Razorpay keys as invalid", () => {
+    const result = validateRuntimeConfiguration(
+      buildEnv({
+        RAZORPAY_KEY_ID: "your_live_razorpay_key_id",
+      }),
+      {
+        hasDist: true,
+        target: "express",
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.missing).toContain("RAZORPAY_KEY_ID");
+  });
+
   it("detects deployment drift and client-secret exposure warnings", () => {
     const result = validateRuntimeConfiguration(
       buildEnv({

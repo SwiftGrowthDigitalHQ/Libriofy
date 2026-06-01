@@ -7,7 +7,7 @@ describe("validateServerStartupEnv", () => {
     const result = validateServerStartupEnv({
       APP_ENV: "test",
       APP_URL: "https://www.libriofy.com",
-      RAZORPAY_KEY_ID: "rzp_live_example",
+      RAZORPAY_KEY_ID: "rzp_live_key",
       RAZORPAY_KEY_SECRET: "secret",
       RAZORPAY_WEBHOOK_SECRET: "webhook-secret",
       STUDENT_QR_PRIVATE_KEY: "qr-private-key",

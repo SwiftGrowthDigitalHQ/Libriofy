@@ -2,6 +2,7 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { blockIfMaintenanceMode } from "../_shared/maintenance.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { logBillingFunctionEvent, validateBillingRuntimeEnv } from "../_shared/billing-runtime.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -114,6 +115,30 @@ serve(async (req) => {
     if (!libraryId) {
       return new Response(JSON.stringify({ error: "libraryId is required" }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const envValidation = validateBillingRuntimeEnv({
+      RAZORPAY_KEY_ID: Deno.env.get("RAZORPAY_KEY_ID"),
+      RAZORPAY_KEY_SECRET: Deno.env.get("RAZORPAY_KEY_SECRET"),
+      SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+      SUPABASE_URL: Deno.env.get("SUPABASE_URL"),
+    }, {
+      provider: "razorpay",
+      requireWebhookSecret: false,
+    });
+    logBillingFunctionEvent("info", "create_razorpay_order_env_validation", {
+      envValidation,
+      libraryId,
+    });
+    if (!envValidation.ok) {
+      console.error("[create-razorpay-order] missing billing secrets", {
+        envValidation,
+        libraryId,
+      });
+      return new Response(JSON.stringify({ error: "Razorpay secrets missing" }), {
+        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -301,6 +326,11 @@ serve(async (req) => {
 
     if (!razorpayResponse.ok) {
       const errBody = await razorpayResponse.text();
+      console.error("[create-razorpay-order] provider rejected order creation", {
+        body: errBody,
+        libraryId,
+        providerStatus: razorpayResponse.status,
+      });
       throw new Error(`Razorpay order creation failed: ${errBody}`);
     }
 
@@ -371,7 +401,10 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error("[create-razorpay-order] failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

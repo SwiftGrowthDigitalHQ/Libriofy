@@ -45,6 +45,7 @@ type RuntimeReadinessOptions = RuntimeConfigOptions & {
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 const hasValue = (value: unknown) => Boolean(trimText(value));
+const isLiveRazorpayKeyId = (value: unknown) => /^rzp_live_/i.test(trimText(value)) && !/(example|placeholder|your)/i.test(trimText(value));
 
 const readEnv = (env: EnvLike, ...names: string[]) => {
   for (const name of names) {
@@ -87,6 +88,10 @@ const looksLikePlaceholder = (key: string, value: string | undefined) => {
   ];
 
   if (genericPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  if ((key === "RAZORPAY_KEY_ID" || key === "VITE_RAZORPAY_KEY_ID") && !isLiveRazorpayKeyId(normalized)) {
     return true;
   }
 
@@ -290,7 +295,7 @@ export const validateRuntimeConfiguration = (
       "razorpay_key_id",
       "RAZORPAY_KEY_ID",
       env.RAZORPAY_KEY_ID,
-      "RAZORPAY_KEY_ID is missing or placeholder.",
+      "RAZORPAY_KEY_ID is missing, placeholder, or not a live Razorpay key.",
     );
     requireValue(
       "razorpay_key_secret",

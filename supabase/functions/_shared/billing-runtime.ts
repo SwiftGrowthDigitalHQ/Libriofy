@@ -58,14 +58,15 @@ const trimText = (value: unknown) => (typeof value === "string" ? value.trim() :
 
 const hasValue = (value: unknown) => trimText(value).length > 0;
 
-const looksLikePlaceholder = (value: string) => {
+const looksLikePlaceholder = (key: string, value: string) => {
   const normalized = trimText(value).toLowerCase();
   return (
     !normalized ||
     normalized.includes("your_") ||
     normalized.includes("example") ||
     normalized.includes("placeholder") ||
-    normalized === "changeme"
+    normalized === "changeme" ||
+    (key === "RAZORPAY_KEY_ID" && (!/^rzp_live_/i.test(normalized) || normalized.includes("example")))
   );
 };
 
@@ -78,7 +79,7 @@ const pushEnvCheck = (
   },
 ) => {
   const normalized = trimText(input.value);
-  const status = !normalized ? "missing" : looksLikePlaceholder(normalized) ? "invalid" : "ok";
+  const status = !normalized ? "missing" : looksLikePlaceholder(input.key, normalized) ? "invalid" : "ok";
 
   result.checks.push({
     detail:
@@ -133,7 +134,7 @@ export const validateBillingRuntimeEnv = (
 
   if (options?.provider === "razorpay") {
     pushEnvCheck(result, {
-      detail: "RAZORPAY_KEY_ID is required for Razorpay checkout.",
+      detail: "RAZORPAY_KEY_ID is required for Razorpay checkout and must be a live Razorpay key.",
       key: "RAZORPAY_KEY_ID",
       value: env.RAZORPAY_KEY_ID,
     });
