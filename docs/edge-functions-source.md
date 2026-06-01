@@ -328,7 +328,7 @@ serve(async (req) => {
         amount: finalAmount,
         currency: "INR",
         razorpay_order_id: order.id,
-        status: "created",
+        status: "pending",
         months_purchased: Number(months),
         metadata: {
           plan_code: plan.code,

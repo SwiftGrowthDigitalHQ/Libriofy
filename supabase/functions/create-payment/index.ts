@@ -785,17 +785,17 @@ serve(async (req) => {
       quotePayload,
     };
 
-    const { data: activeCreatedRows, error: activeCreatedRowsError } = await supabase
+    const { data: activePendingRows, error: activePendingRowsError } = await supabase
       .from("subscription_payments")
       .select("id, amount, currency, created_at, idempotency_key, metadata, razorpay_order_id, status")
       .eq("library_id", libraryId)
-      .eq("status", "created")
+      .eq("status", "pending")
       .order("created_at", { ascending: false })
       .limit(8);
-    if (activeCreatedRowsError) {
+    if (activePendingRowsError) {
       throw createSupabaseOperationError({
         diagnostics,
-        error: activeCreatedRowsError,
+        error: activePendingRowsError,
         hint: "Check subscription_payments reads in the active Supabase project.",
         layer: "db.subscription_payments.lookup_reusable",
         message: "Failed to inspect recent payment sessions for reuse.",
@@ -804,7 +804,7 @@ serve(async (req) => {
     }
 
     const reusablePayment = findReusableSubscriptionPayment(
-      (activeCreatedRows ?? []) as ReusableSubscriptionPayment[],
+      (activePendingRows ?? []) as ReusableSubscriptionPayment[],
       idempotencyKey,
     );
     if (reusablePayment?.razorpay_order_id) {

@@ -96,13 +96,19 @@ describe("subscription payment runtime helpers", () => {
     const reusable = findReusableSubscriptionPayment(
       [
         {
-          created_at: "2026-05-07T08:00:00.000Z",
+          created_at: "2026-05-07T10:20:00.000Z",
+          idempotency_key: "lib-1:growth:3:SAVE10:starter",
+          razorpay_order_id: "order_created",
+          status: "created",
+        },
+        {
+          created_at: "2026-05-07T10:10:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_stale",
           status: "pending",
         },
         {
-          created_at: "2026-05-07T10:10:00.000Z",
+          created_at: "2026-05-07T10:30:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_captured",
           status: "paid",
@@ -112,7 +118,7 @@ describe("subscription payment runtime helpers", () => {
       Date.parse("2026-05-07T10:40:00.000Z"),
     );
 
-    expect(reusable).toBeNull();
+    expect(reusable?.razorpay_order_id).toBe("order_stale");
   });
 
   it("ignores partial failure rows that timed out before an order id was stored", () => {
