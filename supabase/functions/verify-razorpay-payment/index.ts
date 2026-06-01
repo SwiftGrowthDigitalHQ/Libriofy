@@ -461,6 +461,7 @@ serve(async (req) => {
     const processedAmount = safeNumber(processed.amount, safeNumber(paymentRow.amount, 0));
     const processedExpiry = typeof processed.expires_at === "string" ? processed.expires_at : null;
     const processedPaymentId = String(processed.payment_id ?? requestPaymentId).trim() || requestPaymentId;
+    const processedPlanId = String(processedPlan.id ?? processed.plan_id ?? "").trim();
     const processedPlanCode = String(processedPlan.code ?? "").trim();
     const processedPlanName = String(processedPlan.name ?? processedPlanCode).trim();
     const processedPlanDescription =
@@ -470,6 +471,7 @@ serve(async (req) => {
       ...diagnostics,
       alreadyCaptured,
       captureResult: processed,
+      processedPlanId: processedPlanId || null,
       processedPlanCode: processedPlanCode || null,
       subscriptionPaymentId: processed.subscription_payment_id ?? null,
     };
@@ -485,6 +487,7 @@ serve(async (req) => {
         metadata: {
           ...diagnostics,
           amount: processedAmount,
+          planId: processedPlanId || null,
           planCode: processedPlanCode,
           planName: processedPlanName,
           severity: "INFO",
@@ -502,6 +505,7 @@ serve(async (req) => {
       expires_at: processedExpiry,
       payment_id: processedPaymentId,
       plan: {
+        id: processedPlanId,
         code: processedPlanCode,
         description: processedPlanDescription,
         name: processedPlanName,

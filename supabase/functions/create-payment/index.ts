@@ -41,6 +41,7 @@ const json = (payload: unknown, status = 200) =>
   });
 
 type SubscriptionPlanRow = {
+  id: string;
   code: string;
   name: string;
   description: string | null;
@@ -540,7 +541,7 @@ serve(async (req) => {
 
     const { data: planRow, error: planError } = await supabase
       .from("subscription_plans")
-      .select("code, name, description, price, seats_limit, lockers_limit, features, is_active")
+      .select("id, code, name, description, price, seats_limit, lockers_limit, features, is_active")
       .eq("code", requestedPlanCode)
       .maybeSingle();
     if (planError) {
@@ -642,23 +643,23 @@ serve(async (req) => {
       });
     }
 
-    const { count: capturedCount, error: capturedCountError } = await supabase
+    const { count: paidCount, error: paidCountError } = await supabase
       .from("subscription_payments")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
-      .eq("status", "captured");
-    if (capturedCountError) {
+      .eq("status", "paid");
+    if (paidCountError) {
       throw createSupabaseOperationError({
         diagnostics,
-        error: capturedCountError,
+        error: paidCountError,
         hint: "Check subscription_payments access and indexes in the active Supabase project.",
-        layer: "db.subscription_payments.count_captured",
+        layer: "db.subscription_payments.count_paid",
         message: "Failed to determine whether this is the library's first paid billing cycle.",
         requestId: trace.requestId,
       });
     }
 
-    const isFirstPurchase = Number(capturedCount ?? 0) === 0;
+    const isFirstPurchase = Number(paidCount ?? 0) === 0;
     let discountKind: "coupon" | "referral" | null = null;
     let discountAmount = 0;
     let coupon: CouponRow | null = null;
@@ -859,7 +860,8 @@ serve(async (req) => {
         idempotency_key: idempotencyKey,
         library_id: libraryId,
         months: String(months),
-        plan: plan.code,
+        plan_code: plan.code,
+        plan_id: plan.id,
       },
       receipt: `${libraryId.slice(0, 8)}-${Date.now()}`,
     };
@@ -978,6 +980,7 @@ serve(async (req) => {
           discount_amount: discountAmount,
           discount_kind: discountKind,
           idempotency_key: idempotencyKey,
+          plan_id: plan.id,
           plan_code: plan.code,
           plan_description: plan.description,
           plan_features: plan.features,
@@ -994,7 +997,7 @@ serve(async (req) => {
         },
         months_purchased: Number(months),
         razorpay_order_id: order.id,
-        status: "created",
+        status: "pending",
         subscription_id: sub.id,
       })
       .select("id")

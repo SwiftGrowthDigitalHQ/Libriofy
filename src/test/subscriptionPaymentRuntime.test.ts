@@ -44,7 +44,7 @@ describe("subscription payment runtime helpers", () => {
     expect(new Set(requests)).toEqual(new Set(["lib-1:growth:3:SAVE10:starter"]));
   });
 
-  it("reuses a recent created payment with the same idempotency key", () => {
+  it("reuses a recent pending payment with the same idempotency key", () => {
     const reusable = findReusableSubscriptionPayment(
       [
         {
@@ -53,7 +53,7 @@ describe("subscription payment runtime helpers", () => {
           currency: "INR",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_live_123",
-          status: "created",
+          status: "pending",
         },
       ],
       "lib-1:growth:3:SAVE10:starter",
@@ -63,26 +63,26 @@ describe("subscription payment runtime helpers", () => {
     expect(reusable?.razorpay_order_id).toBe("order_live_123");
   });
 
-  it("reuses the newest valid created payment during duplicate webhook-style retries", () => {
+  it("reuses the newest valid pending payment during duplicate webhook-style retries", () => {
     const reusable = findReusableSubscriptionPayment(
       [
         {
           created_at: "2026-05-07T10:03:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_newest",
-          status: "created",
+          status: "pending",
         },
         {
           created_at: "2026-05-07T10:01:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_oldest",
-          status: "created",
+          status: "pending",
         },
         {
           created_at: "2026-05-07T10:02:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_middle",
-          status: "created",
+          status: "pending",
         },
       ],
       "lib-1:growth:3:SAVE10:starter",
@@ -92,20 +92,20 @@ describe("subscription payment runtime helpers", () => {
     expect(reusable?.razorpay_order_id).toBe("order_newest");
   });
 
-  it("ignores stale or non-created reusable payments", () => {
+  it("ignores stale or non-pending reusable payments", () => {
     const reusable = findReusableSubscriptionPayment(
       [
         {
           created_at: "2026-05-07T08:00:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_stale",
-          status: "created",
+          status: "pending",
         },
         {
           created_at: "2026-05-07T10:10:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "order_captured",
-          status: "captured",
+          status: "paid",
         },
       ],
       "lib-1:growth:3:SAVE10:starter",
@@ -122,7 +122,7 @@ describe("subscription payment runtime helpers", () => {
           created_at: "2026-05-07T10:11:00.000Z",
           idempotency_key: "lib-1:growth:3:SAVE10:starter",
           razorpay_order_id: "",
-          status: "created",
+          status: "pending",
         },
         {
           created_at: "2026-05-07T10:12:00.000Z",
@@ -130,7 +130,7 @@ describe("subscription payment runtime helpers", () => {
             idempotency_key: "lib-1:growth:3:SAVE10:starter",
           },
           razorpay_order_id: "order_recovered",
-          status: "created",
+          status: "pending",
         },
       ],
       "lib-1:growth:3:SAVE10:starter",

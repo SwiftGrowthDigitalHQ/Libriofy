@@ -10,6 +10,7 @@ const corsHeaders = {
 };
 
 type SubscriptionPlanRow = {
+  id: string;
   code: string;
   name: string;
   description: string | null;
@@ -186,7 +187,7 @@ serve(async (req) => {
 
     const { data: planRow, error: planError } = await supabase
       .from("subscription_plans")
-      .select("code, name, description, price, seats_limit, lockers_limit, features, is_active")
+      .select("id, code, name, description, price, seats_limit, lockers_limit, features, is_active")
       .eq("code", requestedPlanCode)
       .maybeSingle();
     if (planError) throw planError;
@@ -235,13 +236,13 @@ serve(async (req) => {
       .maybeSingle();
     if (acquisitionError) throw acquisitionError;
 
-    const { count: capturedCount, error: capturedCountError } = await supabase
+    const { count: paidCount, error: paidCountError } = await supabase
       .from("subscription_payments")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
-      .eq("status", "captured");
-    if (capturedCountError) throw capturedCountError;
-    const isFirstPurchase = Number(capturedCount ?? 0) === 0;
+      .eq("status", "paid");
+    if (paidCountError) throw paidCountError;
+    const isFirstPurchase = Number(paidCount ?? 0) === 0;
 
     let discountKind: "coupon" | "referral" | null = null;
     let discountAmount = 0;
@@ -318,7 +319,8 @@ serve(async (req) => {
         notes: {
           library_id: libraryId,
           months: String(months),
-          plan: plan.code,
+          plan_code: plan.code,
+          plan_id: plan.id,
           coupon: coupon?.code ?? "",
         },
       }),
@@ -344,9 +346,10 @@ serve(async (req) => {
         amount: finalAmount,
         currency: "INR",
         razorpay_order_id: order.id,
-        status: "created",
+        status: "pending",
         months_purchased: Number(months),
         metadata: {
+          plan_id: plan.id,
           plan_code: plan.code,
           plan_name: plan.name,
           plan_description: plan.description,

@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS public.subscription_payments (
   razorpay_order_id TEXT NOT NULL UNIQUE,
   razorpay_payment_id TEXT,
   razorpay_signature TEXT,
-  status TEXT NOT NULL DEFAULT 'created' CHECK (status IN ('created', 'captured', 'failed')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed', 'expired')),
   months_purchased INTEGER NOT NULL DEFAULT 1,
   paid_at TIMESTAMPTZ,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,

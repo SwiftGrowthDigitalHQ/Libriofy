@@ -176,6 +176,8 @@ DECLARE
   v_acquisition public.library_acquisition%ROWTYPE;
   v_affiliate public.affiliates%ROWTYPE;
   v_metadata JSONB;
+  v_plan_id_text TEXT;
+  v_plan_found BOOLEAN := false;
   v_plan_code TEXT;
   v_plan_name TEXT;
   v_plan_description TEXT;
@@ -217,24 +219,38 @@ BEGIN
   END IF;
 
   v_metadata := COALESCE(v_payment.metadata, '{}'::jsonb);
+  v_plan_id_text := NULLIF(trim(COALESCE(v_metadata->>'plan_id', '')), '');
   v_plan_code := lower(trim(COALESCE(v_metadata->>'plan_code', v_metadata->>'plan_name', v_metadata->>'plan', v_subscription.plan_name, '')));
-  IF v_plan_code = '' THEN
-    RAISE EXCEPTION 'Payment metadata is missing plan_code for order %', p_razorpay_order_id
-      USING ERRCODE = '22023';
+  v_plan_found := false;
+
+  IF v_plan_id_text IS NOT NULL AND v_plan_id_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN
+    SELECT *
+    INTO v_plan
+    FROM public.subscription_plans
+    WHERE id = v_plan_id_text::uuid;
+    v_plan_found := FOUND;
   END IF;
 
-  SELECT
-    code,
-    name,
-    description,
-    price,
-    seats_limit,
-    lockers_limit,
-    features
-  INTO v_plan
-  FROM public.subscription_plans
-  WHERE code = v_plan_code;
+  IF NOT v_plan_found THEN
+    IF v_plan_code = '' THEN
+      RAISE EXCEPTION 'Payment metadata is missing plan_code for order %', p_razorpay_order_id
+        USING ERRCODE = '22023';
+    END IF;
 
+    SELECT *
+    INTO v_plan
+    FROM public.subscription_plans
+    WHERE code = v_plan_code;
+    v_plan_found := FOUND;
+  END IF;
+
+  IF NOT v_plan_found THEN
+    RAISE EXCEPTION 'Payment metadata plan reference is invalid for order %', p_razorpay_order_id
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  v_plan_id_text := v_plan.id::text;
+  v_plan_code := COALESCE(lower(NULLIF(v_plan.code, '')), v_plan_code, 'starter');
   v_plan_price := COALESCE(NULLIF(v_metadata->>'plan_price', '')::NUMERIC, v_plan.price, COALESCE(v_subscription.plan_price, v_subscription.price, 0));
   v_plan_name := COALESCE(NULLIF(trim(v_metadata->>'plan_name'), ''), v_plan.name, v_plan_code);
   v_plan_description := COALESCE(NULLIF(trim(v_metadata->>'plan_description'), ''), v_plan.description);
@@ -260,7 +276,7 @@ BEGIN
   );
   v_months := GREATEST(COALESCE(v_payment.months_purchased, 1), 1);
 
-  IF v_payment.status = 'captured' THEN
+  IF v_payment.status = 'paid' THEN
     UPDATE public.subscription_payments
     SET
       razorpay_payment_id = COALESCE(NULLIF(p_razorpay_payment_id, ''), razorpay_payment_id),
@@ -274,7 +290,9 @@ BEGIN
         'capture_source', COALESCE(NULLIF(p_capture_source, ''), capture_source),
         'capture_request_id', COALESCE(NULLIF(p_request_id, ''), capture_request_id),
         'capture_correlation_id', COALESCE(NULLIF(p_correlation_id, ''), capture_correlation_id),
-        'capture_trace_id', COALESCE(NULLIF(p_trace_id, ''), capture_trace_id)
+        'capture_trace_id', COALESCE(NULLIF(p_trace_id, ''), capture_trace_id),
+        'plan_id', v_plan_id_text,
+        'plan_code', v_plan_code
       )
     WHERE id = v_payment.id;
 
@@ -285,11 +303,12 @@ BEGIN
       'library_id', v_payment.library_id,
       'payment_id', COALESCE(NULLIF(p_razorpay_payment_id, ''), v_payment.razorpay_payment_id),
       'plan', jsonb_build_object(
+        'id', v_plan_id_text,
         'code', v_plan_code,
         'description', v_plan_description,
         'name', v_plan_name
       ),
-      'status', 'captured',
+      'status', 'paid',
       'subscription_payment_id', v_payment.id
     );
   END IF;
@@ -298,7 +317,7 @@ BEGIN
   INTO v_prior_captured_count
   FROM public.subscription_payments
   WHERE library_id = v_payment.library_id
-    AND status = 'captured'
+    AND status = 'paid'
     AND id <> v_payment.id;
 
   v_current_expiry := COALESCE(v_subscription.plan_expiry_date, v_subscription.expires_at);
@@ -323,12 +342,13 @@ BEGIN
       'capture_request_id', NULLIF(p_request_id, ''),
       'capture_source', NULLIF(p_capture_source, ''),
       'capture_trace_id', NULLIF(p_trace_id, ''),
+      'plan_id', v_plan_id_text,
       'plan_code', v_plan_code
     ),
     paid_at = v_captured_at,
     razorpay_payment_id = NULLIF(p_razorpay_payment_id, ''),
     razorpay_signature = COALESCE(NULLIF(p_razorpay_signature, ''), razorpay_signature),
-    status = 'captured'
+    status = 'paid'
   WHERE id = v_payment.id
   RETURNING * INTO v_payment;
 
@@ -468,12 +488,13 @@ BEGIN
     'library_id', v_payment.library_id,
     'payment_id', COALESCE(NULLIF(p_razorpay_payment_id, ''), v_payment.razorpay_payment_id),
     'plan', jsonb_build_object(
+      'id', v_plan_id_text,
       'code', v_plan_code,
       'description', v_plan_description,
       'name', v_plan_name
     ),
     'prior_captured_count', v_prior_captured_count,
-    'status', 'captured',
+    'status', 'paid',
     'subscription_payment_id', v_payment.id
   );
 EXCEPTION

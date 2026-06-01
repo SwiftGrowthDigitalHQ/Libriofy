@@ -79,7 +79,7 @@ export const findReusableSubscriptionPayment = (
   let newestReusableCreatedAtMs = Number.NEGATIVE_INFINITY;
 
   for (const row of rows ?? []) {
-    if (normalizeText(row.status).toLowerCase() !== "created") {
+    if (normalizeText(row.status).toLowerCase() !== "pending") {
       continue;
     }
 

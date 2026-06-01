@@ -21,6 +21,8 @@ DECLARE
   v_payment_status TEXT;
   v_months INTEGER := 1;
   v_latest_payment RECORD;
+  v_plan_id_text TEXT;
+  v_plan_found BOOLEAN := false;
   v_effective_actor UUID := COALESCE(p_actor_user_id, auth.uid());
   v_is_privileged_context BOOLEAN :=
     COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
@@ -101,12 +103,13 @@ BEGIN
   SELECT
     COALESCE(sp.paid_at, sp.capture_processed_at, sp.created_at) AS effective_paid_at,
     GREATEST(COALESCE(sp.months_purchased, 1), 1) AS months_purchased,
+    NULLIF(trim(COALESCE(sp.metadata->>'plan_id', '')), '') AS plan_id,
     NULLIF(trim(COALESCE(sp.metadata->>'plan_code', sp.metadata->>'plan_name', sp.metadata->>'plan', '')), '') AS plan_code,
     COALESCE(NULLIF(sp.metadata->>'plan_price', '')::NUMERIC, sp.amount) AS plan_price
   INTO v_latest_payment
   FROM public.subscription_payments sp
   WHERE sp.library_id = p_library_id
-    AND sp.status = 'captured'
+    AND sp.status = 'paid'
   ORDER BY COALESCE(sp.paid_at, sp.capture_processed_at, sp.created_at) DESC NULLS LAST, sp.created_at DESC
   LIMIT 1;
 
@@ -114,20 +117,35 @@ BEGIN
     v_started_at := COALESCE(v_latest_payment.effective_paid_at, now());
     v_months := GREATEST(COALESCE(v_latest_payment.months_purchased, 1), 1);
     v_expires_at := v_started_at + make_interval(days => 30 * v_months);
+    v_plan_id_text := NULLIF(trim(v_latest_payment.plan_id), '');
     v_plan_code := COALESCE(lower(NULLIF(v_latest_payment.plan_code, '')), v_plan_code, 'starter');
+    v_plan_found := false;
 
-    SELECT *
-    INTO v_plan
-    FROM public.subscription_plans
-    WHERE lower(code) = v_plan_code
-    LIMIT 1;
+    IF v_plan_id_text IS NOT NULL AND v_plan_id_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN
+      SELECT *
+      INTO v_plan
+      FROM public.subscription_plans
+      WHERE id = v_plan_id_text::uuid
+      LIMIT 1;
+      v_plan_found := FOUND;
+    END IF;
 
-    IF NOT FOUND THEN
+    IF NOT v_plan_found THEN
+      SELECT *
+      INTO v_plan
+      FROM public.subscription_plans
+      WHERE lower(code) = v_plan_code
+      LIMIT 1;
+      v_plan_found := FOUND;
+    END IF;
+
+    IF NOT v_plan_found THEN
       SELECT *
       INTO v_plan
       FROM public.subscription_plans
       WHERE lower(code) = 'starter'
       LIMIT 1;
+      v_plan_found := FOUND;
     END IF;
 
     v_plan_code := COALESCE(lower(NULLIF(v_plan.code, '')), v_plan_code, 'starter');

@@ -56,7 +56,7 @@ type SubscriptionPaymentRow = {
   library_id: string;
   amount: number | string;
   months_purchased: number | null;
-  status: "created" | "captured" | "failed";
+  status: "pending" | "paid" | "failed" | "expired";
   metadata: Record<string, unknown> | null;
 };
 
@@ -206,6 +206,7 @@ serve(async (req) => {
     const processedAmount = safeNumber(processed.amount, safeNumber(payment.amount, 0));
     const processedExpiry = typeof processed.expires_at === "string" ? processed.expires_at : null;
     const processedPaymentId = String(processed.payment_id ?? razorpay_payment_id).trim() || razorpay_payment_id;
+    const processedPlanId = String(processedPlan.id ?? processed.plan_id ?? "").trim();
     const processedPlanCode = String(processedPlan.code ?? "").trim();
     const processedPlanName = String(processedPlan.name ?? processedPlanCode).trim();
     const processedPlanDescription =
@@ -222,6 +223,7 @@ serve(async (req) => {
         libraryId,
         orderId: razorpay_order_id,
         paymentId: processedPaymentId,
+        planId: processedPlanId || null,
         planCode: processedPlanCode,
         planName: processedPlanName,
         requestId: trace.requestId,
@@ -241,6 +243,7 @@ serve(async (req) => {
         payment_id: processedPaymentId,
         expires_at: processedExpiry,
         plan: {
+          id: processedPlanId,
           code: processedPlanCode,
           name: processedPlanName,
           description: processedPlanDescription,
