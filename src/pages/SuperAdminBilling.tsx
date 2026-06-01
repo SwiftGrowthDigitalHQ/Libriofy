@@ -373,6 +373,26 @@ const SuperAdminBilling = () => {
         />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          <ControlPlaneCard title="Pending payments">
+            <p className="text-2xl font-bold font-display text-foreground">
+              {formatNumber(paymentOperations?.pendingPayments ?? 0)}
+            </p>
+          </ControlPlaneCard>
+          <ControlPlaneCard title="Failed payments">
+            <p className="text-2xl font-bold font-display text-foreground">
+              {formatNumber(paymentOperations?.failedPayments ?? 0)}
+            </p>
+          </ControlPlaneCard>
+          <ControlPlaneCard title="Reconciled payments">
+            <p className="text-2xl font-bold font-display text-foreground">
+              {formatNumber(paymentOperations?.reconciledPayments ?? 0)}
+            </p>
+          </ControlPlaneCard>
+          <ControlPlaneCard title="Webhook failures">
+            <p className="text-2xl font-bold font-display text-foreground">
+              {formatNumber(paymentOperations?.webhookDeliveryFailures ?? 0)}
+            </p>
+          </ControlPlaneCard>
           <ControlPlaneCard title="Retry rate">
             <p className="text-2xl font-bold font-display text-foreground">
               {formatNumber(paymentOperations?.paymentRetryRate ?? 0)}%

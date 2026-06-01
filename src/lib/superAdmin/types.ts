@@ -1736,11 +1736,14 @@ export type SuperAdminBillingCenterData = {
   operations: {
     billingMutationsEnabled: boolean;
     duplicatePayments: number;
+    failedPayments?: number;
     manualReviewPayments: number;
+    pendingPayments?: number;
     paymentRetryRate: number;
     reconciledPayments: number;
     stuckPayments: number;
     verificationRetries: number;
+    webhookDeliveryFailures?: number;
     webhookRetries: number;
   };
 };

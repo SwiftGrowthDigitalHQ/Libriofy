@@ -56,6 +56,7 @@ import {
 } from "./service.server.js";
 import { canAccessControlPlanePage, EMPTY_OPERATOR_SCOPE_BOUNDARY, expandOperatorPermissions, resolveOperatorPages, type AdminOperatorGrant } from "./governance.js";
 import { buildOperationalIntelligenceSnapshot } from "./operationalIntelligence.js";
+import { createEmptyBillingOperationsSnapshot } from "./billingMetrics.js";
 import type {
   AdminBillingPaymentRow,
   AdminBroadcastInput,
@@ -761,16 +762,7 @@ const buildDerivedBillingCenter = (
   generatedAt: control.generatedAt,
   gstRatePercent: readControlSettingNumber(control, "gst_rate_percent", 18),
   invoices: [],
-  operations: {
-    billingMutationsEnabled: control.runtimeGovernance.billingMutationsEnabled,
-    duplicatePayments: 0,
-    manualReviewPayments: 0,
-    paymentRetryRate: 0,
-    reconciledPayments: 0,
-    stuckPayments: 0,
-    verificationRetries: 0,
-    webhookRetries: 0,
-  },
+  operations: createEmptyBillingOperationsSnapshot(control.runtimeGovernance.billingMutationsEnabled),
   paymentHistory: [] as AdminBillingPaymentRow[],
   refunds: [],
 });

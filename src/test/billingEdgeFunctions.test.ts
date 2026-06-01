@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { invokeBillingEdgeFunction } from "../lib/billingEdgeFunctions";
+import { invokeBillingEdgeFunction, readFunctionErrorMessage } from "../lib/billingEdgeFunctions";
 
 describe("billing edge function invocation", () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PROJECT_ID", "hchflmrvmfvunedjhwta");
   });
 
   afterEach(() => {
@@ -88,5 +89,54 @@ describe("billing edge function invocation", () => {
     expect(result.error).not.toBeNull();
     expect(result.error?.message).toBe("Payment order not found.");
     expect(result.error?.context?.status).toBe(404);
+  });
+
+  it("surfaces a deployment hint when verify-payment is missing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "not found" }), {
+        headers: { "Content-Type": "application/json" },
+        status: 404,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await invokeBillingEdgeFunction(
+      "verify-razorpay-payment",
+      {
+        libraryId: "lib-1",
+        razorpay_order_id: "order_missing",
+        razorpay_payment_id: "pay_missing",
+        razorpay_signature: "sig_missing",
+      },
+      { Authorization: "Bearer test-token" },
+    );
+
+    const message = await readFunctionErrorMessage(result.error as Parameters<typeof readFunctionErrorMessage>[0], "verify-razorpay-payment");
+
+    expect(message).toContain("verify-razorpay-payment Edge Function");
+    expect(message).toContain("not deployed or reachable");
+  });
+
+  it("surfaces a deployment hint when razorpay-webhook is missing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "not found" }), {
+        headers: { "Content-Type": "application/json" },
+        status: 404,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await invokeBillingEdgeFunction(
+      "razorpay-webhook",
+      {
+        event: "payment.captured",
+      },
+      undefined,
+    );
+
+    const message = await readFunctionErrorMessage(result.error as Parameters<typeof readFunctionErrorMessage>[0], "razorpay-webhook");
+
+    expect(message).toContain("razorpay-webhook Edge Function");
+    expect(message).toContain("not deployed or reachable");
   });
 });

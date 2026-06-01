@@ -49,6 +49,7 @@ import {
   isControlWindowActive,
   resolveSystemStatus,
 } from "./model.js";
+import { buildBillingOperationsSnapshot } from "./billingMetrics.js";
 import {
   buildScopeBoundarySummary,
   type AdminOperatorAvailabilityProfile,
@@ -3012,24 +3013,11 @@ const buildBillingOperations = ({
 }: {
   paymentHistory: AdminBillingPaymentRow[];
   runtimeGovernance: AdminRuntimeGovernanceState;
-}) => ({
-  billingMutationsEnabled: runtimeGovernance.billingMutationsEnabled,
-  duplicatePayments: paymentHistory.filter((payment) => payment.duplicateDetected).length,
-  manualReviewPayments: paymentHistory.filter((payment) => payment.reconciliationStatus === "manual_review").length,
-  paymentRetryRate:
-    paymentHistory.length > 0
-      ? Number(
-          (
-            (paymentHistory.filter((payment) => payment.retryCount > 0).length / paymentHistory.length) *
-            100
-          ).toFixed(2),
-        )
-      : 0,
-  reconciledPayments: paymentHistory.filter((payment) => payment.reconciliationStatus === "reconciled").length,
-  stuckPayments: paymentHistory.filter((payment) => payment.reconciliationStatus === "stuck").length,
-  verificationRetries: paymentHistory.reduce((sum, payment) => sum + payment.verificationAttempts, 0),
-  webhookRetries: paymentHistory.reduce((sum, payment) => sum + payment.webhookAttempts, 0),
-});
+}) =>
+  buildBillingOperationsSnapshot({
+    paymentHistory,
+    runtimeGovernance,
+  });
 
 const buildAutomationSummary = ({
   deadLetters,

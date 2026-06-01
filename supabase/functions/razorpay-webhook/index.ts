@@ -121,6 +121,17 @@ serve(async (req) => {
         requestId: trace.requestId,
         source: "razorpay_webhook",
       });
+      await sendEdgeAdminAlert({
+        type: "PAYMENT_FAILED",
+        severity: "ERROR",
+        user: "razorpay_webhook",
+        message: "Missing webhook signature.",
+        metadata: {
+          requestId: trace.requestId,
+          source: "razorpay_webhook",
+          stage: "signature_validation",
+        },
+      });
       return new Response(JSON.stringify({ error: "Missing webhook signature" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -132,6 +143,17 @@ serve(async (req) => {
       console.warn("[razorpay-webhook] invalid signature", {
         requestId: trace.requestId,
         source: "razorpay_webhook",
+      });
+      await sendEdgeAdminAlert({
+        type: "PAYMENT_FAILED",
+        severity: "ERROR",
+        user: "razorpay_webhook",
+        message: "Invalid webhook signature.",
+        metadata: {
+          requestId: trace.requestId,
+          source: "razorpay_webhook",
+          stage: "signature_validation",
+        },
       });
       return new Response(JSON.stringify({ error: "Invalid webhook signature" }), {
         status: 400,
