@@ -16,6 +16,7 @@ import { useUserRole } from "@/hooks/useUserRole";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import {
+  invokeBillingEdgeFunction,
   getEdgeFunctionAuthHeaders,
   isFunctionUnavailableError,
   readFunctionErrorMessage,
@@ -383,15 +384,12 @@ const BillingPage = () => {
         order_id: orderRes.orderId,
         handler: async (response: RazorpaySuccessResponse) => {
           const verifyHeaders = await getEdgeFunctionAuthHeaders();
-          const { error: verifyError } = await supabase.functions.invoke("verify-razorpay-payment", {
-            headers: verifyHeaders,
-            body: {
-              libraryId,
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-            },
-          });
+          const { error: verifyError } = await invokeBillingEdgeFunction("verify-razorpay-payment", {
+            libraryId,
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          }, verifyHeaders);
 
           if (verifyError) {
             const verifyMessage = await readFunctionErrorMessage(verifyError, "verify-razorpay-payment");

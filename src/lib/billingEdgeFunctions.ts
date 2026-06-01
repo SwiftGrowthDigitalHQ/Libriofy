@@ -163,6 +163,90 @@ export const getEdgeFunctionAuthHeaders = async () => {
     : undefined;
 };
 
+export const invokeBillingEdgeFunction = async <T>(
+  functionName: string,
+  body: unknown,
+  headers?: Record<string, string>,
+  timeoutMs = 15_000,
+): Promise<{
+  data: T | null;
+  error: FunctionErrorLike | null;
+}> => {
+  const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+  if (!supabaseUrl) {
+    return {
+      data: null,
+      error: new Error("Missing Supabase URL."),
+    };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const requestUrl = `${supabaseUrl}/functions/v1/${functionName}`;
+
+  try {
+    const response = await fetch(requestUrl, {
+      body: JSON.stringify(body),
+      headers: {
+        ...(headers ?? {}),
+        "Content-Type": "application/json",
+      },
+      keepalive: true,
+      method: "POST",
+      signal: controller.signal,
+    });
+
+    const responseForError = response.clone();
+    const rawText = await response.text();
+    let parsed: unknown = null;
+
+    if (rawText) {
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        parsed = null;
+      }
+    }
+
+    if (!response.ok) {
+      const parsedRecord = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+      const message = String(
+        parsedRecord?.error ??
+          parsedRecord?.message ??
+          `Edge Function request failed with status ${response.status}`,
+      );
+
+      return {
+        data: null,
+        error: {
+          context: responseForError,
+          message,
+        },
+      };
+    }
+
+    return {
+      data: parsed as T,
+      error: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error && error.name === "AbortError"
+      ? EDGE_FUNCTION_SEND_FAILURE
+      : EDGE_FUNCTION_SEND_FAILURE;
+
+    return {
+      data: null,
+      error: {
+        message,
+      },
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const fetchLibrarySubscription = async (libraryId: string) => {
