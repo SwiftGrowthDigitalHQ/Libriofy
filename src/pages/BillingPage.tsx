@@ -268,8 +268,9 @@ const BillingPage = () => {
   });
 
   const quoteErrorMessage = quoteError instanceof Error ? quoteError.message : null;
-  const checkoutUnavailableMessage = quote?.checkout.ready === false
-    ? quote.checkout.message ?? "Checkout is temporarily unavailable while billing setup is being completed."
+  const checkoutAvailability = quote?.checkout;
+  const checkoutUnavailableMessage = checkoutAvailability?.ready === false
+    ? checkoutAvailability.message ?? "Checkout is temporarily unavailable while billing setup is being completed."
     : null;
 
   const applyCouponMutation = useMutation({
