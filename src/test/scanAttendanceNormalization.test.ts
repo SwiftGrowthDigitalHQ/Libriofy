@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    functions: {
+      invoke: vi.fn(),
+    },
+  },
+}));
+
 import { createAttendanceQueueEntry, submitAttendanceScanDetailed } from "@/lib/attendanceSync";
 import { resolvePublicScanDenial } from "@/lib/scanDenial";
 

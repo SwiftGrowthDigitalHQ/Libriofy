@@ -3,6 +3,56 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/hooks/useAuth", () => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useAuth: () => ({
+    getCurrentSession: vi.fn().mockResolvedValue(null),
+    loading: false,
+    logoutAllDevices: vi.fn().mockResolvedValue(undefined),
+    requestPasswordReset: vi.fn().mockResolvedValue(undefined),
+    sendOtp: vi.fn().mockResolvedValue({}),
+    session: null,
+    signIn: vi.fn().mockResolvedValue(undefined),
+    signOut: vi.fn().mockResolvedValue(undefined),
+    signUp: vi.fn().mockResolvedValue(undefined),
+    startImpersonation: vi.fn().mockResolvedValue(null),
+    startSuperAdminLogin: vi.fn().mockResolvedValue({}),
+    stopImpersonation: vi.fn().mockResolvedValue(null),
+    updatePassword: vi.fn().mockResolvedValue(undefined),
+    user: null,
+    verifyOtp: vi.fn().mockResolvedValue({}),
+    verifySuperAdminOtp: vi.fn().mockResolvedValue({}),
+  }),
+}));
+
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    from: vi.fn(() => ({
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    })),
+    functions: {
+      invoke: vi.fn(),
+    },
+    realtime: {
+      setAuth: vi.fn(),
+    },
+  },
+  supabaseAuth: {
+    auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+      onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
+      signOut: vi.fn().mockResolvedValue({ error: null }),
+      signInWithPassword: vi.fn(),
+      resetPasswordForEmail: vi.fn(),
+      signUp: vi.fn(),
+      updateUser: vi.fn(),
+    },
+  },
+}));
+
 import App from "@/App";
 import ScanKioskPageV2 from "@/pages/ScanKioskPageV2";
 
@@ -206,7 +256,8 @@ describe("ScanKioskPageV2 mount", () => {
     installBrowserMocks();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     window.localStorage.clear();
