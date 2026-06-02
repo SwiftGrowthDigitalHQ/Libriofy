@@ -1,4 +1,4 @@
-export type Json =
+﻿export type Json =
   | string
   | number
   | boolean
@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.4"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -182,6 +182,127 @@ export type Database = {
         }
         Relationships: []
       }
+      app_event_logs: {
+        Row: {
+          classification: string | null
+          created_at: string
+          entity_id: string | null
+          event_type: string
+          fingerprint: string | null
+          group_key: string | null
+          id: string
+          message: string | null
+          metadata: Json
+          metric_key: string | null
+          occurred_at: string
+          occurrence_count: number
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          severity: string
+          status: string
+          user_identifier: string | null
+        }
+        Insert: {
+          classification?: string | null
+          created_at?: string
+          entity_id?: string | null
+          event_type: string
+          fingerprint?: string | null
+          group_key?: string | null
+          id?: string
+          message?: string | null
+          metadata?: Json
+          metric_key?: string | null
+          occurred_at?: string
+          occurrence_count?: number
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string
+          status: string
+          user_identifier?: string | null
+        }
+        Update: {
+          classification?: string | null
+          created_at?: string
+          entity_id?: string | null
+          event_type?: string
+          fingerprint?: string | null
+          group_key?: string | null
+          id?: string
+          message?: string | null
+          metadata?: Json
+          metric_key?: string | null
+          occurred_at?: string
+          occurrence_count?: number
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string
+          status?: string
+          user_identifier?: string | null
+        }
+        Relationships: []
+      }
+      attendance_logs: {
+        Row: {
+          check_in: string
+          check_out: string | null
+          created_at: string
+          date: string
+          device_id: string | null
+          entry_id: string | null
+          id: string
+          library_id: string
+          student_id: string
+        }
+        Insert: {
+          check_in?: string
+          check_out?: string | null
+          created_at?: string
+          date?: string
+          device_id?: string | null
+          entry_id?: string | null
+          id?: string
+          library_id: string
+          student_id: string
+        }
+        Update: {
+          check_in?: string
+          check_out?: string | null
+          created_at?: string
+          date?: string
+          device_id?: string | null
+          entry_id?: string | null
+          id?: string
+          library_id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendance_logs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "attendance_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       auth_trusted_devices: {
         Row: {
           auth_level: number
@@ -197,8 +318,8 @@ export type Database = {
           login_method: string
           phone_number: string | null
           refresh_token_hash: string
-          revoked_at: string | null
           revocation_reason: string | null
+          revoked_at: string | null
           session_scope: string
           user_agent: string | null
           user_id: string
@@ -217,8 +338,8 @@ export type Database = {
           login_method: string
           phone_number?: string | null
           refresh_token_hash: string
-          revoked_at?: string | null
           revocation_reason?: string | null
+          revoked_at?: string | null
           session_scope?: string
           user_agent?: string | null
           user_id: string
@@ -237,64 +358,13 @@ export type Database = {
           login_method?: string
           phone_number?: string | null
           refresh_token_hash?: string
-          revoked_at?: string | null
           revocation_reason?: string | null
+          revoked_at?: string | null
           session_scope?: string
           user_agent?: string | null
           user_id?: string
         }
         Relationships: []
-      }
-      attendance_logs: {
-        Row: {
-          check_in: string
-          check_out: string | null
-          created_at: string
-          date: string
-          id: string
-          entry_id: string | null
-          device_id: string | null
-          library_id: string
-          student_id: string
-        }
-        Insert: {
-          check_in?: string
-          check_out?: string | null
-          created_at?: string
-          date?: string
-          id?: string
-          entry_id?: string | null
-          device_id?: string | null
-          library_id: string
-          student_id: string
-        }
-        Update: {
-          check_in?: string
-          check_out?: string | null
-          created_at?: string
-          date?: string
-          id?: string
-          entry_id?: string | null
-          device_id?: string | null
-          library_id?: string
-          student_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "attendance_logs_library_id_fkey"
-            columns: ["library_id"]
-            isOneToOne: false
-            referencedRelation: "libraries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "attendance_logs_student_id_fkey"
-            columns: ["student_id"]
-            isOneToOne: false
-            referencedRelation: "students"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       automated_calls: {
         Row: {
@@ -408,10 +478,178 @@ export type Database = {
             foreignKeyName: "automated_calls_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "automated_calls_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
             referencedRelation: "students"
             referencedColumns: ["id"]
           },
         ]
+      }
+      billing_refunds: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string | null
+          currency: string
+          failed_at: string | null
+          id: string
+          idempotency_key: string | null
+          initiated_by: string | null
+          invoice_id: string | null
+          last_sync_error: string | null
+          last_synced_at: string | null
+          library_id: string
+          metadata: Json
+          payment_id: string | null
+          processed_at: string | null
+          processed_by: string | null
+          provider: string
+          provider_order_id: string | null
+          provider_payment_id: string | null
+          provider_receipt: string | null
+          provider_refund_id: string | null
+          provider_status: string | null
+          reason: string
+          refund_kind: string
+          status: string
+          subscription_payment_id: string | null
+          sync_attempts: number
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          failed_at?: string | null
+          id?: string
+          idempotency_key?: string | null
+          initiated_by?: string | null
+          invoice_id?: string | null
+          last_sync_error?: string | null
+          last_synced_at?: string | null
+          library_id: string
+          metadata?: Json
+          payment_id?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          provider?: string
+          provider_order_id?: string | null
+          provider_payment_id?: string | null
+          provider_receipt?: string | null
+          provider_refund_id?: string | null
+          provider_status?: string | null
+          reason: string
+          refund_kind?: string
+          status?: string
+          subscription_payment_id?: string | null
+          sync_attempts?: number
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          failed_at?: string | null
+          id?: string
+          idempotency_key?: string | null
+          initiated_by?: string | null
+          invoice_id?: string | null
+          last_sync_error?: string | null
+          last_synced_at?: string | null
+          library_id?: string
+          metadata?: Json
+          payment_id?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          provider?: string
+          provider_order_id?: string | null
+          provider_payment_id?: string | null
+          provider_receipt?: string | null
+          provider_refund_id?: string | null
+          provider_status?: string | null
+          reason?: string
+          refund_kind?: string
+          status?: string
+          subscription_payment_id?: string | null
+          sync_attempts?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_refunds_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "platform_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_refunds_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_refunds_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_refunds_subscription_payment_id_fkey"
+            columns: ["subscription_payment_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      communication_templates: {
+        Row: {
+          body: string
+          channel: string
+          created_at: string
+          id: string
+          is_active: boolean
+          key: string
+          name: string
+          subject: string | null
+          updated_at: string
+          updated_by: string | null
+          variables: Json
+        }
+        Insert: {
+          body: string
+          channel: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          key: string
+          name: string
+          subject?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          variables?: Json
+        }
+        Update: {
+          body?: string
+          channel?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          key?: string
+          name?: string
+          subject?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          variables?: Json
+        }
+        Relationships: []
       }
       contacts: {
         Row: {
@@ -547,6 +785,108 @@ export type Database = {
         }
         Relationships: []
       }
+      device_commands: {
+        Row: {
+          acknowledged_at: string | null
+          command_type: string
+          completed_at: string | null
+          device_id: string
+          error_message: string | null
+          failed_at: string | null
+          id: string
+          library_id: string
+          metadata: Json
+          payload: Json
+          requested_at: string
+          requested_by: string | null
+          requested_by_role: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          command_type: string
+          completed_at?: string | null
+          device_id: string
+          error_message?: string | null
+          failed_at?: string | null
+          id?: string
+          library_id: string
+          metadata?: Json
+          payload?: Json
+          requested_at?: string
+          requested_by?: string | null
+          requested_by_role?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          command_type?: string
+          completed_at?: string | null
+          device_id?: string
+          error_message?: string | null
+          failed_at?: string | null
+          id?: string
+          library_id?: string
+          metadata?: Json
+          payload?: Json
+          requested_at?: string
+          requested_by?: string | null
+          requested_by_role?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_commands_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "entry_devices"
+            referencedColumns: ["device_id"]
+          },
+          {
+            foreignKeyName: "device_commands_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_setup_attempts: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          device_id: string
+          first_failed_at: string | null
+          last_access_key_suffix: string | null
+          last_failed_at: string | null
+          locked_until: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          created_at?: string
+          device_id: string
+          first_failed_at?: string | null
+          last_access_key_suffix?: string | null
+          last_failed_at?: string | null
+          locked_until?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          device_id?: string
+          first_failed_at?: string | null
+          last_access_key_suffix?: string | null
+          last_failed_at?: string | null
+          locked_until?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       domain_requests: {
         Row: {
           created_at: string
@@ -591,11 +931,58 @@ export type Database = {
           },
         ]
       }
+      entry_devices: {
+        Row: {
+          created_at: string
+          device_id: string
+          device_name: string | null
+          id: string
+          is_active: boolean
+          last_seen_at: string | null
+          library_id: string
+          metadata: Json
+          secret_token_hash: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          device_id: string
+          device_name?: string | null
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string | null
+          library_id: string
+          metadata?: Json
+          secret_token_hash?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          device_id?: string
+          device_name?: string | null
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string | null
+          library_id?: string
+          metadata?: Json
+          secret_token_hash?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entry_devices_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       expenses: {
         Row: {
           amount: number
           category: string
-          created_at: string | null
+          created_at: string
           date: string
           id: string
           library_id: string
@@ -604,8 +991,8 @@ export type Database = {
         Insert: {
           amount: number
           category: string
-          created_at?: string | null
-          date: string
+          created_at?: string
+          date?: string
           id?: string
           library_id: string
           notes?: string | null
@@ -613,7 +1000,7 @@ export type Database = {
         Update: {
           amount?: number
           category?: string
-          created_at?: string | null
+          created_at?: string
           date?: string
           id?: string
           library_id?: string
@@ -628,6 +1015,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      feature_flags: {
+        Row: {
+          cache_ttl_seconds: number
+          config: Json
+          created_at: string
+          description: string | null
+          id: string
+          is_enabled: boolean
+          key: string
+          name: string
+          rollout_percentage: number
+          updated_at: string
+          updated_by: string | null
+          variants: Json
+        }
+        Insert: {
+          cache_ttl_seconds?: number
+          config?: Json
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_enabled?: boolean
+          key: string
+          name: string
+          rollout_percentage?: number
+          updated_at?: string
+          updated_by?: string | null
+          variants?: Json
+        }
+        Update: {
+          cache_ttl_seconds?: number
+          config?: Json
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_enabled?: boolean
+          key?: string
+          name?: string
+          rollout_percentage?: number
+          updated_at?: string
+          updated_by?: string | null
+          variants?: Json
+        }
+        Relationships: []
       }
       id_card_delivery_jobs: {
         Row: {
@@ -711,6 +1143,13 @@ export type Database = {
             foreignKeyName: "id_card_delivery_jobs_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: true
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "id_card_delivery_jobs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: true
             referencedRelation: "students"
             referencedColumns: ["id"]
           },
@@ -787,6 +1226,13 @@ export type Database = {
             foreignKeyName: "id_card_delivery_logs_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "id_card_delivery_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
             referencedRelation: "students"
             referencedColumns: ["id"]
           },
@@ -801,11 +1247,11 @@ export type Database = {
           demo_scheduled_at: string | null
           expected_value: number | null
           id: string
+          last_contacted_at: string | null
           library_id: string | null
           library_name: string
-          last_contacted_at: string | null
-          notes: string | null
           next_followup_at: string | null
+          notes: string | null
           owner_name: string
           partner_id: string
           phone: string
@@ -823,11 +1269,11 @@ export type Database = {
           demo_scheduled_at?: string | null
           expected_value?: number | null
           id?: string
+          last_contacted_at?: string | null
           library_id?: string | null
           library_name: string
-          last_contacted_at?: string | null
-          notes?: string | null
           next_followup_at?: string | null
+          notes?: string | null
           owner_name: string
           partner_id: string
           phone: string
@@ -845,11 +1291,11 @@ export type Database = {
           demo_scheduled_at?: string | null
           expected_value?: number | null
           id?: string
+          last_contacted_at?: string | null
           library_id?: string | null
           library_name?: string
-          last_contacted_at?: string | null
-          notes?: string | null
           next_followup_at?: string | null
+          notes?: string | null
           owner_name?: string
           partner_id?: string
           phone?: string
@@ -1061,318 +1507,6 @@ export type Database = {
         }
         Relationships: []
       }
-      device_setup_attempts: {
-        Row: {
-          attempt_count: number
-          created_at: string
-          device_id: string
-          first_failed_at: string | null
-          last_access_key_suffix: string | null
-          last_failed_at: string | null
-          locked_until: string | null
-          updated_at: string
-        }
-        Insert: {
-          attempt_count?: number
-          created_at?: string
-          device_id: string
-          first_failed_at?: string | null
-          last_access_key_suffix?: string | null
-          last_failed_at?: string | null
-          locked_until?: string | null
-          updated_at?: string
-        }
-        Update: {
-          attempt_count?: number
-          created_at?: string
-          device_id?: string
-          first_failed_at?: string | null
-          last_access_key_suffix?: string | null
-          last_failed_at?: string | null
-          locked_until?: string | null
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      entry_devices: {
-        Row: {
-          created_at: string
-          device_id: string
-          device_name: string | null
-          id: string
-          is_active: boolean
-          last_seen_at: string | null
-          library_id: string
-          metadata: Json
-          secret_token_hash: string | null
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          device_id: string
-          device_name?: string | null
-          id?: string
-          is_active?: boolean
-          last_seen_at?: string | null
-          library_id: string
-          metadata?: Json
-          secret_token_hash?: string | null
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          device_id?: string
-          device_name?: string | null
-          id?: string
-          is_active?: boolean
-          last_seen_at?: string | null
-          library_id?: string
-          metadata?: Json
-          secret_token_hash?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "entry_devices_library_id_fkey"
-            columns: ["library_id"]
-            isOneToOne: false
-            referencedRelation: "libraries"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      partner_lead_activity: {
-        Row: {
-          action_type: string
-          created_at: string
-          id: string
-          lead_id: string
-          metadata: Json
-          partner_id: string
-        }
-        Insert: {
-          action_type: string
-          created_at?: string
-          id?: string
-          lead_id: string
-          metadata?: Json
-          partner_id: string
-        }
-        Update: {
-          action_type?: string
-          created_at?: string
-          id?: string
-          lead_id?: string
-          metadata?: Json
-          partner_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "partner_lead_activity_lead_id_fkey"
-            columns: ["lead_id"]
-            isOneToOne: false
-            referencedRelation: "leads"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "partner_lead_activity_partner_id_fkey"
-            columns: ["partner_id"]
-            isOneToOne: false
-            referencedRelation: "affiliates"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      partner_lead_notes: {
-        Row: {
-          created_at: string
-          id: string
-          lead_id: string
-          note: string
-          partner_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          lead_id: string
-          note: string
-          partner_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          lead_id?: string
-          note?: string
-          partner_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "partner_lead_notes_lead_id_fkey"
-            columns: ["lead_id"]
-            isOneToOne: false
-            referencedRelation: "leads"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "partner_lead_notes_partner_id_fkey"
-            columns: ["partner_id"]
-            isOneToOne: false
-            referencedRelation: "affiliates"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      partner_notifications: {
-        Row: {
-          created_at: string
-          id: string
-          message: string | null
-          metadata: Json
-          partner_id: string
-          read: boolean
-          scheduled_at: string | null
-          title: string
-          type: string
-          user_id: string | null
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          message?: string | null
-          metadata?: Json
-          partner_id: string
-          read?: boolean
-          scheduled_at?: string | null
-          title: string
-          type: string
-          user_id?: string | null
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          message?: string | null
-          metadata?: Json
-          partner_id?: string
-          read?: boolean
-          scheduled_at?: string | null
-          title?: string
-          type?: string
-          user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "partner_notifications_partner_id_fkey"
-            columns: ["partner_id"]
-            isOneToOne: false
-            referencedRelation: "affiliates"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      partner_referral_clicks: {
-        Row: {
-          created_at: string
-          id: string
-          ip_address: string | null
-          partner_id: string | null
-          referral_code: string
-          user_agent: string | null
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          ip_address?: string | null
-          partner_id?: string | null
-          referral_code: string
-          user_agent?: string | null
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          ip_address?: string | null
-          partner_id?: string | null
-          referral_code?: string
-          user_agent?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "partner_referral_clicks_partner_id_fkey"
-            columns: ["partner_id"]
-            isOneToOne: false
-            referencedRelation: "affiliates"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      device_commands: {
-        Row: {
-          acknowledged_at: string | null
-          completed_at: string | null
-          command_type: string
-          device_id: string
-          error_message: string | null
-          failed_at: string | null
-          id: string
-          library_id: string
-          metadata: Json
-          payload: Json
-          requested_at: string
-          requested_by: string | null
-          requested_by_role: string | null
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          acknowledged_at?: string | null
-          completed_at?: string | null
-          command_type: string
-          device_id: string
-          error_message?: string | null
-          failed_at?: string | null
-          id?: string
-          library_id: string
-          metadata?: Json
-          payload?: Json
-          requested_at?: string
-          requested_by?: string | null
-          requested_by_role?: string | null
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          acknowledged_at?: string | null
-          completed_at?: string | null
-          command_type?: string
-          device_id?: string
-          error_message?: string | null
-          failed_at?: string | null
-          id?: string
-          library_id?: string
-          metadata?: Json
-          payload?: Json
-          requested_at?: string
-          requested_by?: string | null
-          requested_by_role?: string | null
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "device_commands_device_id_fkey"
-            columns: ["device_id"]
-            isOneToOne: false
-            referencedRelation: "entry_devices"
-            referencedColumns: ["device_id"]
-          },
-          {
-            foreignKeyName: "device_commands_library_id_fkey"
-            columns: ["library_id"]
-            isOneToOne: false
-            referencedRelation: "libraries"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       library_access_keys: {
         Row: {
           access_key: string
@@ -1461,6 +1595,88 @@ export type Database = {
           },
         ]
       }
+      library_commission_overrides: {
+        Row: {
+          commission_percent: number
+          created_at: string
+          id: string
+          library_id: string
+          notes: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          commission_percent: number
+          created_at?: string
+          id?: string
+          library_id: string
+          notes?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          commission_percent?: number
+          created_at?: string
+          id?: string
+          library_id?: string
+          notes?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_commission_overrides_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: true
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      library_control_overrides: {
+        Row: {
+          created_at: string
+          id: string
+          library_id: string
+          metadata: Json
+          reason: string | null
+          status: string
+          until_at: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          library_id: string
+          metadata?: Json
+          reason?: string | null
+          status?: string
+          until_at?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          library_id?: string
+          metadata?: Json
+          reason?: string | null
+          status?: string
+          until_at?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_control_overrides_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: true
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       library_gallery_images: {
         Row: {
           caption: string | null
@@ -1492,6 +1708,59 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "library_gallery_images_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      library_payout_queue: {
+        Row: {
+          amount: number
+          approved_at: string | null
+          currency: string
+          id: string
+          library_id: string
+          metadata: Json
+          note: string | null
+          processed_at: string | null
+          processed_by: string | null
+          requested_at: string
+          requested_by: string | null
+          status: string
+        }
+        Insert: {
+          amount: number
+          approved_at?: string | null
+          currency?: string
+          id?: string
+          library_id: string
+          metadata?: Json
+          note?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          requested_at?: string
+          requested_by?: string | null
+          status?: string
+        }
+        Update: {
+          amount?: number
+          approved_at?: string | null
+          currency?: string
+          id?: string
+          library_id?: string
+          metadata?: Json
+          note?: string | null
+          processed_at?: string | null
+          processed_by?: string | null
+          requested_at?: string
+          requested_by?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "library_payout_queue_library_id_fkey"
             columns: ["library_id"]
             isOneToOne: false
             referencedRelation: "libraries"
@@ -1555,9 +1824,9 @@ export type Database = {
           payment_status: string
           plan_expiry_date: string | null
           plan_name: string
-          plan_type: string
           plan_price: number | null
           plan_start_date: string | null
+          plan_type: string
           price: number
           seats_limit: number
           started_at: string
@@ -1578,9 +1847,9 @@ export type Database = {
           payment_status?: string
           plan_expiry_date?: string | null
           plan_name?: string
-          plan_type?: string
           plan_price?: number | null
           plan_start_date?: string | null
+          plan_type?: string
           price?: number
           seats_limit?: number
           started_at?: string
@@ -1601,9 +1870,9 @@ export type Database = {
           payment_status?: string
           plan_expiry_date?: string | null
           plan_name?: string
-          plan_type?: string
           plan_price?: number | null
           plan_start_date?: string | null
+          plan_type?: string
           price?: number
           seats_limit?: number
           started_at?: string
@@ -1625,54 +1894,73 @@ export type Database = {
       }
       lockers: {
         Row: {
-          col: number | null
           col_position: number | null
-          column: number | null
-          created_at: string | null
+          column: number
+          created_at: string
           id: string
-          library_id: string | null
-          locker_number: string | null
-          monthly_price: number | null
+          library_id: string
+          locker_number: string
+          monthly_price: number
           payment_due_date: string | null
-          row: number | null
+          row: number
           row_position: number | null
-          status: string | null
+          status: string
           student_id: string | null
           updated_at: string
         }
         Insert: {
-          col?: number | null
           col_position?: number | null
-          column?: number | null
-          created_at?: string | null
+          column: number
+          created_at?: string
           id?: string
-          library_id?: string | null
-          locker_number?: string | null
-          monthly_price?: number | null
+          library_id: string
+          locker_number: string
+          monthly_price?: number
           payment_due_date?: string | null
-          row?: number | null
+          row: number
           row_position?: number | null
-          status?: string | null
+          status?: string
           student_id?: string | null
           updated_at?: string
         }
         Update: {
-          col?: number | null
           col_position?: number | null
-          column?: number | null
-          created_at?: string | null
+          column?: number
+          created_at?: string
           id?: string
-          library_id?: string | null
-          locker_number?: string | null
-          monthly_price?: number | null
+          library_id?: string
+          locker_number?: string
+          monthly_price?: number
           payment_due_date?: string | null
-          row?: number | null
+          row?: number
           row_position?: number | null
-          status?: string | null
+          status?: string
           student_id?: string | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "lockers_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lockers_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "lockers_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       login_logs: {
         Row: {
@@ -1710,39 +1998,6 @@ export type Database = {
           reason?: string | null
           status?: string
           user_id?: string | null
-        }
-        Relationships: []
-      }
-      app_event_logs: {
-        Row: {
-          created_at: string
-          entity_id: string | null
-          event_type: string
-          id: string
-          message: string | null
-          metadata: Json
-          status: string
-          user_identifier: string | null
-        }
-        Insert: {
-          created_at?: string
-          entity_id?: string | null
-          event_type: string
-          id?: string
-          message?: string | null
-          metadata?: Json
-          status: string
-          user_identifier?: string | null
-        }
-        Update: {
-          created_at?: string
-          entity_id?: string | null
-          event_type?: string
-          id?: string
-          message?: string | null
-          metadata?: Json
-          status?: string
-          user_identifier?: string | null
         }
         Relationships: []
       }
@@ -1822,8 +2077,234 @@ export type Database = {
             foreignKeyName: "notifications_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "notifications_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
             referencedRelation: "students"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_lead_activity: {
+        Row: {
+          action_type: string
+          created_at: string
+          id: string
+          lead_id: string
+          metadata: Json
+          partner_id: string
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          id?: string
+          lead_id: string
+          metadata?: Json
+          partner_id: string
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          id?: string
+          lead_id?: string
+          metadata?: Json
+          partner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_lead_activity_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_lead_activity_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "partner_lead_activity_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_lead_activity_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+        ]
+      }
+      partner_lead_notes: {
+        Row: {
+          created_at: string
+          id: string
+          lead_id: string
+          note: string
+          partner_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          lead_id: string
+          note: string
+          partner_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          lead_id?: string
+          note?: string
+          partner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_lead_notes_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_lead_notes_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "partner_lead_notes_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_lead_notes_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+        ]
+      }
+      partner_notifications: {
+        Row: {
+          created_at: string
+          id: string
+          message: string | null
+          metadata: Json
+          partner_id: string
+          read: boolean
+          scheduled_at: string | null
+          title: string
+          type: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          message?: string | null
+          metadata?: Json
+          partner_id: string
+          read?: boolean
+          scheduled_at?: string | null
+          title: string
+          type: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          message?: string | null
+          metadata?: Json
+          partner_id?: string
+          read?: boolean
+          scheduled_at?: string | null
+          title?: string
+          type?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_notifications_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "partner_notifications_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_notifications_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
+          },
+        ]
+      }
+      partner_referral_clicks: {
+        Row: {
+          created_at: string
+          id: string
+          ip_address: string | null
+          partner_id: string | null
+          referral_code: string
+          user_agent: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          partner_id?: string | null
+          referral_code: string
+          user_agent?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          partner_id?: string | null
+          referral_code?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_referral_clicks_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "admin_affiliate_dashboard"
+            referencedColumns: ["affiliate_id"]
+          },
+          {
+            foreignKeyName: "partner_referral_clicks_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "affiliates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_referral_clicks_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "partners"
+            referencedColumns: ["partner_uuid"]
           },
         ]
       }
@@ -1891,34 +2372,17 @@ export type Database = {
             foreignKeyName: "payments_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "payments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
             referencedRelation: "students"
             referencedColumns: ["id"]
           },
         ]
-      }
-      platform_settings: {
-        Row: {
-          created_at: string
-          key: string
-          updated_at: string
-          updated_by: string | null
-          value: Json
-        }
-        Insert: {
-          created_at?: string
-          key: string
-          updated_at?: string
-          updated_by?: string | null
-          value?: Json
-        }
-        Update: {
-          created_at?: string
-          key?: string
-          updated_at?: string
-          updated_by?: string | null
-          value?: Json
-        }
-        Relationships: []
       }
       payouts: {
         Row: {
@@ -2039,6 +2503,13 @@ export type Database = {
             foreignKeyName: "photo_upload_logs_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "photo_upload_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
             referencedRelation: "students"
             referencedColumns: ["id"]
           },
@@ -2087,6 +2558,418 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      platform_account_controls: {
+        Row: {
+          clear_sessions_after: string | null
+          created_at: string
+          id: string
+          library_id: string | null
+          metadata: Json
+          password_reset_required: boolean
+          reason: string | null
+          status: string
+          until_at: string | null
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+        }
+        Insert: {
+          clear_sessions_after?: string | null
+          created_at?: string
+          id?: string
+          library_id?: string | null
+          metadata?: Json
+          password_reset_required?: boolean
+          reason?: string | null
+          status?: string
+          until_at?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+        }
+        Update: {
+          clear_sessions_after?: string | null
+          created_at?: string
+          id?: string
+          library_id?: string | null
+          metadata?: Json
+          password_reset_required?: boolean
+          reason?: string | null
+          status?: string
+          until_at?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "platform_account_controls_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platform_activity_logs: {
+        Row: {
+          activity_type: string
+          actor_user_id: string | null
+          created_at: string
+          id: string
+          library_id: string | null
+          message: string
+          metadata: Json
+          user_id: string | null
+        }
+        Insert: {
+          activity_type: string
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          library_id?: string | null
+          message: string
+          metadata?: Json
+          user_id?: string | null
+        }
+        Update: {
+          activity_type?: string
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          library_id?: string | null
+          message?: string
+          metadata?: Json
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "platform_activity_logs_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platform_broadcasts: {
+        Row: {
+          audience: string
+          channel: string
+          created_at: string
+          created_by: string | null
+          id: string
+          message: string
+          metadata: Json
+          sent_at: string | null
+          status: string
+          template_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          audience?: string
+          channel: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          message: string
+          metadata?: Json
+          sent_at?: string | null
+          status?: string
+          template_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          audience?: string
+          channel?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          message?: string
+          metadata?: Json
+          sent_at?: string | null
+          status?: string
+          template_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "platform_broadcasts_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "communication_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platform_invoices: {
+        Row: {
+          currency: string
+          generated_by: string | null
+          id: string
+          invoice_number: string
+          invoice_type: string
+          issued_at: string
+          library_id: string
+          metadata: Json
+          pdf_path: string | null
+          period_end: string | null
+          period_start: string | null
+          status: string
+          subtotal: number
+          tax_amount: number
+          total_amount: number
+        }
+        Insert: {
+          currency?: string
+          generated_by?: string | null
+          id?: string
+          invoice_number: string
+          invoice_type?: string
+          issued_at?: string
+          library_id: string
+          metadata?: Json
+          pdf_path?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          status?: string
+          subtotal?: number
+          tax_amount?: number
+          total_amount?: number
+        }
+        Update: {
+          currency?: string
+          generated_by?: string | null
+          id?: string
+          invoice_number?: string
+          invoice_type?: string
+          issued_at?: string
+          library_id?: string
+          metadata?: Json
+          pdf_path?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          status?: string
+          subtotal?: number
+          tax_amount?: number
+          total_amount?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "platform_invoices_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platform_job_dead_letters: {
+        Row: {
+          attempts: number
+          created_at: string
+          dead_lettered_at: string
+          error_message: string | null
+          id: string
+          job_id: string
+          job_payload: Json
+          job_type: string
+          max_attempts: number
+          source_correlation_id: string | null
+          source_request_id: string | null
+          source_trace_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          dead_lettered_at?: string
+          error_message?: string | null
+          id?: string
+          job_id: string
+          job_payload?: Json
+          job_type: string
+          max_attempts?: number
+          source_correlation_id?: string | null
+          source_request_id?: string | null
+          source_trace_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          dead_lettered_at?: string
+          error_message?: string | null
+          id?: string
+          job_id?: string
+          job_payload?: Json
+          job_type?: string
+          max_attempts?: number
+          source_correlation_id?: string | null
+          source_request_id?: string | null
+          source_trace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "platform_job_dead_letters_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "platform_job_queue"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platform_job_queue: {
+        Row: {
+          attempts: number
+          cancel_requested_at: string | null
+          cancel_requested_by: string | null
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          claim_token: string | null
+          claimed_by: string | null
+          concurrency_key: string | null
+          created_at: string
+          created_by: string | null
+          dead_lettered_at: string | null
+          deduplication_key: string | null
+          finished_at: string | null
+          id: string
+          job_type: string
+          last_error: string | null
+          last_heartbeat_at: string | null
+          max_attempts: number
+          max_concurrency: number
+          payload: Json
+          recovered_at: string | null
+          scheduled_for: string
+          source_correlation_id: string | null
+          source_request_id: string | null
+          source_trace_id: string | null
+          started_at: string | null
+          status: string
+          updated_at: string
+          visibility_timeout_at: string | null
+        }
+        Insert: {
+          attempts?: number
+          cancel_requested_at?: string | null
+          cancel_requested_by?: string | null
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          claim_token?: string | null
+          claimed_by?: string | null
+          concurrency_key?: string | null
+          created_at?: string
+          created_by?: string | null
+          dead_lettered_at?: string | null
+          deduplication_key?: string | null
+          finished_at?: string | null
+          id?: string
+          job_type: string
+          last_error?: string | null
+          last_heartbeat_at?: string | null
+          max_attempts?: number
+          max_concurrency?: number
+          payload?: Json
+          recovered_at?: string | null
+          scheduled_for?: string
+          source_correlation_id?: string | null
+          source_request_id?: string | null
+          source_trace_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          visibility_timeout_at?: string | null
+        }
+        Update: {
+          attempts?: number
+          cancel_requested_at?: string | null
+          cancel_requested_by?: string | null
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          claim_token?: string | null
+          claimed_by?: string | null
+          concurrency_key?: string | null
+          created_at?: string
+          created_by?: string | null
+          dead_lettered_at?: string | null
+          deduplication_key?: string | null
+          finished_at?: string | null
+          id?: string
+          job_type?: string
+          last_error?: string | null
+          last_heartbeat_at?: string | null
+          max_attempts?: number
+          max_concurrency?: number
+          payload?: Json
+          recovered_at?: string | null
+          scheduled_for?: string
+          source_correlation_id?: string | null
+          source_request_id?: string | null
+          source_trace_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          visibility_timeout_at?: string | null
+        }
+        Relationships: []
+      }
+      platform_metric_snapshots: {
+        Row: {
+          captured_at: string
+          created_at: string
+          id: string
+          metric_breakdown: Json
+          metric_key: string
+          metric_value: number
+          metric_window: string
+        }
+        Insert: {
+          captured_at?: string
+          created_at?: string
+          id?: string
+          metric_breakdown?: Json
+          metric_key: string
+          metric_value: number
+          metric_window: string
+        }
+        Update: {
+          captured_at?: string
+          created_at?: string
+          id?: string
+          metric_breakdown?: Json
+          metric_key?: string
+          metric_value?: number
+          metric_window?: string
+        }
+        Relationships: []
+      }
+      platform_settings: {
+        Row: {
+          created_at: string
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          created_at?: string
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
+        }
+        Update: {
+          created_at?: string
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
+        }
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -2174,52 +3057,52 @@ export type Database = {
       }
       reminder_logs: {
         Row: {
-          created_at: string | null
+          created_at: string
           delivery_channel: string | null
           error_message: string | null
           id: string
-          library_id: string | null
-          message: string | null
+          library_id: string
+          message: string
           notification_id: string | null
           phone: string | null
-          reminder_date: string | null
-          reminder_type: string | null
+          reminder_date: string
+          reminder_type: string
           sent_at: string | null
-          status: string | null
+          status: string
           student_id: string | null
-          updated_at: string | null
+          updated_at: string
         }
         Insert: {
-          created_at?: string | null
+          created_at?: string
           delivery_channel?: string | null
           error_message?: string | null
           id?: string
-          library_id?: string | null
-          message?: string | null
+          library_id: string
+          message: string
           notification_id?: string | null
           phone?: string | null
-          reminder_date?: string | null
-          reminder_type?: string | null
+          reminder_date?: string
+          reminder_type: string
           sent_at?: string | null
-          status?: string | null
+          status?: string
           student_id?: string | null
-          updated_at?: string | null
+          updated_at?: string
         }
         Update: {
-          created_at?: string | null
+          created_at?: string
           delivery_channel?: string | null
           error_message?: string | null
           id?: string
-          library_id?: string | null
-          message?: string | null
+          library_id?: string
+          message?: string
           notification_id?: string | null
           phone?: string | null
-          reminder_date?: string | null
-          reminder_type?: string | null
+          reminder_date?: string
+          reminder_type?: string
           sent_at?: string | null
-          status?: string | null
+          status?: string
           student_id?: string | null
-          updated_at?: string | null
+          updated_at?: string
         }
         Relationships: [
           {
@@ -2240,7 +3123,72 @@ export type Database = {
             foreignKeyName: "reminder_logs_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "reminder_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
             referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revenue_adjustments: {
+        Row: {
+          amount_delta: number
+          created_at: string
+          created_by: string | null
+          id: string
+          library_id: string
+          metadata: Json
+          payment_id: string | null
+          reason: string
+          subscription_payment_id: string | null
+        }
+        Insert: {
+          amount_delta: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          library_id: string
+          metadata?: Json
+          payment_id?: string | null
+          reason: string
+          subscription_payment_id?: string | null
+        }
+        Update: {
+          amount_delta?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          library_id?: string
+          metadata?: Json
+          payment_id?: string | null
+          reason?: string
+          subscription_payment_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revenue_adjustments_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revenue_adjustments_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revenue_adjustments_subscription_payment_id_fkey"
+            columns: ["subscription_payment_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_payments"
             referencedColumns: ["id"]
           },
         ]
@@ -2285,7 +3233,6 @@ export type Database = {
           created_at: string
           id: string
           library_id: string
-          seat_id: string | null
           slot_id: string
           student_id: string
           updated_at: string
@@ -2294,7 +3241,6 @@ export type Database = {
           created_at?: string
           id?: string
           library_id: string
-          seat_id?: string | null
           slot_id: string
           student_id: string
           updated_at?: string
@@ -2303,7 +3249,6 @@ export type Database = {
           created_at?: string
           id?: string
           library_id?: string
-          seat_id?: string | null
           slot_id?: string
           student_id?: string
           updated_at?: string
@@ -2317,18 +3262,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "student_slot_assignments_seat_id_fkey"
-            columns: ["seat_id"]
-            isOneToOne: false
-            referencedRelation: "seats"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "student_slot_assignments_slot_id_fkey"
             columns: ["slot_id"]
             isOneToOne: false
             referencedRelation: "time_slots"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_slot_assignments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
           },
           {
             foreignKeyName: "student_slot_assignments_student_id_fkey"
@@ -2341,7 +3286,9 @@ export type Database = {
       }
       students: {
         Row: {
+          aadhaar_number: string | null
           aadhaar_photo_path: string | null
+          address: string | null
           created_at: string
           email: string | null
           expiry_date: string | null
@@ -2349,13 +3296,14 @@ export type Database = {
           gender: Database["public"]["Enums"]["student_gender"] | null
           id: string
           last_check_in: string | null
-            library_id: string
-            no_show_days: number
-            phone: string | null
-            photo_version: number | null
-            photo_storage_path: string | null
-            photo_thumbnail_path: string | null
-            photo_url: string | null
+          library_id: string
+          no_show_days: number
+          notes: string | null
+          phone: string | null
+          photo_storage_path: string | null
+          photo_thumbnail_path: string | null
+          photo_url: string | null
+          photo_version: number | null
           plan: string | null
           plan_id: string | null
           qr_code: string
@@ -2369,7 +3317,9 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          aadhaar_number?: string | null
           aadhaar_photo_path?: string | null
+          address?: string | null
           created_at?: string
           email?: string | null
           expiry_date?: string | null
@@ -2377,13 +3327,14 @@ export type Database = {
           gender?: Database["public"]["Enums"]["student_gender"] | null
           id?: string
           last_check_in?: string | null
-            library_id: string
-            no_show_days?: number
-            phone?: string | null
-            photo_version?: number | null
-            photo_storage_path?: string | null
-            photo_thumbnail_path?: string | null
-            photo_url?: string | null
+          library_id: string
+          no_show_days?: number
+          notes?: string | null
+          phone?: string | null
+          photo_storage_path?: string | null
+          photo_thumbnail_path?: string | null
+          photo_url?: string | null
+          photo_version?: number | null
           plan?: string | null
           plan_id?: string | null
           qr_code?: string
@@ -2397,7 +3348,9 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          aadhaar_number?: string | null
           aadhaar_photo_path?: string | null
+          address?: string | null
           created_at?: string
           email?: string | null
           expiry_date?: string | null
@@ -2405,13 +3358,14 @@ export type Database = {
           gender?: Database["public"]["Enums"]["student_gender"] | null
           id?: string
           last_check_in?: string | null
-            library_id?: string
-            no_show_days?: number
-            phone?: string | null
-            photo_version?: number | null
-            photo_storage_path?: string | null
-            photo_thumbnail_path?: string | null
-            photo_url?: string | null
+          library_id?: string
+          no_show_days?: number
+          notes?: string | null
+          phone?: string | null
+          photo_storage_path?: string | null
+          photo_thumbnail_path?: string | null
+          photo_url?: string | null
+          photo_version?: number | null
           plan?: string | null
           plan_id?: string | null
           qr_code?: string
@@ -2458,9 +3412,16 @@ export type Database = {
       subscription_payments: {
         Row: {
           amount: number
+          capture_correlation_id: string | null
+          capture_processed_at: string | null
+          capture_request_id: string | null
+          capture_source: string | null
+          capture_trace_id: string | null
           created_at: string
           currency: string
           id: string
+          idempotency_key: string | null
+          last_processing_error: string | null
           library_id: string
           metadata: Json
           months_purchased: number
@@ -2474,9 +3435,16 @@ export type Database = {
         }
         Insert: {
           amount: number
+          capture_correlation_id?: string | null
+          capture_processed_at?: string | null
+          capture_request_id?: string | null
+          capture_source?: string | null
+          capture_trace_id?: string | null
           created_at?: string
           currency?: string
           id?: string
+          idempotency_key?: string | null
+          last_processing_error?: string | null
           library_id: string
           metadata?: Json
           months_purchased?: number
@@ -2490,9 +3458,16 @@ export type Database = {
         }
         Update: {
           amount?: number
+          capture_correlation_id?: string | null
+          capture_processed_at?: string | null
+          capture_request_id?: string | null
+          capture_source?: string | null
+          capture_trace_id?: string | null
           created_at?: string
           currency?: string
           id?: string
+          idempotency_key?: string | null
+          last_processing_error?: string | null
           library_id?: string
           metadata?: Json
           months_purchased?: number
@@ -2570,6 +3545,356 @@ export type Database = {
           seats_limit?: number | null
           sort_order?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      super_admin_action_tokens: {
+        Row: {
+          action_id: string
+          actor_email: string | null
+          actor_user_id: string | null
+          consumed_at: string | null
+          consumed_by: string | null
+          created_at: string
+          expires_at: string
+          fingerprint: string
+          id: string
+          metadata: Json
+          preview: Json
+          target_id: string | null
+          target_type: string
+          token_hash: string
+        }
+        Insert: {
+          action_id: string
+          actor_email?: string | null
+          actor_user_id?: string | null
+          consumed_at?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          expires_at: string
+          fingerprint: string
+          id?: string
+          metadata?: Json
+          preview?: Json
+          target_id?: string | null
+          target_type: string
+          token_hash: string
+        }
+        Update: {
+          action_id?: string
+          actor_email?: string | null
+          actor_user_id?: string | null
+          consumed_at?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          expires_at?: string
+          fingerprint?: string
+          id?: string
+          metadata?: Json
+          preview?: Json
+          target_id?: string | null
+          target_type?: string
+          token_hash?: string
+        }
+        Relationships: []
+      }
+      super_admin_approval_decisions: {
+        Row: {
+          actor_email: string | null
+          actor_user_id: string | null
+          created_at: string
+          decision: string
+          id: string
+          metadata: Json
+          note: string | null
+          request_id: string
+        }
+        Insert: {
+          actor_email?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          decision: string
+          id?: string
+          metadata?: Json
+          note?: string | null
+          request_id: string
+        }
+        Update: {
+          actor_email?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          decision?: string
+          id?: string
+          metadata?: Json
+          note?: string | null
+          request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "super_admin_approval_decisions_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: false
+            referencedRelation: "super_admin_approval_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      super_admin_approval_requests: {
+        Row: {
+          action_id: string
+          approved_at: string | null
+          cooldown_until: string | null
+          created_at: string
+          escalation_after: string | null
+          executed_at: string | null
+          expires_at: string
+          fingerprint: string
+          id: string
+          last_reviewed_at: string | null
+          last_reviewed_by: string | null
+          metadata: Json
+          optional_second_approver: boolean
+          policy: Json
+          preview: Json
+          reason: string | null
+          rejected_at: string | null
+          requester_email: string | null
+          requester_user_id: string | null
+          required_approvals: number
+          status: string
+          target_display: string | null
+          target_id: string | null
+          target_type: string
+          token_hash: string | null
+          updated_at: string
+        }
+        Insert: {
+          action_id: string
+          approved_at?: string | null
+          cooldown_until?: string | null
+          created_at?: string
+          escalation_after?: string | null
+          executed_at?: string | null
+          expires_at?: string
+          fingerprint: string
+          id?: string
+          last_reviewed_at?: string | null
+          last_reviewed_by?: string | null
+          metadata?: Json
+          optional_second_approver?: boolean
+          policy?: Json
+          preview?: Json
+          reason?: string | null
+          rejected_at?: string | null
+          requester_email?: string | null
+          requester_user_id?: string | null
+          required_approvals?: number
+          status?: string
+          target_display?: string | null
+          target_id?: string | null
+          target_type: string
+          token_hash?: string | null
+          updated_at?: string
+        }
+        Update: {
+          action_id?: string
+          approved_at?: string | null
+          cooldown_until?: string | null
+          created_at?: string
+          escalation_after?: string | null
+          executed_at?: string | null
+          expires_at?: string
+          fingerprint?: string
+          id?: string
+          last_reviewed_at?: string | null
+          last_reviewed_by?: string | null
+          metadata?: Json
+          optional_second_approver?: boolean
+          policy?: Json
+          preview?: Json
+          reason?: string | null
+          rejected_at?: string | null
+          requester_email?: string | null
+          requester_user_id?: string | null
+          required_approvals?: number
+          status?: string
+          target_display?: string | null
+          target_id?: string | null
+          target_type?: string
+          token_hash?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      super_admin_audit_logs: {
+        Row: {
+          action: string
+          actor_email: string | null
+          actor_user_id: string | null
+          created_at: string
+          id: string
+          ip_address: string | null
+          metadata: Json
+          request_id: string | null
+          target_display: string | null
+          target_id: string | null
+          target_type: string
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          actor_email?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          metadata?: Json
+          request_id?: string | null
+          target_display?: string | null
+          target_id?: string | null
+          target_type: string
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          actor_email?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          metadata?: Json
+          request_id?: string | null
+          target_display?: string | null
+          target_id?: string | null
+          target_type?: string
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
+      super_admin_impersonation_sessions: {
+        Row: {
+          ended_at: string | null
+          expires_at: string
+          id: string
+          last_used_at: string
+          metadata: Json
+          reason: string | null
+          revocation_reason: string | null
+          revoked_at: string | null
+          started_at: string
+          super_admin_user_id: string
+          target_library_id: string | null
+          target_user_id: string
+          trusted_session_id: string
+        }
+        Insert: {
+          ended_at?: string | null
+          expires_at: string
+          id?: string
+          last_used_at?: string
+          metadata?: Json
+          reason?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          started_at?: string
+          super_admin_user_id: string
+          target_library_id?: string | null
+          target_user_id: string
+          trusted_session_id: string
+        }
+        Update: {
+          ended_at?: string | null
+          expires_at?: string
+          id?: string
+          last_used_at?: string
+          metadata?: Json
+          reason?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          started_at?: string
+          super_admin_user_id?: string
+          target_library_id?: string | null
+          target_user_id?: string
+          trusted_session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "super_admin_impersonation_sessions_target_library_id_fkey"
+            columns: ["target_library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "super_admin_impersonation_sessions_trusted_session_id_fkey"
+            columns: ["trusted_session_id"]
+            isOneToOne: false
+            referencedRelation: "auth_trusted_devices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      super_admin_role_grants: {
+        Row: {
+          created_at: string
+          email: string | null
+          expires_at: string | null
+          grant_mode: string
+          granted_by: string | null
+          id: string
+          metadata: Json
+          reason: string | null
+          restrictions: Json
+          revoked_at: string | null
+          revoked_by: string | null
+          role: string
+          scope_id: string | null
+          scope_label: string | null
+          scope_type: string
+          starts_at: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          expires_at?: string | null
+          grant_mode?: string
+          granted_by?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          restrictions?: Json
+          revoked_at?: string | null
+          revoked_by?: string | null
+          role: string
+          scope_id?: string | null
+          scope_label?: string | null
+          scope_type?: string
+          starts_at?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          expires_at?: string | null
+          grant_mode?: string
+          granted_by?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          restrictions?: Json
+          revoked_at?: string | null
+          revoked_by?: string | null
+          role?: string
+          scope_id?: string | null
+          scope_label?: string | null
+          scope_type?: string
+          starts_at?: string | null
+          updated_at?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -2846,27 +4171,6 @@ export type Database = {
         }
         Relationships: []
       }
-      recovery_queue: {
-        Row: {
-          amount_due: number | null
-          amount_paid: number | null
-          due_date: string | null
-          last_payment_date: string | null
-          library_id: string | null
-          overdue_days: number | null
-          phone: string | null
-          plan_name: string | null
-          queue_status: string | null
-          recovery_urgency_label: string | null
-          seat_number: string | null
-          slot_label: string | null
-          student_id: string | null
-          student_name: string | null
-          successful_payment_count: number | null
-          total_fees: number | null
-        }
-        Relationships: []
-      }
       attendance: {
         Row: {
           check_in: string | null
@@ -2902,6 +4206,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "libraries"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "recovery_queue"
+            referencedColumns: ["student_id"]
           },
           {
             foreignKeyName: "attendance_logs_student_id_fkey"
@@ -2993,6 +4304,35 @@ export type Database = {
         }
         Relationships: []
       }
+      recovery_queue: {
+        Row: {
+          amount_due: number | null
+          amount_paid: number | null
+          due_date: string | null
+          last_payment_date: string | null
+          library_id: string | null
+          overdue_days: number | null
+          phone: string | null
+          plan_name: string | null
+          queue_status: string | null
+          recovery_urgency_label: string | null
+          seat_number: string | null
+          slot_label: string | null
+          student_id: string | null
+          student_name: string | null
+          successful_payment_count: number | null
+          total_fees: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "students_library_id_fkey"
+            columns: ["library_id"]
+            isOneToOne: false
+            referencedRelation: "libraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscriptions: {
         Row: {
           ai_call_enabled: boolean | null
@@ -3003,9 +4343,9 @@ export type Database = {
           payment_status: string | null
           plan: string | null
           plan_expiry_date: string | null
-          plan_type: string | null
           plan_price: number | null
           plan_start_date: string | null
+          plan_type: string | null
           price: number | null
           seat_limit: number | null
           started_at: string | null
@@ -3024,9 +4364,9 @@ export type Database = {
           payment_status?: string | null
           plan?: string | null
           plan_expiry_date?: string | null
-          plan_type?: string | null
           plan_price?: never
           plan_start_date?: string | null
+          plan_type?: string | null
           price?: never
           seat_limit?: number | null
           started_at?: string | null
@@ -3045,9 +4385,9 @@ export type Database = {
           payment_status?: string | null
           plan?: string | null
           plan_expiry_date?: string | null
-          plan_type?: string | null
           plan_price?: never
           plan_start_date?: string | null
+          plan_type?: string | null
           price?: never
           seat_limit?: number | null
           started_at?: string | null
@@ -3066,6 +4406,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      super_admin_daily_metrics: {
+        Row: {
+          active_libraries: number | null
+          active_students: number | null
+          adjustment_revenue: number | null
+          day: string | null
+          new_libraries: number | null
+          payment_revenue: number | null
+          subscription_revenue: number | null
+          total_revenue: number | null
+        }
+        Relationships: []
+      }
+      super_admin_event_groups: {
+        Row: {
+          event_type: string | null
+          first_seen_at: string | null
+          incident_key: string | null
+          last_seen_at: string | null
+          latest_message: string | null
+          severity: string | null
+          total_occurrences: number | null
+          unresolved_count: number | null
+        }
+        Relationships: []
+      }
+      super_admin_revenue_by_city: {
+        Row: {
+          city: string | null
+          libraries: number | null
+          state: string | null
+          total_revenue: number | null
+          transaction_count: number | null
+        }
+        Relationships: []
       }
       users: {
         Row: {
@@ -3159,20 +4535,118 @@ export type Database = {
         Args: { _library_id: string; _user_id: string }
         Returns: boolean
       }
+      claim_id_card_delivery_jobs: {
+        Args: {
+          p_force?: boolean
+          p_library_id?: string
+          p_limit?: number
+          p_student_ids?: string[]
+        }
+        Returns: {
+          attempt_count: number
+          created_at: string
+          id: string
+          last_delivery_channel: string | null
+          last_error: string | null
+          last_file_bucket: string | null
+          last_file_path: string | null
+          last_provider_message_id: string | null
+          last_provider_name: string | null
+          library_id: string
+          max_attempts: number
+          next_retry_at: string
+          processing_started_at: string | null
+          queued_at: string
+          requested_format: string
+          sent_at: string | null
+          source: string
+          status: string
+          student_id: string
+          triggered_by: string | null
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "id_card_delivery_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       confirm_waiting_list: { Args: { p_entry_id: string }; Returns: Json }
       derive_student_original_photo_path: {
         Args: { p_thumbnail_path: string }
         Returns: string
       }
       detect_no_shows: { Args: never; Returns: undefined }
+      ensure_library_subscription: {
+        Args: { p_actor_user_id?: string; p_library_id: string }
+        Returns: {
+          ai_call_enabled: boolean
+          created_at: string
+          expires_at: string | null
+          features: Json
+          id: string
+          library_id: string
+          lockers_limit: number | null
+          payment_status: string
+          plan_expiry_date: string | null
+          plan_name: string
+          plan_price: number | null
+          plan_start_date: string | null
+          plan_type: string
+          price: number
+          seats_limit: number
+          started_at: string
+          status: string
+          trial_end_date: string | null
+          trial_start_date: string | null
+          updated_at: string
+          whatsapp_enabled: boolean
+        }
+        SetofOptions: {
+          from: "*"
+          to: "library_subscriptions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       extract_student_photo_path_from_url: {
         Args: { p_photo_url: string }
         Returns: string
       }
+      extract_student_photo_version_from_url: {
+        Args: { p_photo_url: string }
+        Returns: number
+      }
+      find_super_admin_by_email: {
+        Args: { candidate_email: string }
+        Returns: {
+          email: string
+          full_name: string
+          user_id: string
+        }[]
+      }
       format_compact_time: { Args: { p_time: string }; Returns: string }
       generate_affiliate_code: { Args: never; Returns: string }
+      generate_library_access_key_value: { Args: never; Returns: string }
       generate_partner_code: { Args: never; Returns: string }
       generate_referral_code: { Args: never; Returns: string }
+      get_attendance_runtime_diagnostics: {
+        Args: { p_qr_code?: string; p_student_id?: string }
+        Returns: Json
+      }
+      get_auth_runtime_status: {
+        Args: never
+        Returns: {
+          check_name: string
+          detail: string
+          ok: boolean
+        }[]
+      }
+      get_billing_runtime_diagnostics: {
+        Args: { p_library_id?: string }
+        Returns: Json
+      }
       get_library_public: {
         Args: { p_identifier: string }
         Returns: {
@@ -3248,6 +4722,14 @@ export type Database = {
           total_sales: number
         }[]
       }
+      get_schema_entity_status: {
+        Args: { p_entities: string[] }
+        Returns: {
+          entity_name: string
+          exists_in_schema: boolean
+          relation_name: string
+        }[]
+      }
       get_slot_availability: {
         Args: { p_library_id: string }
         Returns: {
@@ -3257,6 +4739,24 @@ export type Database = {
           slot_name: string
           total_seats: number
         }[]
+      }
+      get_student_id_profile:
+        | { Args: { p_qr_code: string }; Returns: Json }
+        | {
+            Args: {
+              p_library_id?: string
+              p_qr_code?: string
+              p_student_id?: string
+            }
+            Returns: Json
+          }
+      get_student_photo_upload_diagnostics: {
+        Args: {
+          p_library_id?: string
+          p_storage_path?: string
+          p_student_id?: string
+        }
+        Returns: Json
       }
       get_student_renewal_context: {
         Args: { p_student_token: string }
@@ -3269,6 +4769,50 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_maintenance_mode_enabled: { Args: never; Returns: boolean }
+      is_student_photo_final_storage_path: {
+        Args: { p_storage_path: string }
+        Returns: boolean
+      }
+      is_student_photo_temp_storage_path: {
+        Args: { p_storage_path: string; p_user_id: string }
+        Returns: boolean
+      }
+      issue_device_command: {
+        Args: {
+          p_command_type: string
+          p_device_id: string
+          p_library_id: string
+          p_payload?: Json
+        }
+        Returns: {
+          acknowledged_at: string | null
+          command_type: string
+          completed_at: string | null
+          device_id: string
+          error_message: string | null
+          failed_at: string | null
+          id: string
+          library_id: string
+          metadata: Json
+          payload: Json
+          requested_at: string
+          requested_by: string | null
+          requested_by_role: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "device_commands"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      issue_library_access_key: {
+        Args: { p_library_id: string }
+        Returns: string
+      }
       library_locker_plan_limit: {
         Args: { p_library_id: string }
         Returns: number
@@ -3278,6 +4822,16 @@ export type Database = {
         Returns: number
       }
       locker_label_from_index: { Args: { p_index: number }; Returns: string }
+      log_attendance_failure: {
+        Args: {
+          p_code: string
+          p_message: string
+          p_metadata?: Json
+          p_route: string
+          p_source?: string
+        }
+        Returns: undefined
+      }
       log_student_photo_upload_failure: {
         Args: {
           p_error_message?: string
@@ -3320,59 +4874,38 @@ export type Database = {
         }
         Returns: number
       }
-        prepare_student_photo_upload: {
-          Args: {
-            p_student_id: string
-            p_temp_original_path: string
-          }
-          Returns: Json
+      prepare_student_photo_upload: {
+        Args: { p_student_id: string; p_temp_original_path: string }
+        Returns: Json
+      }
+      process_attendance_scan: {
+        Args: {
+          p_device_id?: string
+          p_entry_id?: string
+          p_entry_timestamp?: string
+          p_failure_route: string
+          p_library_id?: string
+          p_qr_code?: string
+          p_student_id?: string
         }
+        Returns: Json
+      }
       process_library_subscription_renewals: { Args: never; Returns: Json }
       process_locker_renewals: { Args: never; Returns: Json }
       process_renewals: { Args: never; Returns: Json }
+      process_subscription_payment_capture: {
+        Args: {
+          p_capture_source?: string
+          p_correlation_id?: string
+          p_razorpay_order_id: string
+          p_razorpay_payment_id: string
+          p_razorpay_signature?: string
+          p_request_id?: string
+          p_trace_id?: string
+        }
+        Returns: Json
+      }
       process_waiting_list_timeouts: { Args: never; Returns: Json }
-      qr_check_in: {
-        Args: {
-          p_entry_id?: string
-          p_entry_timestamp?: string
-          p_device_id?: string
-          p_library_id: string
-          p_qr_code?: string
-          p_student_id?: string
-        }
-        Returns: Json
-      }
-      validate_and_bind_scanner_device: {
-        Args: {
-          p_device_id?: string
-          p_library_access_key: string
-        }
-        Returns: Json
-      }
-      regenerate_library_access_key: {
-        Args: { p_library_id: string }
-        Returns: Json
-      }
-      scan_attendance_entry: {
-        Args: {
-          p_entry_id?: string
-          p_entry_timestamp?: string
-          p_device_id?: string
-          p_library_id: string
-          p_qr_code?: string
-          p_student_id?: string
-        }
-        Returns: Json
-      }
-      issue_device_command: {
-        Args: {
-          p_command_type: string
-          p_device_id: string
-          p_library_id: string
-          p_payload?: Json
-        }
-        Returns: Database["public"]["Tables"]["device_commands"]["Row"]
-      }
       pull_device_commands: {
         Args: {
           p_device_id: string
@@ -3381,24 +4914,94 @@ export type Database = {
           p_library_id: string
           p_limit?: number
         }
-        Returns: Database["public"]["Tables"]["device_commands"]["Row"][]
+        Returns: {
+          acknowledged_at: string | null
+          command_type: string
+          completed_at: string | null
+          device_id: string
+          error_message: string | null
+          failed_at: string | null
+          id: string
+          library_id: string
+          metadata: Json
+          payload: Json
+          requested_at: string
+          requested_by: string | null
+          requested_by_role: string | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "device_commands"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      qr_check_in:
+        | { Args: { p_library_id: string; p_qr_code: string }; Returns: Json }
+        | {
+            Args: {
+              p_entry_id?: string
+              p_entry_timestamp?: string
+              p_library_id: string
+              p_qr_code: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_device_id?: string
+              p_entry_id?: string
+              p_entry_timestamp?: string
+              p_library_id?: string
+              p_qr_code?: string
+              p_student_id?: string
+            }
+            Returns: Json
+          }
+      recalculate_affiliate_totals: {
+        Args: { p_affiliate_id: string }
+        Returns: undefined
       }
       record_device_command_status: {
         Args: {
           p_command_id: string
           p_device_id: string
           p_device_token: string
-          p_error_message?: string | null
+          p_error_message?: string
           p_library_access_key: string
           p_library_id: string
           p_metadata?: Json
           p_status: string
         }
-        Returns: Database["public"]["Tables"]["device_commands"]["Row"]
+        Returns: {
+          acknowledged_at: string | null
+          command_type: string
+          completed_at: string | null
+          device_id: string
+          error_message: string | null
+          failed_at: string | null
+          id: string
+          library_id: string
+          metadata: Json
+          payload: Json
+          requested_at: string
+          requested_by: string | null
+          requested_by_role: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "device_commands"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
-      recalculate_affiliate_totals: {
-        Args: { p_affiliate_id: string }
-        Returns: undefined
+      regenerate_library_access_key: {
+        Args: { p_library_id: string }
+        Returns: Json
       }
       release_locker: { Args: { p_locker_id: string }; Returns: Json }
       renew_student: {
@@ -3409,10 +5012,40 @@ export type Database = {
         Args: { p_amount?: number; p_payout_method?: string }
         Returns: string
       }
+      resolve_app_error_library_id: {
+        Args: { p_metadata: Json }
+        Returns: string
+      }
+      resolve_supabase_edge_function_url: {
+        Args: { p_function_name: string }
+        Returns: string
+      }
       run_renewal_reminder_scan: {
         Args: { p_library_id?: string }
         Returns: Json
       }
+      scan_attendance_entry:
+        | { Args: { p_library_id: string; p_qr_code: string }; Returns: Json }
+        | {
+            Args: {
+              p_entry_id?: string
+              p_entry_timestamp?: string
+              p_library_id: string
+              p_qr_code: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_device_id?: string
+              p_entry_id?: string
+              p_entry_timestamp?: string
+              p_library_id?: string
+              p_qr_code?: string
+              p_student_id?: string
+            }
+            Returns: Json
+          }
       seat_label_from_index: {
         Args: { p_columns?: number; p_index: number }
         Returns: string
@@ -3425,6 +5058,10 @@ export type Database = {
           p_start: string
         }
         Returns: boolean
+      }
+      student_photo_storage_library_id: {
+        Args: { p_storage_path: string }
+        Returns: string
       }
       submit_renewal_payment: {
         Args: {
@@ -3451,24 +5088,42 @@ export type Database = {
         Returns: undefined
       }
       trigger_daily_renewal_reminder_scan: { Args: never; Returns: number }
+      trigger_student_id_card_delivery_processing: {
+        Args: never
+        Returns: number
+      }
       trigger_student_photo_cleanup: { Args: never; Returns: number }
-        update_student_photo_url: {
-          Args: {
-            p_expected_photo_storage_path?: string
-            p_expected_photo_thumbnail_path?: string
-            p_final_photo_storage_path: string
-            p_final_photo_thumbnail_path: string
-            p_photo_version?: number
-            p_photo_url: string
-            p_student_id: string
-            p_temp_original_path?: string
-            p_temp_thumbnail_path?: string
-          }
+      update_student_photo_url: {
+        Args: {
+          p_expected_photo_storage_path?: string
+          p_expected_photo_thumbnail_path?: string
+          p_final_photo_storage_path: string
+          p_final_photo_thumbnail_path: string
+          p_photo_url: string
+          p_photo_version?: number
+          p_student_id: string
+          p_temp_original_path?: string
+          p_temp_thumbnail_path?: string
+        }
         Returns: Json
+      }
+      upsert_student_id_card_delivery_job: {
+        Args: {
+          p_available_at?: string
+          p_requested_format?: string
+          p_source?: string
+          p_student_id: string
+          p_triggered_by?: string
+        }
+        Returns: string
       }
       user_can_access_library: {
         Args: { _library_id: string; _user_id: string }
         Returns: boolean
+      }
+      validate_and_bind_scanner_device: {
+        Args: { p_device_id?: string; p_library_access_key: string }
+        Returns: Json
       }
     }
     Enums: {
@@ -3630,3 +5285,4 @@ export const Constants = {
     },
   },
 } as const
+
