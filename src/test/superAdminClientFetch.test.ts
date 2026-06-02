@@ -86,7 +86,8 @@ describe("super admin client fetch", () => {
 
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(12_000);
+    await vi.advanceTimersByTimeAsync(22_100);
+    await Promise.resolve();
 
     await expect(requestPromise).resolves.toMatchObject<Partial<AdminApiError>>({
       errorCode: "ADMIN_REQUEST_TIMEOUT",

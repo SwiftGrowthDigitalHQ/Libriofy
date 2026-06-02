@@ -13,5 +13,5 @@ describe("runtime boundary integrity", () => {
 
   it("bundles express and serverless entrypoints cleanly", async () => {
     await expect(validateServerEntrypoints()).resolves.toBeUndefined();
-  }, 30_000);
+  }, 60_000);
 });

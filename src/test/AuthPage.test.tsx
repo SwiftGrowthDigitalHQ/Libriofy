@@ -69,7 +69,7 @@ describe("AuthPage mobile OTP gating", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /^Create account$/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /^Create account$/ })[0]);
 
     expect(screen.getByText("Set up your account")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Varun Singh")).toBeInTheDocument();

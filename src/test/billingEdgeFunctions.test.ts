@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    from: vi.fn(),
+  },
+  supabaseAuth: {
+    auth: {
+      getSession: vi.fn(),
+      onAuthStateChange: vi.fn(),
+      signOut: vi.fn(),
+    },
+  },
+}));
+
 import { invokeBillingEdgeFunction, readFunctionErrorMessage } from "../lib/billingEdgeFunctions";
 
 describe("billing edge function invocation", () => {

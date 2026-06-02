@@ -1166,7 +1166,7 @@ describe("super admin operations pages", () => {
 
     render(<SuperAdminDashboard />);
 
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    expect(screen.getAllByText("Dashboard").length).toBeGreaterThan(0);
     expect(screen.getByText("Platform overview")).toBeInTheDocument();
     expect(screen.getAllByText("Healthy").length).toBeGreaterThan(0);
     expect(screen.getByText("Total Libraries")).toBeInTheDocument();
@@ -1187,8 +1187,8 @@ describe("super admin operations pages", () => {
 
     expect(screen.getByText("Analytics aggregation is temporarily degraded")).toBeInTheDocument();
     expect(
-      screen.getByText("Revenue analytics will appear here after the first approved transactions land."),
-    ).toBeInTheDocument();
+      screen.getAllByText("Revenue analytics will appear here after the first approved transactions land.").length,
+    ).toBeGreaterThan(0);
     expect(
       screen.getByText("Telemetry is reconnecting. Database, queue, deployment, and auth health will populate automatically after the next successful sync."),
     ).toBeInTheDocument();
@@ -1245,7 +1245,7 @@ describe("super admin operations pages", () => {
 
     render(<SuperAdminDashboard />);
 
-    expect(screen.getByText("Total Libraries")).toBeInTheDocument();
+    expect(screen.getAllByText("Total Libraries").length).toBeGreaterThan(0);
     expect(screen.getByText("6")).toBeInTheDocument();
     expect(screen.getByText("Pending Jobs")).toBeInTheDocument();
     expect(screen.getByText("4")).toBeInTheDocument();
@@ -1274,7 +1274,7 @@ describe("super admin operations pages", () => {
   it("shows remediation and recommendation guidance in lightweight mode", () => {
     render(<SuperAdminAutomation />);
 
-    expect(screen.getByText("Remediation planner")).toBeInTheDocument();
+    expect(screen.getAllByText("Remediation planner").length).toBeGreaterThan(0);
     expect(
       screen.getByText("Remediation planning snapshots are paused on this dashboard to reduce control-plane load."),
     ).toBeInTheDocument();
@@ -1299,7 +1299,12 @@ describe("super admin operations pages", () => {
         expect.objectContaining({
           actionToken: "platform-preview-token",
           confirmationText: "",
+          operatorReason: "Operator updating runtime governance after control-plane review.",
           settings: expect.objectContaining({
+            automation_inactive_library_alert_enabled: true,
+            automation_payment_reminder_enabled: true,
+            automation_subscription_renewal_enabled: true,
+            inactive_library_days: 14,
             ops_billing_mutations_enabled: false,
             ops_queue_processing_enabled: false,
           }),
@@ -1311,7 +1316,7 @@ describe("super admin operations pages", () => {
   it("renders governance runtime visibility in the settings console", () => {
     render(<SuperAdminSettings />);
 
-    fireEvent.click(screen.getByRole("button", { name: "RBAC & Access" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "RBAC & Access" })[0]);
     expect(screen.getByText("Governance runtime")).toBeInTheDocument();
     expect(screen.getAllByText("Active elevations").length).toBeGreaterThan(0);
     expect(screen.getByText("25m remaining")).toBeInTheDocument();

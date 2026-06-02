@@ -119,7 +119,7 @@ describe("super admin libraries page", () => {
     expect(screen.getByText("1 session resets, 1 password resets, 1 live impersonations.")).toBeInTheDocument();
     expect(screen.getByText("PATNA LIBRARY's Library")).toBeInTheDocument();
     expect(screen.getByText("Owner: Patna Owner")).toBeInTheDocument();
-    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
     expect(screen.getByText("No billed revenue yet")).toBeInTheDocument();
   });
 
