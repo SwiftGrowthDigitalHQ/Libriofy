@@ -6,6 +6,7 @@ import {
   inspectStudentQrPayload,
   parseStudentQrPayload,
   signStudentQrToken,
+  shouldUseSignedStudentQrToken,
 } from "@/lib/studentQr";
 
 const createPemKeyPair = () => {
@@ -113,5 +114,70 @@ describe("parseStudentQrPayload", () => {
       message: "QR signature invalid",
       source: "token",
     });
+  });
+
+  it("allows expired signed QR tokens when expiry is intentionally ignored", async () => {
+    const { privateKeyPem, publicKeyPem } = createPemKeyPair();
+    const claims = createStudentQrClaims({
+      expiresAt: "2029-01-01T00:00:00.000Z",
+      libraryId: "library-123",
+      studentId: "student-456",
+    });
+    const token = await signStudentQrToken(claims, privateKeyPem);
+
+    const strictParsed = await parseStudentQrPayload(token, {
+      expectedLibraryId: "library-123",
+      now: "2030-01-01T00:00:00.000Z",
+      publicKeyPem,
+    });
+
+    const relaxedParsed = await parseStudentQrPayload(token, {
+      allowExpired: true,
+      expectedLibraryId: "library-123",
+      now: "2030-01-01T00:00:00.000Z",
+      publicKeyPem,
+    });
+
+    expect(strictParsed).toMatchObject({
+      valid: false,
+      code: "EXPIRED",
+      source: "token",
+    });
+    expect(relaxedParsed).toMatchObject({
+      valid: true,
+      source: "signed",
+      libraryId: "library-123",
+      studentId: "student-456",
+    });
+  });
+
+  it("prefers signed student QR tokens for memberships that are currently valid", () => {
+    expect(
+      shouldUseSignedStudentQrToken({
+        expiry_date: "2026-06-10",
+        status: "active",
+      }, new Date("2026-06-02T00:00:00.000Z")),
+    ).toBe(true);
+
+    expect(
+      shouldUseSignedStudentQrToken({
+        expiry_date: "2026-05-26",
+        status: "active",
+      }, new Date("2026-06-02T00:00:00.000Z")),
+    ).toBe(false);
+
+    expect(
+      shouldUseSignedStudentQrToken({
+        expiry_date: "2026-06-10",
+        status: "expired",
+      }, new Date("2026-06-02T00:00:00.000Z")),
+    ).toBe(true);
+
+    expect(
+      shouldUseSignedStudentQrToken({
+        expiry_date: "2026-06-10",
+        status: "inactive",
+      }, new Date("2026-06-02T00:00:00.000Z")),
+    ).toBe(false);
   });
 });

@@ -14,9 +14,10 @@ import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { isStudentCurrentlyActive } from "@/lib/studentMembership";
 import { cn } from "@/lib/utils";
 
-type StudentOption = Pick<Database["public"]["Tables"]["students"]["Row"], "full_name" | "id" | "seat_number" | "status">;
+type StudentOption = Pick<Database["public"]["Tables"]["students"]["Row"], "expiry_date" | "full_name" | "id" | "seat_number" | "status">;
 
 const formatCurrency = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
 
@@ -88,7 +89,7 @@ const LockerMapPage = () => {
 
       const { data, error } = await supabase
         .from("students")
-        .select("id, full_name, status, seat_number")
+        .select("id, full_name, status, seat_number, expiry_date")
         .eq("library_id", resolvedLibraryId)
         .order("full_name", { ascending: true });
 
@@ -164,7 +165,7 @@ const LockerMapPage = () => {
 
   const selectableStudents = useMemo(() => {
     return students.filter((student) => {
-      if (student.status !== "active" && student.id !== selectedLocker?.student_id) {
+      if (!isStudentCurrentlyActive(student) && student.id !== selectedLocker?.student_id) {
         return false;
       }
 

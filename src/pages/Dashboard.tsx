@@ -53,6 +53,7 @@ import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { comparePaymentSummaryRisk, createPlanPriceLookup, derivePaymentSummary, groupPaymentsByStudent } from "@/lib/paymentRecovery";
 import { isPendingPaymentStatus, isSuccessfulPaymentStatus } from "@/lib/payments";
 import { isMissingRelationError } from "@/lib/studentSlotUtils";
+import { isStudentCurrentlyActive } from "@/lib/studentMembership";
 import { cn } from "@/lib/utils";
 
 type LibraryRow = Pick<Database["public"]["Tables"]["libraries"]["Row"], "id" | "name" | "opening_hours" | "total_seats" | "upi_id">;
@@ -396,18 +397,13 @@ const calculateLibraryAttendanceMissedDays = (
 };
 
 const isActiveStudent = (student: StudentDashboardRow, today: Date): boolean => {
-  if (student.status !== "active") return false;
-  if (!student.expiry_date) return true;
-  const expiry = new Date(`${student.expiry_date}T00:00:00`);
-  return expiry >= today;
+  return isStudentCurrentlyActive(student, today);
 };
 
 const isAttendanceTrackedStudent = (student: StudentDashboardRow, today: Date): boolean => {
   if (student.status === "waiting") return false;
   if (getStudentStartDate(student) > today) return false;
-  if (!student.expiry_date) return true;
-  const expiry = new Date(`${student.expiry_date}T00:00:00`);
-  return expiry >= today;
+  return isStudentCurrentlyActive(student, today);
 };
 
 const notificationTypeToActivityType = (category: string | null, type: string): ActivityType => {

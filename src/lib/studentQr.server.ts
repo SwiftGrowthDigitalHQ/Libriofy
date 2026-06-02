@@ -3,6 +3,7 @@ import {
   createStudentQrClaims,
   signStudentQrToken,
 } from "./studentQr.js";
+import { isStudentCurrentlyActive } from "./studentMembership.js";
 import { recordImpersonationAuditEvent } from "./impersonationRuntime.server.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 import { resolveRequestAuthUser } from "./requestAuth.server.js";
@@ -313,6 +314,11 @@ export const resolveStudentQrSigningRequest = async (
   }
 
   const now = new Date();
+  const ineligibleStudents = studentRows.filter((student) => !isStudentCurrentlyActive(student, now));
+  if (ineligibleStudents.length > 0) {
+    return buildError("One or more students are not eligible for signed QR cards.", 400, "INELIGIBLE_STUDENT");
+  }
+
   const signingClaims = studentRows.map((student) =>
     createStudentQrClaims({
       studentId: student.id,

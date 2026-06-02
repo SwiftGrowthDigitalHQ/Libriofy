@@ -12,6 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
+import { isStudentCurrentlyActive } from "@/lib/studentMembership";
 import { STUDENT_GENDER_OPTIONS, formatStudentGender, type StudentGender, type StudentGenderFilter } from "@/lib/studentGender";
 import { isSuccessfulPaymentStatus } from "@/lib/payments";
 
@@ -86,10 +87,7 @@ const slotMatches = (studentSlot: string | null, slotName: string): boolean => {
 };
 
 const isActiveStudent = (student: StudentAnalyticsRow, today: Date): boolean => {
-  if (student.status !== "active") return false;
-  if (!student.expiry_date) return true;
-  const expiry = new Date(`${student.expiry_date}T00:00:00`);
-  return expiry >= today;
+  return isStudentCurrentlyActive(student, today);
 };
 
 const getHighestGenderSlot = (rows: SlotGenderPoint[], gender: StudentGender) => {

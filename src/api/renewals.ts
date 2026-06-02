@@ -96,6 +96,42 @@ const getRenewalDateRange = () => {
   };
 };
 
+type MembershipStatusFilterQuery<T> = {
+  neq: (column: string, value: string) => T;
+  gte: (column: string, value: string) => T;
+  lte: (column: string, value: string) => T;
+  or: (filters: string) => T;
+};
+
+const applyMembershipStatusFilter = <T extends MembershipStatusFilterQuery<T>>(query: T, filter: RenewalStatusFilter) => {
+  const { soonIso, todayIso } = getRenewalDateRange();
+
+  if (filter === "expired") {
+    return query.or(`expiry_date.lt.${todayIso},and(expiry_date.is.null,status.eq.expired)`);
+  }
+
+  if (filter === "expiring_soon") {
+    return query
+      .neq("status", "inactive")
+      .neq("status", "waiting")
+      .gte("expiry_date", todayIso)
+      .lte("expiry_date", soonIso);
+  }
+
+  if (filter === "active") {
+    return query
+      .neq("status", "inactive")
+      .neq("status", "waiting")
+      .or(`expiry_date.gte.${todayIso},and(expiry_date.is.null,status.eq.active)`);
+  }
+
+  if (filter === "no_expiry") {
+    return query;
+  }
+
+  return query;
+};
+
 type RenewalFilterQuery<T> = {
   eq: (column: string, value: string) => T;
   gt: (column: string, value: string) => T;
@@ -111,19 +147,23 @@ const applyRenewalFilter = <T extends RenewalFilterQuery<T>>(query: T, filter: R
   const { soonIso, todayIso } = getRenewalDateRange();
 
   if (filter === "expired") {
-    return query.eq("status", "expired");
+    return query.or(`expiry_date.lt.${todayIso},and(expiry_date.is.null,status.eq.expired)`);
   }
 
   if (filter === "expiring_soon") {
     return query
+      .neq("status", "inactive")
+      .neq("status", "waiting")
       .not("expiry_date", "is", null)
       .gte("expiry_date", todayIso)
-      .lte("expiry_date", soonIso)
-      .neq("status", "expired");
+      .lte("expiry_date", soonIso);
   }
 
   if (filter === "active") {
-    return query.eq("status", "active").not("expiry_date", "is", null).gt("expiry_date", soonIso);
+    return query
+      .neq("status", "inactive")
+      .neq("status", "waiting")
+      .or(`expiry_date.gte.${todayIso},and(expiry_date.is.null,status.eq.active)`);
   }
 
   if (filter === "no_expiry") {
@@ -249,31 +289,24 @@ export const fetchRenewalsOverview = async (libraryId: string | null): Promise<R
   const { nextDayIso, soonIso, todayIso } = getRenewalDateRange();
 
   const [activeResult, expiringSoonResult, dueTodayResult, expiredResult, sentTodayResult, queuedResult, failedResult] = await Promise.all([
+    applyMembershipStatusFilter(supabase.from("students").select("id", { count: "exact", head: true }).eq("library_id", libraryId), "active"),
     supabase
       .from("students")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
-      .eq("status", "active")
-      .or(`expiry_date.is.null,expiry_date.gte.${todayIso}`),
-    supabase
-      .from("students")
-      .select("id", { count: "exact", head: true })
-      .eq("library_id", libraryId)
+      .neq("status", "inactive")
+      .neq("status", "waiting")
       .not("expiry_date", "is", null)
       .gte("expiry_date", todayIso)
-      .lte("expiry_date", soonIso)
-      .neq("status", "expired"),
+      .lte("expiry_date", soonIso),
     supabase
       .from("students")
       .select("id", { count: "exact", head: true })
       .eq("library_id", libraryId)
-      .eq("expiry_date", todayIso)
-      .neq("status", "expired"),
-    supabase
-      .from("students")
-      .select("id", { count: "exact", head: true })
-      .eq("library_id", libraryId)
-      .or(`status.eq.expired,expiry_date.lt.${todayIso}`),
+      .neq("status", "inactive")
+      .neq("status", "waiting")
+      .eq("expiry_date", todayIso),
+    applyMembershipStatusFilter(supabase.from("students").select("id", { count: "exact", head: true }).eq("library_id", libraryId), "expired"),
     supabase
       .from("reminder_logs")
       .select("id", { count: "exact", head: true })

@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/hooks/useAuth";
 import { fetchSignedStudentQrTokensSafe } from "@/api/studentQr";
 import { buildStudentQrValue } from "@/lib/deviceKiosk";
+import { shouldUseSignedStudentQrToken } from "@/lib/studentQr";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useLibrarySubscription } from "@/hooks/useLibrarySubscription";
@@ -31,6 +32,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { downloadBulkIdCardZip, downloadIdCardPdf, downloadIdCardPng } from "@/lib/idCardExport";
+import { getEffectiveStudentStatus } from "@/lib/studentMembership";
 import { formatTimeLabel } from "@/lib/seatUtils";
 import { isPlanAtLeast, resolveSubscriptionPlanCode } from "@/lib/subscription";
 import { cn } from "@/lib/utils";
@@ -174,14 +176,26 @@ const QRCodesPage = () => {
   }, [page]);
 
   const students = qrPassesQuery.data?.data ?? [];
+  const signedQrEligibleStudentIds = useMemo(
+    () => students.filter((student) => shouldUseSignedStudentQrToken(student)).map((student) => student.id),
+    [students],
+  );
   const studentQrTokensQuery = useQuery({
-    queryKey: ["student-qr-tokens", resolvedLibraryId, page, limit, debouncedSearch, statusFilter, students.map((student) => student.id).join("|")],
+    queryKey: [
+      "student-qr-tokens",
+      resolvedLibraryId,
+      page,
+      limit,
+      debouncedSearch,
+      statusFilter,
+      signedQrEligibleStudentIds.join("|"),
+    ],
     queryFn: () =>
       fetchSignedStudentQrTokensSafe({
         libraryId: resolvedLibraryId ?? "",
-        studentIds: students.map((student) => student.id),
+        studentIds: signedQrEligibleStudentIds,
       }),
-    enabled: !!resolvedLibraryId && students.length > 0,
+    enabled: !!resolvedLibraryId && signedQrEligibleStudentIds.length > 0,
     staleTime: 30_000,
   });
   const loading = roleLibraryLoading || fallbackLoading || qrPassesQuery.isLoading || studentQrTokensQuery.isLoading;
@@ -290,9 +304,12 @@ const QRCodesPage = () => {
         search,
         status: statusFilter,
       });
+      const signedStudentIds = allStudents
+        .filter((student) => shouldUseSignedStudentQrToken(student))
+        .map((student) => student.id);
       const signedTokens = await fetchSignedStudentQrTokensSafe({
         libraryId: resolvedLibraryId,
-        studentIds: allStudents.map((student) => student.id),
+        studentIds: signedStudentIds,
       });
       setBulkQrTokens(signedTokens);
       setBulkStudents(allStudents);
@@ -487,7 +504,7 @@ const QRCodesPage = () => {
                     plan={student.plan}
                     timeSlot={resolveSlotLabel(student.slot_id, student.slot)}
                     expiryLabel={student.expiry_date ? format(new Date(student.expiry_date), "dd MMM yyyy") : "--"}
-                    status={student.status}
+                    status={getEffectiveStudentStatus(student)}
                     photoUrl={resolvePhotoUrl(student)}
                     showVerifiedBadge={showVerifiedBadge && isPro}
                     showWatermark={showWatermark && isPro}
@@ -623,7 +640,7 @@ const QRCodesPage = () => {
               plan={student.plan ?? null}
               timeSlot={resolveSlotLabel(student.slot_id ?? null, student.slot ?? null)}
               expiryLabel={student.expiry_date ? format(new Date(student.expiry_date), "dd MMM yyyy") : "--"}
-              status={student.status ?? "active"}
+              status={getEffectiveStudentStatus(student)}
               photoUrl={resolvePhotoUrl(student)}
               showVerifiedBadge={showVerifiedBadge && isPro}
               showWatermark={showWatermark && isPro}

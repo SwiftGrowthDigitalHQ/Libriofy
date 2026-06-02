@@ -1,3 +1,5 @@
+import { isStudentCurrentlyActive as isStudentMembershipCurrentlyActive } from "@/lib/studentMembership";
+
 export type TimeRange = {
   start: number;
   end: number;
@@ -134,12 +136,5 @@ export const slotMatches = (
 };
 
 export const isStudentCurrentlyActive = (student: StudentActivityLike): boolean => {
-  if (student.status === "inactive" || student.status === "expired") return false;
-  if (!student.expiry_date) return true;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const expiry = new Date(`${student.expiry_date}T00:00:00`);
-  if (Number.isNaN(expiry.getTime())) return true;
-  return expiry >= today;
+  return isStudentMembershipCurrentlyActive(student);
 };

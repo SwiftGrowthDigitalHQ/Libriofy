@@ -6,6 +6,8 @@ import { format } from "date-fns";
 
 import StudentIdCard from "@/components/dashboard/StudentIdCard";
 import { buildStudentQrValue, parseStudentQrPayload } from "@/lib/deviceKiosk";
+import { getEffectiveStudentStatus } from "@/lib/studentMembership";
+import { shouldUseSignedStudentQrToken } from "@/lib/studentQr";
 import { supabase } from "@/integrations/supabase/client";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { fetchSignedStudentQrTokensSafe } from "@/api/studentQr";
@@ -41,6 +43,19 @@ const formatStatusLabel = (value: string) =>
     .join(" ") || "Inactive";
 
 const STUDENT_QR_PUBLIC_KEY = import.meta.env.VITE_QR_PUBLIC_KEY ?? import.meta.env.VITE_STUDENT_QR_PUBLIC_KEY ?? "";
+const STUDENT_ID_DEBUG_ENABLED =
+  import.meta.env.DEV || (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("cardDebug"));
+
+const logStudentIdDebug = (stage: string, details: Record<string, unknown>) => {
+  if (!STUDENT_ID_DEBUG_ENABLED) {
+    return;
+  }
+
+  console.info("[student-id-verification]", {
+    stage,
+    ...details,
+  });
+};
 
 const StudentIdProfilePage = () => {
   const { qr } = useParams<{ qr: string }>();
@@ -49,11 +64,29 @@ const StudentIdProfilePage = () => {
     queryKey: ["student-id-route-qr", qr],
     queryFn: async () => {
       if (!qr) throw new Error("Invalid ID.");
-      return parseStudentQrPayload(qr, {
+
+      logStudentIdDebug("SCAN_RECEIVED", {
+        rawLength: qr.length,
+        rawPreview: qr.slice(0, 24),
+      });
+
+      const parsedRoute = await parseStudentQrPayload(qr, {
         allowLegacy: true,
+        allowExpired: true,
         publicKeyPem: STUDENT_QR_PUBLIC_KEY,
         now: new Date(),
       });
+
+      logStudentIdDebug("CARD_PARSED", {
+        code: !parsedRoute?.valid && parsedRoute && "code" in parsedRoute ? parsedRoute.code : null,
+        libraryId: parsedRoute && parsedRoute.valid && "libraryId" in parsedRoute ? parsedRoute.libraryId : null,
+        message: !parsedRoute?.valid && parsedRoute && "message" in parsedRoute ? parsedRoute.message : null,
+        source: parsedRoute?.source ?? "unknown",
+        studentId: parsedRoute && parsedRoute.valid && "studentId" in parsedRoute ? parsedRoute.studentId : null,
+        valid: Boolean(parsedRoute?.valid),
+      });
+
+      return parsedRoute;
     },
     enabled: !!qr,
     staleTime: 30_000,
@@ -84,14 +117,36 @@ const StudentIdProfilePage = () => {
             ? ({
                 p_qr_code: parsedRoute.qrCode,
               } as never)
-            : ({ p_qr_code: qr } as never);
+          : ({ p_qr_code: qr } as never);
+
+      logStudentIdDebug("VERIFY_REQUEST_SENT", {
+        rpcArgKeys: Object.keys(rpcArgs as Record<string, unknown>),
+        routeSource: parsedRoute?.valid ? parsedRoute.source : "unknown",
+      });
 
       const { data, error } = await supabase.rpc("get_student_id_profile" as never, rpcArgs);
+
+      logStudentIdDebug("VERIFY_REQUEST_RECEIVED", {
+        hasError: Boolean(error),
+        payloadHasData: Boolean(data),
+      });
+
       if (error) throw error;
       const payload = data as StudentIdProfilePayload;
       if (!payload?.success || !payload.data) {
+        logStudentIdDebug("VERIFICATION_RESULT", {
+          outcome: "denied",
+          payloadError: payload?.error ?? null,
+        });
         throw new Error(payload?.error || "Invalid or expired student ID.");
       }
+
+      logStudentIdDebug("VERIFICATION_RESULT", {
+        outcome: "approved",
+        studentId: payload.data.id,
+        status: payload.data.status,
+      });
+
       return payload.data;
     },
     enabled: !!qr && !routeQrQuery.isLoading,
@@ -100,10 +155,26 @@ const StudentIdProfilePage = () => {
 
   const profile = profileQuery.data;
   const signedQrQuery = useQuery({
-    queryKey: ["student-id-profile-qr", profile?.id, profile?.library_id, qr, routeQrQuery.data?.valid ? routeQrQuery.data.source : "unknown"],
+    queryKey: [
+      "student-id-profile-qr",
+      profile?.id,
+      profile?.library_id,
+      profile?.status,
+      profile?.expiry_date,
+      qr,
+      routeQrQuery.data?.valid ? routeQrQuery.data.source : "unknown",
+    ],
     queryFn: async () => {
       if (!profile?.id || !profile.library_id) {
         throw new Error("Student ID is unavailable.");
+      }
+
+      if (!shouldUseSignedStudentQrToken(profile)) {
+        return buildStudentQrValue({
+          qrCode: profile.qr_code ?? profile.id,
+          libraryId: profile.library_id,
+          origin: window.location.origin,
+        });
       }
 
       const parsedRoute = routeQrQuery.data;
@@ -148,7 +219,10 @@ const StudentIdProfilePage = () => {
     return format(new Date(profile.expiry_date), "dd MMM yyyy");
   }, [profile?.expiry_date]);
 
-  const status = profile?.status ?? "expired";
+  const status = useMemo(() => {
+    if (!profile) return "expired";
+    return getEffectiveStudentStatus(profile);
+  }, [profile]);
   const isActive = status === "active";
   const statusLabel = formatStatusLabel(status);
   const qrValue = signedQrQuery.data ?? null;

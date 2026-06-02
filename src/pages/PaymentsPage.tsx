@@ -78,6 +78,7 @@ import {
 } from "@/lib/subscription";
 import { isPendingPaymentStatus, isSuccessfulPaymentStatus, PAYMENT_SCREENSHOT_BUCKET } from "@/lib/payments";
 import { isMissingRelationError } from "@/lib/studentSlotUtils";
+import { isStudentMembershipActiveOnDate } from "@/lib/studentMembership";
 import { cn } from "@/lib/utils";
 
 type LibraryFinanceRow = Pick<Database["public"]["Tables"]["libraries"]["Row"], "id" | "name" | "total_seats" | "upi_id">;
@@ -328,15 +329,16 @@ const getCallStatusBadgeClassName = (value: string | null | undefined) => {
 const parseDateOnly = (value: string) => new Date(`${value}T00:00:00`);
 
 const isStudentActiveOn = (student: StudentFinanceRow, date: Date) => {
-  if (student.status !== "active") return false;
   const start = startOfDay(parseDateOnly(student.start_date));
   if (start > date) return false;
-  if (!student.expiry_date) return true;
-  return parseDateOnly(student.expiry_date) >= date;
+  return isStudentMembershipActiveOnDate(student, date);
 };
 
 const getActiveOverlapDays = (student: StudentFinanceRow, rangeStart: Date, rangeEnd: Date) => {
-  if (student.status !== "active") return 0;
+  const normalizedStatus = normalizeText(student.status);
+  if (normalizedStatus === "inactive" || normalizedStatus === "waiting") return 0;
+  if (!student.expiry_date && normalizedStatus === "expired") return 0;
+
   const start = startOfDay(parseDateOnly(student.start_date));
   const end = student.expiry_date ? endOfDay(parseDateOnly(student.expiry_date)) : rangeEnd;
   const overlapStart = maxDate([rangeStart, start]);

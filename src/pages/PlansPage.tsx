@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
+import { isStudentCurrentlyActive } from "@/lib/studentMembership";
 
 type PlanRow = Database["public"]["Tables"]["plans"]["Row"];
 type SlotRow = Database["public"]["Tables"]["time_slots"]["Row"];
@@ -24,7 +25,7 @@ type PlanUpdate = Database["public"]["Tables"]["plans"]["Update"];
 type SlotInsert = Database["public"]["Tables"]["time_slots"]["Insert"];
 type SlotUpdate = Database["public"]["Tables"]["time_slots"]["Update"];
 
-type StudentPlanRow = Pick<Database["public"]["Tables"]["students"]["Row"], "plan" | "status">;
+type StudentPlanRow = Pick<Database["public"]["Tables"]["students"]["Row"], "expiry_date" | "plan" | "status">;
 
 const initialPlanForm = {
   name: "",
@@ -132,9 +133,9 @@ const PlansPage = () => {
       if (!resolvedLibraryId) return [];
       const { data, error } = await supabase
         .from("students")
-        .select("plan, status")
+        .select("plan, status, expiry_date")
         .eq("library_id", resolvedLibraryId)
-        .eq("status", "active");
+        .in("status", ["active", "expired"]);
       if (error) throw error;
       return data;
     },
@@ -144,6 +145,7 @@ const PlansPage = () => {
   const activeStudentByPlan = useMemo(() => {
     const map = new Map<string, number>();
     for (const item of studentPlans) {
+      if (!isStudentCurrentlyActive(item)) continue;
       const key = normalize(item.plan);
       if (!key) continue;
       map.set(key, (map.get(key) || 0) + 1);

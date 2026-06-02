@@ -35,6 +35,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 import { buildPublicAppUrl } from "@/lib/publicAppUrl";
+import { getEffectiveStudentStatus } from "@/lib/studentMembership";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_PAGE_SIZE: RenewalPageSize = 20;
@@ -393,9 +394,10 @@ const RenewalsPage = () => {
 
     return students.map((student) => {
       const daysToExpiry = student.expiry_date ? differenceInDays(parseISO(student.expiry_date), today) : null;
-      const isExpired = student.status === "expired" || (daysToExpiry !== null && daysToExpiry < 0);
+      const effectiveStatus = getEffectiveStudentStatus(student, today);
+      const isExpired = effectiveStatus === "expired";
       const isExpiringSoon = !isExpired && daysToExpiry !== null && daysToExpiry <= 7 && daysToExpiry >= 0;
-      const isActive = !isExpired && student.status === "active";
+      const isActive = effectiveStatus === "active";
 
       return {
         ...student,

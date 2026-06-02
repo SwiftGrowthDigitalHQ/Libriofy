@@ -1,4 +1,5 @@
 import { getPublicAppBaseUrl, isPreviewAppUrl } from "./publicAppUrl.js";
+import { isStudentCurrentlyActive } from "./studentMembership.js";
 
 const JWT_ALG = "RS256" as const;
 const WEB_CRYPTO_RSA_ALG = "RSASSA-PKCS1-v1_5" as const;
@@ -73,6 +74,7 @@ export type StudentQrParsedPayload =
 export type StudentQrParseOptions = {
   expectedLibraryId?: string | null;
   allowLegacy?: boolean;
+  allowExpired?: boolean;
   publicKeyPem?: string | null;
   now?: Date | number | string;
 };
@@ -98,6 +100,18 @@ export type StudentQrSigningClaims = Pick<StudentQrTokenClaims, "library_id" | "
 };
 
 const trimText = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+
+export type StudentQrSigningEligibility = {
+  expiry_date?: string | null;
+  status?: string | null;
+};
+
+export const shouldUseSignedStudentQrToken = (
+  student: StudentQrSigningEligibility,
+  now: Date | number | string = Date.now(),
+) => {
+  return isStudentCurrentlyActive(student, now);
+};
 
 const nowEpochSeconds = (value: Date | number | string = Date.now()) => {
   if (typeof value === "number") {
@@ -571,9 +585,11 @@ export const verifyStudentQrToken = async (
   publicKeyPem: string,
   {
     expectedLibraryId,
+    allowExpired = false,
     now,
   }: {
     expectedLibraryId?: string | null;
+    allowExpired?: boolean;
     now?: Date | number | string;
   } = {},
 ): Promise<StudentQrVerifiedPayload | StudentQrInvalidPayload> => {
@@ -619,7 +635,7 @@ export const verifyStudentQrToken = async (
   }
 
   const nowSeconds = nowEpochSeconds(now ?? Date.now());
-  if (claims.exp <= nowSeconds) {
+  if (!allowExpired && claims.exp <= nowSeconds) {
     return buildInvalidResult(trimmedToken, "signed", "EXPIRED", "Expired");
   }
 
@@ -655,6 +671,7 @@ export const parseStudentQrPayload = async (
   const structuredCandidate = extractStructuredStudentCandidate(trimmed);
   const expectedLibraryId = trimText(options.expectedLibraryId);
   const allowLegacy = options.allowLegacy ?? false;
+  const allowExpired = options.allowExpired ?? false;
 
   if (structuredCandidate) {
     if (expectedLibraryId && structuredCandidate.libraryId !== expectedLibraryId) {
@@ -716,6 +733,7 @@ export const parseStudentQrPayload = async (
 
       const verified = await verifyStudentQrToken(candidate.token, options.publicKeyPem ?? "", {
         expectedLibraryId: expectedLibraryId || candidate.libraryId || null,
+        allowExpired,
         now: options.now,
       });
 

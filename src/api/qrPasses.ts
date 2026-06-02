@@ -1,3 +1,5 @@
+import { format, startOfDay } from "date-fns";
+
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -51,6 +53,28 @@ export type QrPassesSummary = {
 
 const escapeIlikeValue = (value: string) => value.replace(/[%_]/g, (character) => `\\${character}`);
 
+type MembershipStatusFilterQuery<T> = {
+  neq: (column: string, value: string) => T;
+  or: (filters: string) => T;
+};
+
+const applyMembershipStatusFilter = <T extends MembershipStatusFilterQuery<T>>(query: T, status: QrPassStatusFilter) => {
+  const todayIso = format(startOfDay(new Date()), "yyyy-MM-dd");
+
+  if (status === "active") {
+    return query
+      .neq("status", "inactive")
+      .neq("status", "waiting")
+      .or(`expiry_date.gte.${todayIso},and(expiry_date.is.null,status.eq.active)`);
+  }
+
+  if (status === "expired") {
+    return query.or(`expiry_date.lt.${todayIso},and(expiry_date.is.null,status.eq.expired)`);
+  }
+
+  return query;
+};
+
 export const fetchQrPassesPage = async ({
   libraryId,
   limit,
@@ -87,9 +111,7 @@ export const fetchQrPassesPage = async ({
     query = query.or(`full_name.ilike.${pattern},phone.ilike.${pattern}`);
   }
 
-  if (status !== "all") {
-    query = query.eq("status", status);
-  }
+  query = applyMembershipStatusFilter(query, status);
 
   const { data, error, count } = await query;
 
@@ -118,7 +140,7 @@ export const fetchQrPassesSummary = async (libraryId: string | null): Promise<Qr
 
   const [totalResult, activeResult, noShowResult] = await Promise.all([
     supabase.from("students").select("id", { count: "exact", head: true }).eq("library_id", libraryId),
-    supabase.from("students").select("id", { count: "exact", head: true }).eq("library_id", libraryId).eq("status", "active"),
+    applyMembershipStatusFilter(supabase.from("students").select("id", { count: "exact", head: true }).eq("library_id", libraryId), "active"),
     supabase.from("students").select("id", { count: "exact", head: true }).eq("library_id", libraryId).gte("no_show_days", 2),
   ]);
 
@@ -163,9 +185,7 @@ export const fetchQrPassesAll = async ({
       query = query.or(`full_name.ilike.${pattern},phone.ilike.${pattern}`);
     }
 
-    if (status !== "all") {
-      query = query.eq("status", status);
-    }
+    query = applyMembershipStatusFilter(query, status);
 
     const { data, error } = await query;
     if (error) throw error;
