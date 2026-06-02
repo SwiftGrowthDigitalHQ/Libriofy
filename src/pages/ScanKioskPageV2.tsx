@@ -258,6 +258,25 @@ const ScanKioskPageV2 = () => {
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
   // Online
   useEffect(() => { const on = () => setOnline(true); const off = () => setOnline(false); window.addEventListener("online", on); window.addEventListener("offline", off); return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); }; }, []);
+
+  const refreshQ = useCallback(async () => { const c = await countAttendanceQueueEntries().catch(() => 0); if (mountRef.current) setPending(c); }, []);
+  const clearResume = useCallback(() => { if (resumeRef.current !== null) { clearTimeout(resumeRef.current); resumeRef.current = null; } }, []);
+  const commitLiveScannerDebug = useCallback((force = false) => {
+    const timestamp = Date.now();
+    if (!force && timestamp - liveScannerSyncAtRef.current < 220) {
+      return;
+    }
+
+    liveScannerSyncAtRef.current = timestamp;
+    setLiveScannerDebug({ ...liveScannerDebugRef.current });
+  }, []);
+  const updateLiveScannerDebug = useCallback((
+    updater: (current: LiveScannerDebugState) => LiveScannerDebugState,
+    force = false,
+  ) => {
+    liveScannerDebugRef.current = updater(liveScannerDebugRef.current);
+    commitLiveScannerDebug(force);
+  }, [commitLiveScannerDebug]);
   useEffect(() => {
     updateLiveScannerDebug((current) => ({
       ...current,
@@ -296,25 +315,6 @@ const ScanKioskPageV2 = () => {
     const intervalId = window.setInterval(syncTrackSettings, 1200);
     return () => window.clearInterval(intervalId);
   }, [updateLiveScannerDebug]);
-
-  const refreshQ = useCallback(async () => { const c = await countAttendanceQueueEntries().catch(() => 0); if (mountRef.current) setPending(c); }, []);
-  const clearResume = useCallback(() => { if (resumeRef.current !== null) { clearTimeout(resumeRef.current); resumeRef.current = null; } }, []);
-  const commitLiveScannerDebug = useCallback((force = false) => {
-    const timestamp = Date.now();
-    if (!force && timestamp - liveScannerSyncAtRef.current < 220) {
-      return;
-    }
-
-    liveScannerSyncAtRef.current = timestamp;
-    setLiveScannerDebug({ ...liveScannerDebugRef.current });
-  }, []);
-  const updateLiveScannerDebug = useCallback((
-    updater: (current: LiveScannerDebugState) => LiveScannerDebugState,
-    force = false,
-  ) => {
-    liveScannerDebugRef.current = updater(liveScannerDebugRef.current);
-    commitLiveScannerDebug(force);
-  }, [commitLiveScannerDebug]);
   const appendDebugStage = useCallback((stage: string, detail?: Record<string, unknown>) => {
     if (!debugMode) {
       return;
