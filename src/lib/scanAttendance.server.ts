@@ -10,6 +10,7 @@ import {
 } from "./studentQr.js";
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
+import { resolveSupabaseAdminConfig } from "./observability/supabaseAdminConfig.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -764,8 +765,6 @@ export const resolveScanAttendanceRequest = async (
       } satisfies Record<string, unknown>)
     : null;
   const route = "/api/attendance/scan";
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
   const publicKey =
     readEnv(
       env,
@@ -774,6 +773,7 @@ export const resolveScanAttendanceRequest = async (
       "VITE_STUDENT_QR_PUBLIC_KEY",
       "QR_VERIFY_PUBLIC_KEY",
     ) ?? "";
+  const adminConfig = resolveSupabaseAdminConfig(env);
 
   if (debug) {
     const qrCode = readStringField(body, "qr_code", "qrCode");
@@ -801,6 +801,8 @@ export const resolveScanAttendanceRequest = async (
             (name) => normalizeString(env[name]),
           ) ?? null
         : null,
+      serviceRoleKeySource: adminConfig.ok ? adminConfig.config.serviceRoleKeyEnvName : null,
+      supabaseUrlSource: adminConfig.ok ? adminConfig.config.supabaseUrlEnvName : null,
     };
     pushDebugStage(debug, "request_received", "info", {
       qrLength: qrCode.length,
@@ -808,15 +810,14 @@ export const resolveScanAttendanceRequest = async (
     });
   }
 
-  if (!supabaseUrl || !serviceRoleKey) {
+  if (!adminConfig.ok) {
     pushDebugStage(debug, "env_validation", "error", {
-      hasServiceRoleKey: Boolean(serviceRoleKey),
-      hasSupabaseUrl: Boolean(supabaseUrl),
+      detail: adminConfig.detail,
     });
-    return buildError("Supabase environment is not configured", 500, "CONFIG_ERROR", debug);
+    return buildError(adminConfig.detail, 500, "CONFIG_ERROR", debug);
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  const supabase = createClient(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -1572,6 +1573,7 @@ export const resolveScanAttendanceDebugRequest = async (
     ) ?? "";
   const privateKey =
     readEnv(env, "STUDENT_QR_PRIVATE_KEY", "QR_SIGNING_PRIVATE_KEY", "VITE_QR_PRIVATE_KEY") ?? "";
+  const adminConfig = resolveSupabaseAdminConfig(env);
   const debug: Record<string, unknown> = {
     action,
     enabled: true,
@@ -1587,17 +1589,25 @@ export const resolveScanAttendanceDebugRequest = async (
     writeAttendance,
   });
 
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
+  if (!adminConfig.ok) {
     pushDebugStage(debug, "debug_env_validation", "error", {
-      hasServiceRoleKey: Boolean(serviceRoleKey),
-      hasSupabaseUrl: Boolean(supabaseUrl),
+      detail: adminConfig.detail,
     });
-    return buildError("Supabase environment is not configured", 500, "CONFIG_ERROR", debug);
+    return buildError(adminConfig.detail, 500, "CONFIG_ERROR", debug);
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  debug.env = {
+    hasPrivateKey: Boolean(privateKey),
+    hasPublicKey: Boolean(publicKey),
+    privateKeyFingerprint: await fingerprintValue(privateKey),
+    publicKeyFingerprint: await fingerprintValue(publicKey),
+    privateKeySource: privateKey ? ["STUDENT_QR_PRIVATE_KEY", "QR_SIGNING_PRIVATE_KEY", "VITE_QR_PRIVATE_KEY"].find((name) => normalizeString(env[name])) ?? null : null,
+    publicKeySource: publicKey ? ["STUDENT_QR_PUBLIC_KEY", "VITE_QR_PUBLIC_KEY", "VITE_STUDENT_QR_PUBLIC_KEY", "QR_VERIFY_PUBLIC_KEY"].find((name) => normalizeString(env[name])) ?? null : null,
+    serviceRoleKeySource: adminConfig.config.serviceRoleKeyEnvName,
+    supabaseUrlSource: adminConfig.config.supabaseUrlEnvName,
+  };
+
+  const supabase = createClient(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -1671,10 +1681,16 @@ export const resolveScanAttendanceDebugRequest = async (
       token: generatedQrCode,
     };
     debug.env = {
+      ...(debug.env && typeof debug.env === "object" ? (debug.env as Record<string, unknown>) : {}),
       hasPrivateKey: true,
       hasPublicKey: Boolean(publicKey),
       privateKeyFingerprint: await fingerprintValue(privateKey),
+      privateKeySource: ["STUDENT_QR_PRIVATE_KEY", "QR_SIGNING_PRIVATE_KEY", "VITE_QR_PRIVATE_KEY"].find(
+        (name) => normalizeString(env[name]),
+      ) ?? null,
       publicKeyFingerprint: await fingerprintValue(publicKey),
+      serviceRoleKeySource: adminConfig.config.serviceRoleKeyEnvName,
+      supabaseUrlSource: adminConfig.config.supabaseUrlEnvName,
     };
     pushDebugStage(debug, "qr_generation", "ok", {
       exp: claims.exp,

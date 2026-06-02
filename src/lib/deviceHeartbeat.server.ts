@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
 import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
+import { resolveSupabaseAdminConfig } from "./observability/supabaseAdminConfig.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -28,17 +29,6 @@ export type DeviceHeartbeatServiceResponse = {
 };
 
 const DEVICE_HEARTBEAT_ROUTE = "/api/device-heartbeat";
-
-const readEnv = (env: EnvLike, ...names: string[]) => {
-  for (const name of names) {
-    const value = env[name];
-    if (value && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return undefined;
-};
 
 const normalizeString = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -135,14 +125,12 @@ export const resolveDeviceHeartbeatRequest = async (
     return buildError("Device ID and Library ID are required.", 400, "DEVICE_BLOCKED");
   }
 
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return buildError("Scanner heartbeat is not configured on the server.", 500, "CONFIG_ERROR");
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (!adminConfig.ok) {
+    return buildError(adminConfig.detail, 500, "CONFIG_ERROR");
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  const supabase = createClient(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

@@ -2,7 +2,9 @@ type EnvLike = Record<string, string | undefined>;
 
 type SupabaseAdminConfig = {
   serviceRoleKey: string;
+  serviceRoleKeyEnvName: KeyCandidate["envName"];
   supabaseUrl: string;
+  supabaseUrlEnvName: UrlCandidate["envName"];
 };
 
 type SupabaseAdminConfigResult =
@@ -233,7 +235,9 @@ export const resolveSupabaseAdminConfig = (env: EnvLike = process.env): Supabase
   return {
     config: {
       serviceRoleKey: selectedPair.keyCandidate.value,
+      serviceRoleKeyEnvName: selectedPair.keyCandidate.envName,
       supabaseUrl: selectedPair.urlCandidate.value,
+      supabaseUrlEnvName: selectedPair.urlCandidate.envName,
     },
     ok: true,
   };

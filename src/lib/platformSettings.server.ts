@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import type { Database } from "../integrations/supabase/types.js";
 import { incrementRuntimeMetric } from "./observability/runtimeMetrics.server.js";
+import { resolveSupabaseAdminConfig } from "./observability/supabaseAdminConfig.server.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 
 type EnvLike = Record<string, string | undefined>;
@@ -29,26 +30,13 @@ const inflightRequests = new Map<string, Promise<PlatformSettingRecord[]>>();
 
 const normalizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-const readEnv = (env: EnvLike, ...names: string[]) => {
-  for (const name of names) {
-    const value = env[name];
-    if (value && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return "";
-};
-
 export const createPlatformServiceClient = (env: EnvLike = process.env) => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error("Supabase platform service credentials are missing.");
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (!adminConfig.ok) {
+    throw new Error(adminConfig.detail);
   }
 
-  return createClient<Database>(supabaseUrl, serviceRoleKey, {
+  return createClient<Database>(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

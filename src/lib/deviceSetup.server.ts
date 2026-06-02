@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
 import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
+import { resolveSupabaseAdminConfig } from "./observability/supabaseAdminConfig.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -84,17 +85,15 @@ export const validateAndBindScannerDevice = async (
     };
   }
 
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
+  const adminConfig = resolveSupabaseAdminConfig(env);
+  if (!adminConfig.ok) {
     return {
       valid: false,
-      message: "Scanner setup is not configured on the server.",
+      message: adminConfig.detail,
     };
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  const supabase = createClient(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

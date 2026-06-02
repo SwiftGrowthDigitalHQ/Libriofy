@@ -1,7 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
-
 import { MAINTENANCE_SETTINGS_KEY, parseBooleanSetting, type MaintenanceStatus } from "./maintenance.js";
-import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
+import { createPlatformServiceClient } from "./platformSettings.server.js";
 
 type EnvLike = Record<string, string | undefined>;
 type MaintenanceSettingRow = {
@@ -43,28 +41,11 @@ const readEnvMaintenanceMode = (env: EnvLike): MaintenanceStatus | null => {
 };
 
 const createSettingsClient = (env: EnvLike) => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const supabaseKey = readEnv(
-    env,
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "VITE_SUPABASE_SERVICE_ROLE_KEY",
-    "SUPABASE_ANON_KEY",
-    "VITE_SUPABASE_ANON_KEY",
-  );
-
-  if (!supabaseUrl || !supabaseKey) {
+  try {
+    return createPlatformServiceClient(env);
+  } catch {
     return null;
   }
-
-  return createClient(supabaseUrl, supabaseKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-    global: {
-      fetch: createInstrumentedServerSupabaseFetch("maintenance_server"),
-    },
-  });
 };
 
 const normalizeDatabaseMaintenanceStatus = (row: MaintenanceSettingRow | null): MaintenanceStatus | null => {
