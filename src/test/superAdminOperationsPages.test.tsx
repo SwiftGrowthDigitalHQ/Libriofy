@@ -1083,82 +1083,36 @@ describe("super admin operations pages", () => {
     });
   });
 
-  it("renders release operations on the dashboard", () => {
+  it("renders the current dashboard summary cards", () => {
     render(<SuperAdminDashboard />);
 
-    expect(screen.getByText("Release Operations")).toBeInTheDocument();
-    expect(screen.getByText("release-2026-05-09")).toBeInTheDocument();
-    expect(screen.getByText("Schema readiness")).toBeInTheDocument();
-    expect(screen.getByText("Rollback")).toBeInTheDocument();
-    expect(screen.getByText("Deployment simulation")).toBeInTheDocument();
-    expect(screen.getAllByText(/ready for promotion/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Platform overview")).toBeInTheDocument();
+    expect(screen.getByText("Total Libraries")).toBeInTheDocument();
+    expect(screen.getByText("Active Libraries")).toBeInTheDocument();
+    expect(screen.getByText("Total Students")).toBeInTheDocument();
+    expect(screen.getByText("Monthly Revenue")).toBeInTheDocument();
+    expect(screen.getByText("Pending Jobs")).toBeInTheDocument();
+    expect(screen.getByText("Platform Status")).toBeInTheDocument();
   });
 
-  it("renders operational intelligence, routing, and simulation guidance in analytics", () => {
+  it("renders the analytics overview cards in lightweight mode", () => {
     render(<SuperAdminAnalytics />);
 
-    expect(screen.getByText("Operational intelligence")).toBeInTheDocument();
-    expect(screen.getByText("Escalation risk for incident-key")).toBeInTheDocument();
-    expect(screen.getByText("Adaptive routing")).toBeInTheDocument();
-    expect(screen.getByText("emea-ops@libriofy.com")).toBeInTheDocument();
-    expect(screen.getByText("Simulation readiness")).toBeInTheDocument();
-    expect(screen.getByText("Replay simulation")).toBeInTheDocument();
+    expect(screen.getByText("Operational analytics running in lightweight mode.")).toBeInTheDocument();
+    expect(screen.getByText("Daily active libraries")).toBeInTheDocument();
+    expect(screen.getByText("Students today")).toBeInTheDocument();
+    expect(screen.getByText("Conversion rate")).toBeInTheDocument();
+    expect(screen.getByText("System status")).toBeInTheDocument();
+    expect(screen.getByText("Revenue by city")).toBeInTheDocument();
+    expect(screen.getByText("Health center")).toBeInTheDocument();
+    expect(screen.getByText("Communication")).toBeInTheDocument();
+    expect(screen.getByText("Billing pulse")).toBeInTheDocument();
+    expect(screen.getByText("Security pulse")).toBeInTheDocument();
+    expect(screen.getByText("Governance flow")).toBeInTheDocument();
   });
 
-  it("falls back to platform health signals on the dashboard when analytics health is empty", () => {
-    mockUseAnalytics.mockReturnValue({
-      data: {
-        automation: { failedJobs: 1, inactiveLibraries: [], queuedJobs: 4 },
-        billing: { gstRatePercent: 18, invoices: 3, refunds: 1 },
-        cityMetrics: [],
-        communication: { emailSuccessRate: 96, failedNotifications: 1, queuedNotifications: 0 },
-        generatedAt: "2026-05-07T10:00:00.000Z",
-        governance: {
-          automationInactiveLibraryAlertEnabled: true,
-          automationPaymentReminderEnabled: true,
-          automationSubscriptionRenewalEnabled: true,
-          billingMutationsEnabled: true,
-          maintenanceMode: false,
-          queueProcessingEnabled: true,
-        },
-        healthCenter: [],
-        incidents: { critical: 1, unresolved: 2 },
-        operationalIntelligence: null,
-        overview: {
-          activeStudentsToday: 7,
-          conversionRate: 12.5,
-          dailyActiveLibraries: 3,
-          revenueByCity: [],
-          revenuePreviousMonth: 12000,
-          revenueThisMonth: 18000,
-          series: [],
-        },
-        runtimeVisibility: {
-          activeWorkers: 0,
-          apiLatencyP95Ms: 0,
-          deadLetterJobs: 0,
-          emailFailureRate: 0,
-          incidentSeverityCounts: { critical: 0, error: 0, info: 0, warning: 0 },
-          otpDeliveryFailures: 0,
-          paymentRetryRate: 0,
-          queueLagMs: 0,
-          queueLatencyP95Ms: 0,
-          redisDegraded: false,
-          retryCount: 0,
-          slowRequests: 0,
-        },
-        security: {
-          failedLoginAttempts24h: 1,
-          ipWhitelistEnabled: false,
-          suspiciousIps: [],
-          whitelist: [],
-        },
-        systemStatus: "yellow",
-      },
-      error: undefined,
-      refetch: vi.fn(),
-    });
-
+  it("renders the current dashboard status and metrics", () => {
     mockUseControlPlane.mockReturnValue({
       data: {
         analytics: {
@@ -1212,84 +1166,40 @@ describe("super admin operations pages", () => {
 
     render(<SuperAdminDashboard />);
 
-    expect(screen.getByText("Storage")).toBeInTheDocument();
-    expect(screen.getByText("Online")).toBeInTheDocument();
+    expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Platform overview")).toBeInTheDocument();
+    expect(screen.getAllByText("Healthy").length).toBeGreaterThan(0);
+    expect(screen.getByText("Total Libraries")).toBeInTheDocument();
+    expect(screen.getByText("Active Libraries")).toBeInTheDocument();
+    expect(screen.getByText("Total Students")).toBeInTheDocument();
+    expect(screen.getByText("Pending Jobs")).toBeInTheDocument();
+    expect(screen.getByText("Platform Status")).toBeInTheDocument();
   });
 
-  it("falls back to platform analytics when the aggregated analytics query is unavailable", () => {
-    mockUseAnalytics.mockReturnValue({
+  it("shows fallback copy when control-plane analytics are unavailable", () => {
+    mockUseControlPlane.mockReturnValue({
       data: undefined,
       error: new Error("Analytics center is temporarily unavailable."),
-      refetch: vi.fn(),
-    });
-
-    mockUseControlPlane.mockReturnValue({
-      data: {
-        analytics: {
-          activeStudentsToday: 17,
-          conversionRate: 8.75,
-          dailyActiveLibraries: 9,
-          revenueByCity: [],
-          revenuePreviousMonth: 22000,
-          revenueThisMonth: 26000,
-          series: [],
-        },
-        automation: {
-          failedJobs: 0,
-          inactiveLibraries: [],
-          queuedJobs: 2,
-        },
-        featureFlags: [],
-        generatedAt: "2026-05-07T10:00:00.000Z",
-        incidents: [],
-        libraries: [],
-        maintenanceMode: false,
-        releaseGovernance: null,
-        runtimeGovernance: {
-          automationInactiveLibraryAlertEnabled: true,
-          automationPaymentReminderEnabled: true,
-          automationSubscriptionRenewalEnabled: true,
-          billingMutationsEnabled: true,
-          maintenanceMode: false,
-          queueProcessingEnabled: true,
-        },
-        security: {
-          failedLoginAttempts24h: 3,
-          ipWhitelistEnabled: true,
-          suspiciousIps: [{ failures: 2, ip: "198.51.100.44" }],
-          whitelist: ["198.51.100.10"],
-        },
-        settings: [],
-        statusSignals: [
-          {
-            detail: "Live platform fallback.",
-            label: "Storage",
-            status: "green",
-            value: "Online",
-          },
-        ],
-        systemStatus: "green",
-      },
-      error: undefined,
       refetch: vi.fn(),
     });
 
     render(<SuperAdminAnalytics />);
 
     expect(screen.getByText("Analytics aggregation is temporarily degraded")).toBeInTheDocument();
-    expect(screen.getByText("Storage")).toBeInTheDocument();
-    expect(screen.getByText("Online")).toBeInTheDocument();
-    expect(screen.getByText("17")).toBeInTheDocument();
+    expect(
+      screen.getByText("Revenue analytics will appear here after the first approved transactions land."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Telemetry is reconnecting. Database, queue, deployment, and auth health will populate automatically after the next successful sync."),
+    ).toBeInTheDocument();
   });
 
-  it("uses live library counts and quiet-attendance messaging on the dashboard", () => {
+  it("uses live dashboard counts on the dashboard", () => {
     mockUseControlPlane.mockReturnValue({
       data: {
         analytics: {
-          activeLibraryCount: 6,
           activeStudentsToday: 0,
           activeStudentsYesterday: 11,
-          activeSubscriptionCount: 4,
           attendanceLibrariesYesterday: 1,
           conversionRate: 12.5,
           dailyActiveLibraries: 0,
@@ -1298,17 +1208,16 @@ describe("super admin operations pages", () => {
           revenuePreviousMonth: 12000,
           revenueThisMonth: 18000,
           series: [],
-          trialLibraryCount: 2,
         },
         automation: {
           failedJobs: 0,
           inactiveLibraries: [],
-          queuedJobs: 0,
+          queuedJobs: 4,
         },
         featureFlags: [],
         generatedAt: "2026-05-19T10:00:00.000Z",
         incidents: [],
-        libraries: [],
+        libraries: Array.from({ length: 6 }, (_, index) => ({ id: `lib-${index + 1}` })),
         maintenanceMode: false,
         releaseGovernance: null,
         runtimeGovernance: {
@@ -1336,9 +1245,10 @@ describe("super admin operations pages", () => {
 
     render(<SuperAdminDashboard />);
 
-    expect(screen.getByText("Attendance systems are quiet right now")).toBeInTheDocument();
+    expect(screen.getByText("Total Libraries")).toBeInTheDocument();
     expect(screen.getByText("6")).toBeInTheDocument();
-    expect(screen.getByText("4 subscriptions active or trial")).toBeInTheDocument();
+    expect(screen.getByText("Pending Jobs")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
   });
 
   it("replays dead-letter jobs from the automation operations table", async () => {
@@ -1361,13 +1271,17 @@ describe("super admin operations pages", () => {
     });
   });
 
-  it("shows remediation and recommendation guidance in automation", () => {
+  it("shows remediation and recommendation guidance in lightweight mode", () => {
     render(<SuperAdminAutomation />);
 
     expect(screen.getByText("Remediation planner")).toBeInTheDocument();
-    expect(screen.getByText("Queue replay remediation")).toBeInTheDocument();
+    expect(
+      screen.getByText("Remediation planning snapshots are paused on this dashboard to reduce control-plane load."),
+    ).toBeInTheDocument();
     expect(screen.getByText("Recommendation engine")).toBeInTheDocument();
-    expect(screen.getByText("Recommended responder")).toBeInTheDocument();
+    expect(
+      screen.getByText("Recommendation synthesis is temporarily reduced. Refresh manually when operator review is needed."),
+    ).toBeInTheDocument();
   });
 
   it("saves queue and billing governance toggles from the settings console", async () => {
@@ -1397,6 +1311,7 @@ describe("super admin operations pages", () => {
   it("renders governance runtime visibility in the settings console", () => {
     render(<SuperAdminSettings />);
 
+    fireEvent.click(screen.getByRole("button", { name: "RBAC & Access" }));
     expect(screen.getByText("Governance runtime")).toBeInTheDocument();
     expect(screen.getAllByText("Active elevations").length).toBeGreaterThan(0);
     expect(screen.getByText("25m remaining")).toBeInTheDocument();

@@ -56,7 +56,7 @@ describe("super admin revenue page", () => {
     render(<SuperAdminRevenue />);
 
     expect(screen.getByText("Session expired. Please sign in again.")).toBeInTheDocument();
-    expect(screen.getAllByText("Session check required")).toHaveLength(5);
-    expect(screen.queryByText("₹0")).not.toBeInTheDocument();
+    expect(screen.getByText("Admin APIs require an active super admin session.")).toBeInTheDocument();
+    expect(screen.queryByText("Total Revenue")).not.toBeInTheDocument();
   });
 });

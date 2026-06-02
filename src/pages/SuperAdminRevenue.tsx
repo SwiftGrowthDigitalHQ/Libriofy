@@ -71,6 +71,24 @@ const SuperAdminRevenue = () => {
     }
   };
 
+  if (isAuthError) {
+    return (
+      <SuperAdminLayout>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold font-display text-foreground">Plans & Revenue</h1>
+            <p className="text-sm text-muted-foreground">Manage subscription plans, view revenue, and record adjustments.</p>
+          </div>
+
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+            <p className="text-sm font-medium text-destructive">Session expired. Please sign in again.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Admin APIs require an active super admin session.</p>
+          </div>
+        </div>
+      </SuperAdminLayout>
+    );
+  }
+
   return (
     <SuperAdminLayout>
       <div className="space-y-6">
