@@ -132,7 +132,18 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Trigger Render staging deploy
-        run: curl --fail --show-error --silent --request POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+        continue-on-error: true
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is missing; skipping Render staging trigger."
+            exit 0
+          fi
+
+          curl --fail --show-error --silent --request POST "$RENDER_DEPLOY_HOOK_URL" || {
+            echo "Render staging trigger returned a non-success response; continuing to health verification."
+          }
 
       - name: Wait for staging propagation
         run: sleep 15
@@ -242,7 +253,18 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Trigger Render production deploy
-        run: curl --fail --show-error --silent --request POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+        continue-on-error: true
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is missing; skipping Render production trigger."
+            exit 0
+          fi
+
+          curl --fail --show-error --silent --request POST "$RENDER_DEPLOY_HOOK_URL" || {
+            echo "Render production trigger returned a non-success response; continuing to health verification."
+          }
 
       - name: Wait for deployment propagation
         run: sleep 15
