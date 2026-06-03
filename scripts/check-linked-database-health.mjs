@@ -36,15 +36,94 @@ const loadEnvFile = () => {
   }
 };
 
+const readLinkedProjectRef = () => {
+  const explicitProjectRef = readEnv("SUPABASE_PROJECT_ID", "VITE_SUPABASE_PROJECT_ID");
+  if (explicitProjectRef) {
+    return { projectRef: explicitProjectRef, source: "env" };
+  }
+
+  const configPath = path.join(projectRoot, "supabase", "config.toml");
+  if (!fs.existsSync(configPath)) {
+    return { projectRef: "", source: "" };
+  }
+
+  const configText = fs.readFileSync(configPath, "utf8");
+  const match = configText.match(/^\s*project_id\s*=\s*"([a-z0-9-]+)"\s*$/im);
+  return {
+    projectRef: match?.[1] ?? "",
+    source: match ? "supabase/config.toml" : "",
+  };
+};
+
+const extractProjectRefFromUrl = (value) => {
+  if (!value) return "";
+
+  try {
+    const hostname = new URL(value).hostname;
+    const match = hostname.match(/^([a-z0-9-]+)\.supabase\.co$/i);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
+};
+
+const resolveSupabaseUrl = () => {
+  const linkedProject = readLinkedProjectRef();
+  const linkedProjectUrl = linkedProject.projectRef ? `https://${linkedProject.projectRef}.supabase.co` : "";
+  const urlCandidates = [
+    { envName: "SUPABASE_URL", value: readEnv("SUPABASE_URL") },
+    { envName: "VITE_SUPABASE_URL", value: readEnv("VITE_SUPABASE_URL") },
+  ].filter((candidate) => candidate.value);
+
+  const matchingCandidate = urlCandidates.find((candidate) => extractProjectRefFromUrl(candidate.value) === linkedProject.projectRef);
+  if (matchingCandidate) {
+    return {
+      projectRef: linkedProject.projectRef,
+      projectRefSource: linkedProject.source,
+      selectedUrl: matchingCandidate.value,
+      selectedUrlSource: matchingCandidate.envName,
+      urlCandidates,
+      linkedProjectUrl,
+    };
+  }
+
+  if (linkedProjectUrl) {
+    return {
+      projectRef: linkedProject.projectRef,
+      projectRefSource: linkedProject.source,
+      selectedUrl: linkedProjectUrl,
+      selectedUrlSource: linkedProject.source || "derived",
+      urlCandidates,
+      linkedProjectUrl,
+    };
+  }
+
+  const firstCandidate = urlCandidates[0];
+  return {
+    projectRef: "",
+    projectRefSource: "",
+    selectedUrl: firstCandidate?.value ?? "",
+    selectedUrlSource: firstCandidate?.envName ?? "",
+    urlCandidates,
+    linkedProjectUrl: "",
+  };
+};
+
 loadEnvFile();
 
-const supabaseUrl = readEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
+const supabaseResolution = resolveSupabaseUrl();
+const supabaseUrl = supabaseResolution.selectedUrl;
 const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
 
 if (!supabaseUrl || !serviceRoleKey) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY for linked database health validation.");
   process.exit(1);
 }
+
+console.log(
+  `Using linked Supabase project ${supabaseResolution.projectRef || "unknown"} from ${supabaseResolution.projectRefSource || "derived config"}, ` +
+    `resolved URL ${supabaseUrl} via ${supabaseResolution.selectedUrlSource || "fallback"}.`,
+);
 
 const criticalEntities = ["recovery_queue", "payments", "students"];
 const relationChecks = [
