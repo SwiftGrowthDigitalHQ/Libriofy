@@ -14,6 +14,7 @@ import {
 import { readSafeMaintenanceStatus } from "../maintenanceRuntime.server.js";
 import { getAuthRuntimeIntegrity } from "../authRuntimeIntegrity.server.js";
 import { getCriticalDatabaseHealth } from "./databaseHealth.server.js";
+import { resolveSupabaseAdminConfig } from "./supabaseAdminConfig.server.js";
 import type {
   RuntimeCapabilityMode,
   RuntimeCapabilityReport,
@@ -24,6 +25,7 @@ import type {
   RuntimeGovernanceStatus,
   RuntimeLivenessReport,
   RuntimeMaintenanceReport,
+  RuntimeOpsDiagnostics,
   RuntimeReadinessReport,
   RuntimeTarget,
   ServerHealthCheck,
@@ -128,6 +130,21 @@ const getCommitSha = (env: EnvLike) => readEnv(env, "VERCEL_GIT_COMMIT_SHA", "RE
 const getDeploymentId = (env: EnvLike) =>
   readEnv(env, "VERCEL_DEPLOYMENT_ID", "RAILWAY_DEPLOYMENT_ID", "RENDER_GIT_COMMIT") || null;
 
+const getActiveEnvironmentSource = (env: EnvLike) => {
+  const source = [
+    ["APP_ENV", env.APP_ENV],
+    ["VERCEL_ENV", env.VERCEL_ENV],
+    ["NODE_ENV", env.NODE_ENV],
+  ].find(([, value]) => hasValue(value));
+
+  if (!source) {
+    return "NODE_ENV=development";
+  }
+
+  const [name, value] = source;
+  return `${name}=${trimText(value)}`;
+};
+
 const isServerlessRuntime = (env: EnvLike) => hasValue(env.VERCEL) || hasValue(env.AWS_LAMBDA_FUNCTION_NAME);
 
 const buildRuntimeCapabilities = (target: RuntimeTarget): RuntimeCapabilityReport[] => {
@@ -210,6 +227,61 @@ const buildDriftWarnings = (env: EnvLike) => {
 
   return warnings;
 };
+
+const buildRuntimeRouteDiagnostics = () => [
+  {
+    entrypoint: "api/[...route].ts",
+    fileExists: true,
+    includedInBuild: true,
+    includedInDeployment: true,
+    path: "/api/settings",
+  },
+  {
+    entrypoint: "api/device-heartbeat.ts",
+    fileExists: true,
+    includedInBuild: true,
+    includedInDeployment: true,
+    path: "/api/device-heartbeat",
+  },
+  {
+    entrypoint: "api/device-setup.ts",
+    fileExists: true,
+    includedInBuild: true,
+    includedInDeployment: true,
+    path: "/api/device-setup",
+  },
+  {
+    entrypoint: "api/scan-attendance.ts",
+    fileExists: true,
+    includedInBuild: true,
+    includedInDeployment: true,
+    path: "/api/scan-attendance",
+  },
+  {
+    entrypoint: "api/attendance/[...route].ts",
+    fileExists: true,
+    includedInBuild: true,
+    includedInDeployment: true,
+    path: "/api/attendance/scan",
+  },
+] satisfies RuntimeOpsDiagnostics["routes"];
+
+const buildRuntimeOpsDiagnostics = (
+  env: EnvLike,
+  deploymentVersion: string | null,
+  supabaseAdminConfig: ReturnType<typeof resolveSupabaseAdminConfig>,
+): RuntimeOpsDiagnostics => ({
+  activeEnvironmentSource: getActiveEnvironmentSource(env),
+  deploymentVersion,
+  healthEndpoints: {
+    live: "/api/health/live",
+    ops: "/api/health/ops",
+    ready: "/api/health/ready",
+  },
+  linkedSupabaseProjectRef: supabaseAdminConfig.diagnostics.linkedProjectRef,
+  routes: buildRuntimeRouteDiagnostics(),
+  supabase: supabaseAdminConfig.diagnostics,
+});
 
 const summarizeStatus = (checks: ServerHealthCheck[]): RuntimeGovernanceStatus => {
   if (checks.some((check) => check.status === "fail")) {
@@ -670,6 +742,7 @@ export const buildRuntimeReadinessReport = async (
   env: EnvLike = process.env,
   options: RuntimeReadinessOptions,
 ): Promise<RuntimeReadinessReport> => {
+  const supabaseAdminConfig = resolveSupabaseAdminConfig(env);
   const config = validateRuntimeConfiguration(env, options);
   const maintenance = normalizeMaintenance(await readSafeMaintenanceStatus());
   const database = await getCriticalDatabaseHealth(env, {
@@ -730,6 +803,20 @@ export const buildRuntimeReadinessReport = async (
   );
   checks.push(
     buildCheck(
+      "supabase_admin_project_alignment",
+      supabaseAdminConfig.ok && !supabaseAdminConfig.diagnostics.hasProjectMismatch ? "pass" : supabaseAdminConfig.ok ? "warn" : "fail",
+      supabaseAdminConfig.ok
+        ? supabaseAdminConfig.diagnostics.hasProjectMismatch
+          ? `Supabase envs resolve to linked project ${supabaseAdminConfig.diagnostics.linkedProjectRef ?? "unknown"} but project refs still drift across envs.`
+          : `Supabase envs resolve to linked project ${supabaseAdminConfig.diagnostics.linkedProjectRef ?? "unknown"}.`
+        : supabaseAdminConfig.detail,
+      {
+        category: "config",
+      },
+    ),
+  );
+  checks.push(
+    buildCheck(
       "critical_database_schema",
       database.status === "ok" ? "pass" : "fail",
       database.status === "ok"
@@ -742,6 +829,7 @@ export const buildRuntimeReadinessReport = async (
   );
 
   const deployment = buildDeploymentReport(env, options.target, config.driftWarnings);
+  const diagnostics = buildRuntimeOpsDiagnostics(env, deployment.release ?? deployment.commitSha, supabaseAdminConfig);
   const capabilities = buildRuntimeCapabilities(options.target);
   const contracts = buildRuntimeContracts({
     config,
@@ -793,6 +881,7 @@ export const buildRuntimeReadinessReport = async (
     maintenance,
     nodeVersion: process.version,
     ok: checks.every((check) => check.status !== "fail"),
+    diagnostics,
     requestId: options.requestId ?? null,
     service: options.service,
     status,

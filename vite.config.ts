@@ -581,6 +581,10 @@ export default defineConfig(({ mode }) => {
               return "vendor-supabase";
             }
 
+            if (id.includes("@sentry") || id.includes("detect-node-es") || id.includes("dom-helpers")) {
+              return "vendor-sentry";
+            }
+
             if (id.includes("recharts")) {
               return "vendor-charts";
             }
@@ -614,18 +618,42 @@ export default defineConfig(({ mode }) => {
               return "vendor-utils";
             }
 
-            if (
-              id.includes("html5-qrcode") ||
-              id.includes("jsqr") ||
-              id.includes("jspdf") ||
-              id.includes("jszip") ||
-              id.includes("html-to-image") ||
-              id.includes("browser-image-compression")
-            ) {
-              return "vendor-heavy";
+            if (id.includes("browser-image-compression")) {
+              return "vendor-browser-image-compression";
             }
 
-            return "vendor";
+            if (id.includes("jspdf")) {
+              return "vendor-jspdf";
+            }
+
+            if (id.includes("jszip")) {
+              return "vendor-jszip";
+            }
+
+            if (id.includes("html-to-image")) {
+              return "vendor-html-to-image";
+            }
+
+            if (id.includes("html5-qrcode")) {
+              return "vendor-html5-qrcode";
+            }
+
+            if (id.includes("jsqr")) {
+              return "vendor-jsqr";
+            }
+
+            const packagePath = id.split(/node_modules[\\/]/)[1];
+            if (!packagePath) {
+              return "vendor";
+            }
+
+            const packageSegments = packagePath.split(/[\\/]/);
+            const packageName = packageSegments[0].startsWith("@")
+              ? `${packageSegments[0]}/${packageSegments[1] ?? ""}`
+              : packageSegments[0];
+            const safePackageName = packageName.replace(/[^a-zA-Z0-9_-]/g, "-");
+
+            return safePackageName ? `vendor-${safePackageName}` : "vendor";
           },
         },
       },

@@ -39,7 +39,7 @@ const buildEnv = (overrides: Record<string, string | undefined> = {}) => ({
   SITE_URL: "https://www.libriofy.com",
   STUDENT_QR_PRIVATE_KEY: "qr-private-key",
   SUPABASE_JWT_SECRET: "jwt-secret",
-  SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+  SUPABASE_SERVICE_ROLE_KEY: "sb_secret_test_service_role_key",
   SUPABASE_URL: "https://libriofy.supabase.co",
   SENTRY_RELEASE: "release-2026-05-09",
   VITE_SUPABASE_URL: "https://libriofy.supabase.co",
@@ -171,6 +171,40 @@ describe("runtime governance", () => {
     expect(report.authIntegrity.status).toBe("ok");
     expect(report.checks.find((check) => check.name === "maintenance_source")?.status).toBe("warn");
     expect(report.contracts.find((contract) => contract.name === "maintenance")?.status).toBe("degraded");
+  });
+
+  it("surfaces ops diagnostics for deployment, environment source, routes, and linked Supabase project", async () => {
+    const report = await buildRuntimeReadinessReport(buildEnv(), {
+      hasDist: true,
+      phase: "test_ops_diagnostics",
+      service: "libriofy-auth-attendance-api",
+      startedAt: Date.now() - 5_000,
+      target: "express",
+    });
+
+    expect(report.diagnostics.deploymentVersion).toBe("release-2026-05-09");
+    expect(report.diagnostics.activeEnvironmentSource).toBe("APP_ENV=production");
+    expect(report.diagnostics.linkedSupabaseProjectRef).toBe("hchflmrvmfvunedjhwta");
+    expect(report.diagnostics.supabase.linkedProjectRefSource).toBe("supabase/config.toml");
+    expect(report.diagnostics.supabase.selectedSupabaseUrlEnvName).toBe("SUPABASE_URL");
+    expect(report.diagnostics.routes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entrypoint: "api/device-heartbeat.ts",
+          fileExists: true,
+          includedInBuild: true,
+          includedInDeployment: true,
+          path: "/api/device-heartbeat",
+        }),
+        expect.objectContaining({
+          entrypoint: "api/attendance/[...route].ts",
+          fileExists: true,
+          includedInBuild: true,
+          includedInDeployment: true,
+          path: "/api/attendance/scan",
+        }),
+      ]),
+    );
   });
 
   it("fails readiness when auth runtime contracts drift in the database layer", async () => {

@@ -89,6 +89,49 @@ export type RuntimeDeploymentReport = {
   runtimeFingerprint: string;
 };
 
+export type RuntimeRouteRegistrationDiagnostic = {
+  entrypoint: string;
+  fileExists: boolean;
+  includedInBuild: boolean;
+  includedInDeployment: boolean;
+  path: string;
+};
+
+export type RuntimeSupabaseOpsDiagnostic = {
+  hasProjectMismatch: boolean;
+  linkedProjectRef: string | null;
+  linkedProjectRefSource: string;
+  selectedProjectRef: string | null;
+  selectedServiceRoleKeyEnvName: string | null;
+  selectedSupabaseUrlEnvName: string | null;
+  selectionReason: string | null;
+  serviceRoleKeyCandidates: Array<{
+    envName: string;
+    kind: string;
+    matchesLinkedProjectRef: boolean;
+    projectRef: string | null;
+    role: string | null;
+  }>;
+  supabaseUrlCandidates: Array<{
+    envName: string;
+    matchesLinkedProjectRef: boolean;
+    projectRef: string | null;
+  }>;
+};
+
+export type RuntimeOpsDiagnostics = {
+  activeEnvironmentSource: string;
+  deploymentVersion: string | null;
+  healthEndpoints: {
+    live: string;
+    ops: string;
+    ready: string;
+  };
+  linkedSupabaseProjectRef: string | null;
+  routes: RuntimeRouteRegistrationDiagnostic[];
+  supabase: RuntimeSupabaseOpsDiagnostic;
+};
+
 export type RuntimeReadinessReport = {
   appEnv: string;
   authIntegrity: RuntimeAuthIntegrityReport;
@@ -105,6 +148,7 @@ export type RuntimeReadinessReport = {
   maintenance: RuntimeMaintenanceReport;
   nodeVersion: string | null;
   ok: boolean;
+  diagnostics: RuntimeOpsDiagnostics;
   requestId?: string | null;
   service: string;
   status: RuntimeGovernanceStatus;
