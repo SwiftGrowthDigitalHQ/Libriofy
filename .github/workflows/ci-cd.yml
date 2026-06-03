@@ -91,6 +91,7 @@ jobs:
 
       - name: Validate linked database schema contract
         run: npm run check:linked-db-health
+        if: steps.detect_migrations.outputs.supabase_migrations_changed == 'true'
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -199,6 +200,7 @@ jobs:
 
       - name: Validate linked database schema contract
         run: npm run check:linked-db-health
+        if: steps.detect_migrations.outputs.supabase_migrations_changed == 'true'
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
