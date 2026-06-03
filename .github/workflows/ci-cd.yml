@@ -62,7 +62,7 @@ jobs:
         run: npm ci
 
       - name: Inspect Supabase migration status
-        run: npx supabase migration list --linked --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+        run: npm run check:supabase-migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
@@ -70,13 +70,11 @@ jobs:
         run: npm run db:push:linked
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Verify Supabase migration status
         run: npm run check:supabase-migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Validate linked database schema contract
         run: npm run check:linked-db-health
@@ -159,7 +157,7 @@ jobs:
         run: npm ci
 
       - name: Inspect Supabase migration status
-        run: npx supabase migration list --linked --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+        run: npm run check:supabase-migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
@@ -167,13 +165,11 @@ jobs:
         run: npm run db:push:linked
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Verify Supabase migration status
         run: npm run check:supabase-migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Validate linked database schema contract
         run: npm run check:linked-db-health
