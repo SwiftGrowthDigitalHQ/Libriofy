@@ -47,18 +47,12 @@ type RpcErrorLike = {
 };
 
 type RpcAttempt = {
-  fn: "scan_attendance_entry" | "qr_check_in";
-  variant: "scan_attendance_entry" | "qr_check_in_modern" | "qr_check_in_legacy";
+  fn: "process_attendance_scan";
+  variant: "process_attendance_scan";
   args: Record<string, unknown>;
 };
 
 type ValidStudentQrPayload = Extract<Awaited<ReturnType<typeof parseStudentQrPayload>>, { valid: true }>;
-
-type StudentRpcTarget = {
-  fallbackQrCode: string;
-  resolvedStudentIdentifier: string;
-  rpcArgs: Record<string, unknown>;
-};
 
 type StudentQrParseResult = Awaited<ReturnType<typeof parseStudentQrPayload>>;
 
@@ -96,14 +90,12 @@ const LIBRARY_ACCESS_KEY_CACHE_TTL_MS = 60_000;
 const DEVICE_LOOKUP_CACHE_TTL_MS = 60_000;
 const STUDENT_QR_PARSE_CACHE_TTL_MS = 45_000;
 const STUDENT_QR_INVALID_CACHE_TTL_MS = 5_000;
-const STUDENT_LOOKUP_CACHE_TTL_MS = 60_000;
 const SUBSCRIPTION_CACHE_TTL_MS = 60_000;
 const CACHE_MAX_ENTRIES = 256;
 
 const libraryAccessKeyCache = new Map<string, CacheEntry<string | null>>();
 const deviceLookupCache = new Map<string, CacheEntry<DeviceLookupRecord | null>>();
 const studentQrParseCache = new Map<string, CacheEntry<StudentQrParseResult>>();
-const studentRpcTargetCache = new Map<string, CacheEntry<StudentRpcTarget>>();
 const subscriptionStateCache = new Map<string, CacheEntry<{ blocked: boolean }>>();
 
 const readEnv = (env: EnvLike, ...names: string[]) => {
@@ -563,138 +555,6 @@ const resolveParsedStudentQr = async ({
   }
 
   return parsedQr;
-};
-
-const resolveStudentRpcTargetUncached = async ({
-  supabase,
-  libraryId,
-  parsedQr,
-}: {
-  supabase: any;
-  libraryId: string;
-  parsedQr: ValidStudentQrPayload;
-}): Promise<StudentRpcTarget> => {
-  if (parsedQr.source === "legacy") {
-    return {
-      fallbackQrCode: parsedQr.qrCode,
-      resolvedStudentIdentifier: parsedQr.qrCode,
-      rpcArgs: {
-        p_qr_code: parsedQr.qrCode,
-      },
-    };
-  }
-
-  const submittedStudentIdentifier = normalizeString(parsedQr.studentId);
-  if (!submittedStudentIdentifier) {
-    return {
-      fallbackQrCode: parsedQr.rawValue,
-      resolvedStudentIdentifier: "",
-      rpcArgs: {
-        p_qr_code: parsedQr.rawValue,
-      },
-    };
-  }
-
-  if (parsedQr.source === "signed" && looksLikeUuid(submittedStudentIdentifier)) {
-    const { data: signedById, error: signedByIdError } = await supabase
-      .from("students")
-      .select("id, qr_code")
-      .eq("library_id", libraryId)
-      .eq("id", submittedStudentIdentifier)
-      .maybeSingle();
-
-    if (signedByIdError) {
-      throw signedByIdError;
-    }
-
-    return {
-      fallbackQrCode: normalizeString(signedById?.qr_code) || submittedStudentIdentifier,
-      resolvedStudentIdentifier: submittedStudentIdentifier,
-      rpcArgs: {
-        p_student_id: submittedStudentIdentifier,
-      },
-    };
-  }
-
-  if (looksLikeUuid(submittedStudentIdentifier)) {
-    const { data: byId, error: byIdError } = await supabase
-      .from("students")
-      .select("id, qr_code")
-      .eq("library_id", libraryId)
-      .eq("id", submittedStudentIdentifier)
-      .maybeSingle();
-
-    if (byIdError) {
-      throw byIdError;
-    }
-
-    if (byId?.id) {
-      return {
-        fallbackQrCode: normalizeString(byId.qr_code) || submittedStudentIdentifier,
-        resolvedStudentIdentifier: submittedStudentIdentifier,
-        rpcArgs: {
-          p_student_id: byId.id,
-        },
-      };
-    }
-  }
-
-  const { data: byQrCode, error: byQrCodeError } = await supabase
-    .from("students")
-    .select("id, qr_code")
-    .eq("library_id", libraryId)
-    .eq("qr_code", submittedStudentIdentifier)
-    .maybeSingle();
-
-  if (byQrCodeError) {
-    throw byQrCodeError;
-  }
-
-  if (byQrCode?.id) {
-    return {
-      fallbackQrCode: normalizeString(byQrCode.qr_code) || submittedStudentIdentifier,
-      resolvedStudentIdentifier: submittedStudentIdentifier,
-      rpcArgs: {
-        p_student_id: byQrCode.id,
-      },
-    };
-  }
-
-  return {
-    fallbackQrCode: submittedStudentIdentifier,
-    resolvedStudentIdentifier: submittedStudentIdentifier,
-    rpcArgs: {
-      p_qr_code: submittedStudentIdentifier,
-    },
-  };
-};
-
-const resolveStudentRpcTarget = async ({
-  supabase,
-  libraryId,
-  parsedQr,
-}: {
-  supabase: any;
-  libraryId: string;
-  parsedQr: ValidStudentQrPayload;
-}) => {
-  const lookupIdentifier =
-    parsedQr.source === "legacy"
-      ? parsedQr.qrCode
-      : normalizeString("studentId" in parsedQr ? parsedQr.studentId : parsedQr.rawValue) || parsedQr.rawValue;
-  const cacheKey = `${libraryId}::${parsedQr.source}::${lookupIdentifier}`;
-  const cachedTarget = getCacheValue(studentRpcTargetCache, cacheKey);
-  if (cachedTarget !== undefined) {
-    return cachedTarget;
-  }
-
-  const resolvedTarget = await resolveStudentRpcTargetUncached({
-    supabase,
-    libraryId,
-    parsedQr,
-  });
-
-  return setCacheValue(studentRpcTargetCache, cacheKey, resolvedTarget, STUDENT_LOOKUP_CACHE_TTL_MS);
 };
 
 const resolveStudentRecordForDebug = async ({
@@ -1238,20 +1098,20 @@ export const resolveScanAttendanceRequest = async (
     return buildError("Invalid ID", 400, "INVALID_QR", debug);
   }
 
-  let matchedStudentRecord: ScanStudentRecord | null = null;
-  try {
-    matchedStudentRecord = await resolveStudentRecordForDebug({
-      supabase,
-      libraryId: resolvedLibraryId,
-      parsedQr,
-    });
-  } catch (error) {
-    pushDebugStage(debug, "student_lookup_debug", "error", {
-      message: error instanceof Error ? error.message : "Unable to inspect the matched student record.",
-    });
-  }
-
   if (debug) {
+    let matchedStudentRecord: ScanStudentRecord | null = null;
+    try {
+      matchedStudentRecord = await resolveStudentRecordForDebug({
+        supabase,
+        libraryId: resolvedLibraryId,
+        parsedQr,
+      });
+    } catch (error) {
+      pushDebugStage(debug, "student_lookup_debug", "error", {
+        message: error instanceof Error ? error.message : "Unable to inspect the matched student record.",
+      });
+    }
+
     debug.studentLookup = matchedStudentRecord
       ? {
           exists: true,
@@ -1273,128 +1133,48 @@ export const resolveScanAttendanceRequest = async (
         };
   }
 
-  if (parsedQr.source === "signed" && looksLikeUuid(resolvedStudentIdentifier) && !matchedStudentRecord) {
-    pushDebugStage(debug, "student_lookup", "error", {
-      parsedStudentId: resolvedStudentIdentifier,
-      reason: "signed_student_missing",
-    });
-    return buildError("Student not found", 404, "STUDENT_NOT_FOUND", debug);
-  }
-
-  let studentRpcTarget: StudentRpcTarget;
-  try {
-    studentRpcTarget = await resolveStudentRpcTarget({
-      supabase,
-      libraryId: resolvedLibraryId,
-      parsedQr,
-    });
-  } catch (error) {
-    const classifiedError = classifyAttendanceRuntimeError(error);
-    const lookupMessage = error instanceof Error ? error.message : classifiedError.message;
-    pushDebugStage(debug, "student_resolution", "error", {
-      classifiedCode: classifiedError.code,
-      message: lookupMessage,
-      resolvedStudentIdentifier,
-    });
-
-    await logAttendanceFailure({
-      client: supabase,
-      route,
-      message: lookupMessage,
-      code: classifiedError.code,
-      source: "scan-attendance-server",
-      metadata: {
-        device_id: deviceId,
-        entry_id: entryId,
-        library_id: resolvedLibraryId,
-        student_id: resolvedStudentIdentifier,
-        stage: "student_resolution",
-      },
-    });
-
-    return buildError(
-      classifiedError.message,
-      resolveErrorStatusCode(classifiedError.code),
-      classifiedError.code,
-      debug,
-    );
-  }
-
-  pushDebugStage(debug, "student_resolution", "ok", {
-    resolvedStudentIdentifier: studentRpcTarget.resolvedStudentIdentifier,
-    rpcArgKeys: Object.keys(studentRpcTarget.rpcArgs),
-  });
-
-  const modernRpcArgs: Record<string, unknown> = {
+  const rpcArgs: Record<string, unknown> = {
+    p_failure_route: route,
     p_device_id: deviceId,
     p_library_id: resolvedLibraryId,
-    ...studentRpcTarget.rpcArgs,
     p_entry_id: entryId,
     p_entry_timestamp: entryTimestamp,
+    ...(parsedQr.source === "legacy" || !looksLikeUuid(resolvedStudentIdentifier)
+      ? { p_qr_code: resolvedStudentIdentifier }
+      : { p_student_id: resolvedStudentIdentifier }),
   };
-  const fallbackQrCode = studentRpcTarget.fallbackQrCode;
-  const rpcAttempts: RpcAttempt[] = [
-    {
-      fn: "scan_attendance_entry",
-      variant: "scan_attendance_entry",
-      args: modernRpcArgs,
-    },
-    {
-      fn: "qr_check_in",
-      variant: "qr_check_in_modern",
-      args: modernRpcArgs,
-    },
-    {
-      fn: "qr_check_in",
-      variant: "qr_check_in_legacy",
-      args: {
-        p_qr_code: fallbackQrCode,
-        p_library_id: resolvedLibraryId,
-      },
-    },
-  ];
+  const rpcAttempt: RpcAttempt = {
+    fn: "process_attendance_scan",
+    variant: "process_attendance_scan",
+    args: rpcArgs,
+  };
   let result: unknown = null;
   let scanError: unknown = null;
-  let rpcVariant: RpcAttempt["variant"] | null = null;
-  const rpcDebugAttempts: Record<string, unknown>[] = [];
+  let rpcVariant: RpcAttempt["variant"] | null = rpcAttempt.variant;
+  const rpcResponse = await supabase.rpc(rpcAttempt.fn, rpcAttempt.args);
+  const rpcDebugAttempts: Record<string, unknown>[] = [{
+    args: Object.keys(rpcAttempt.args),
+    fn: rpcAttempt.fn,
+    hasError: Boolean(rpcResponse.error),
+    variant: rpcAttempt.variant,
+    ...(rpcResponse.error
+      ? {
+          errorCode: normalizeString(getRpcErrorRecord(rpcResponse.error).code) || null,
+          errorMessage: normalizeString(getRpcErrorRecord(rpcResponse.error).message) || null,
+        }
+      : {}),
+  }];
 
-  for (const attempt of rpcAttempts) {
-    const rpcResponse = await supabase.rpc(attempt.fn, attempt.args);
-    rpcDebugAttempts.push({
-      args: Object.keys(attempt.args),
-      fn: attempt.fn,
-      hasError: Boolean(rpcResponse.error),
-      variant: attempt.variant,
-      ...(rpcResponse.error
-        ? {
-            errorCode: normalizeString(getRpcErrorRecord(rpcResponse.error).code) || null,
-            errorMessage: normalizeString(getRpcErrorRecord(rpcResponse.error).message) || null,
-          }
-        : {}),
-    });
-
-    if (!rpcResponse.error) {
-      result = rpcResponse.data;
-      rpcVariant = attempt.variant;
-      scanError = null;
-      break;
-    }
-
+  if (!rpcResponse.error) {
+    result = rpcResponse.data;
+    scanError = null;
+  } else {
     scanError = rpcResponse.error;
-    rpcVariant = attempt.variant;
-
-    const shouldTryNext =
-      isMissingRpcFunctionError(rpcResponse.error) && attempt.variant !== "qr_check_in_legacy";
-
-    if (!shouldTryNext) {
-      break;
-    }
   }
 
   if (debug) {
     debug.attendanceRpc = {
       attempts: rpcDebugAttempts,
-      fallbackQrCodePreview: fallbackQrCode ? `${fallbackQrCode.slice(0, 18)}${fallbackQrCode.length > 18 ? "..." : ""}` : null,
       selectedVariant: rpcVariant,
     };
   }

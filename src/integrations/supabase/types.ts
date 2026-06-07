@@ -4890,6 +4890,19 @@ export type Database = {
         }
         Returns: Json
       }
+      get_monthly_attendance_analytics: {
+        Args: { p_library_id: string; p_month?: string }
+        Returns: {
+          absent_days: number
+          attendance_percent: number
+          full_name: string
+          last_check_in: string | null
+          last_check_out: string | null
+          membership_status: string | null
+          present_days: number
+          student_id: string
+        }[]
+      }
       process_library_subscription_renewals: { Args: never; Returns: Json }
       process_locker_renewals: { Args: never; Returns: Json }
       process_renewals: { Args: never; Returns: Json }

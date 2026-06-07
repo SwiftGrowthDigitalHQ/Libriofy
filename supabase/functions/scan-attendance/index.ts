@@ -50,8 +50,8 @@ type RpcErrorLike = {
 };
 
 type RpcAttempt = {
-  fn: "scan_attendance_entry" | "qr_check_in";
-  variant: "scan_attendance_entry" | "qr_check_in_modern" | "qr_check_in_legacy";
+  fn: "process_attendance_scan";
+  variant: "process_attendance_scan";
   args: Record<string, unknown>;
 };
 
@@ -70,19 +70,6 @@ const looksLikeUuid = (value: string) =>
 
 const getRpcErrorRecord = (value: unknown): RpcErrorLike =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as RpcErrorLike) : {};
-
-const isMissingRpcFunctionError = (error: unknown) => {
-  const record = getRpcErrorRecord(error);
-  const code = normalizeString(record.code);
-  const message = normalizeString(record.message).toLowerCase();
-  const details = normalizeString(record.details).toLowerCase();
-
-  return (
-    code === "PGRST202" ||
-    message.includes("could not find the function") ||
-    details.includes("no matches were found in the schema cache")
-  );
-};
 
 const normalizeRpcPayload = (result: unknown) => {
   const record =
@@ -576,56 +563,28 @@ serve(async (req) => {
     }
 
     const modernRpcArgs: Record<string, unknown> = {
+      p_failure_route: route,
       p_device_id: deviceId,
       p_entry_id: entryId,
       p_entry_timestamp: entryTimestamp,
       p_library_id: resolvedLibraryId,
       ...studentRpcTarget.rpcArgs,
     };
-    const fallbackQrCode = studentRpcTarget.fallbackQrCode;
-    const rpcAttempts: RpcAttempt[] = [
-      {
-        fn: "scan_attendance_entry",
-        variant: "scan_attendance_entry",
-        args: modernRpcArgs,
-      },
-      {
-        fn: "qr_check_in",
-        variant: "qr_check_in_modern",
-        args: modernRpcArgs,
-      },
-      {
-        fn: "qr_check_in",
-        variant: "qr_check_in_legacy",
-        args: {
-          p_qr_code: fallbackQrCode,
-          p_library_id: resolvedLibraryId,
-        },
-      },
-    ];
+    const rpcAttempt: RpcAttempt = {
+      fn: "process_attendance_scan",
+      variant: "process_attendance_scan",
+      args: modernRpcArgs,
+    };
     let result: unknown = null;
     let scanError: unknown = null;
-    let rpcVariant: RpcAttempt["variant"] | null = null;
+    let rpcVariant: RpcAttempt["variant"] | null = rpcAttempt.variant;
+    const rpcResponse = await supabase.rpc(rpcAttempt.fn, rpcAttempt.args);
 
-    for (const attempt of rpcAttempts) {
-      const rpcResponse = await supabase.rpc(attempt.fn, attempt.args);
-
-      if (!rpcResponse.error) {
-        result = rpcResponse.data;
-        scanError = null;
-        rpcVariant = attempt.variant;
-        break;
-      }
-
+    if (!rpcResponse.error) {
+      result = rpcResponse.data;
+      scanError = null;
+    } else {
       scanError = rpcResponse.error;
-      rpcVariant = attempt.variant;
-
-      const shouldTryNext =
-        isMissingRpcFunctionError(rpcResponse.error) && attempt.variant !== "qr_check_in_legacy";
-
-      if (!shouldTryNext) {
-        break;
-      }
     }
 
     if (scanError) {

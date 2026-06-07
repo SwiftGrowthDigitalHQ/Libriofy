@@ -57,6 +57,7 @@ const DEVICE_IDLE_WINDOW_MS = 10 * 60 * 1000;
 const RELEVANT_ALERT_ROUTES = [
   "/api/scan-attendance",
   "/rpc/scan_attendance_entry",
+  "/rpc/process_attendance_scan",
   "/api/device-setup",
   "/api/device-heartbeat",
 ];

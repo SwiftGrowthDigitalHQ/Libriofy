@@ -296,6 +296,7 @@ const buildFallbackAudit = async ({
 
   const rpcChecks = {
     mark_attendance: await checkRpcExists(supabase, "mark_attendance"),
+    process_attendance_scan: await checkRpcExists(supabase, "process_attendance_scan"),
     qr_check_in: await checkRpcExists(supabase, "qr_check_in"),
     scan_attendance: await checkRpcExists(supabase, "scan_attendance"),
     scan_attendance_entry: await checkRpcExists(supabase, "scan_attendance_entry"),
@@ -322,8 +323,8 @@ const buildFallbackAudit = async ({
     !attendanceLogsColumns.library_id.exists ? "column:attendance_logs.library_id" : null,
     !attendanceLogsColumns.check_in.exists ? "column:attendance_logs.check_in" : null,
     !attendanceLogsColumns.date.exists ? "column:attendance_logs.date" : null,
-    !rpcChecks.scan_attendance_entry.exists && !rpcChecks.qr_check_in.exists
-      ? "rpc:scan_attendance_entry|qr_check_in"
+    !rpcChecks.process_attendance_scan.exists
+      ? "rpc:process_attendance_scan"
       : null,
   ].filter((value): value is string => Boolean(value));
 
@@ -339,6 +340,8 @@ const buildFallbackAudit = async ({
     !rpcChecks.mark_attendance.exists ? "rpc:mark_attendance" : null,
     !rpcChecks.verify_student.exists ? "rpc:verify_student" : null,
     !rpcChecks.scan_attendance.exists ? "rpc:scan_attendance" : null,
+    !rpcChecks.scan_attendance_entry.exists ? "rpc:scan_attendance_entry" : null,
+    !rpcChecks.qr_check_in.exists ? "rpc:qr_check_in" : null,
   ].filter((value): value is string => Boolean(value));
 
   const suspectedIssue =
