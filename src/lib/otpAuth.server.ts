@@ -4021,7 +4021,7 @@ export const resolveStopImpersonationRequest = async (
     ipAddress: trimText(context.ip) || null,
     libraryId: null,
     metadata: {
-      stopped_at: nowIso(),
+      stopped_at: new Date().toISOString(),
     },
     realUser: activeSession.realUser,
     requestPath: context.referer || null,

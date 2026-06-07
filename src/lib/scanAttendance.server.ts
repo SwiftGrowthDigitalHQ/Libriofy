@@ -75,6 +75,16 @@ type ScanDebugStage = {
   status: "error" | "info" | "ok";
 };
 
+type ScanDebugPayload = Record<string, unknown> & {
+  enabled: boolean;
+  env?: Record<string, unknown>;
+  previewVerification?: Record<string, unknown> | null;
+  qrInspection?: Record<string, unknown> | null;
+  request?: Record<string, unknown>;
+  requestId: string;
+  stages: ScanDebugStage[];
+};
+
 type ScanStudentRecord = {
   expiry_date: string | null;
   full_name: string | null;
@@ -132,7 +142,7 @@ const readBooleanField = (body: ScanAttendanceRequestBody, ...keys: string[]) =>
 };
 
 const pushDebugStage = (
-  debug: Record<string, unknown> | null,
+  debug: ScanDebugPayload | null,
   stage: string,
   status: ScanDebugStage["status"],
   details?: Record<string, unknown>,
@@ -622,7 +632,7 @@ export const resolveScanAttendanceRequest = async (
         enabled: true,
         requestId: typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`,
         stages: [] as ScanDebugStage[],
-      } satisfies Record<string, unknown>)
+      } satisfies ScanDebugPayload)
     : null;
   const route = "/api/attendance/scan";
   const publicKey =
@@ -1354,7 +1364,7 @@ export const resolveScanAttendanceDebugRequest = async (
   const privateKey =
     readEnv(env, "STUDENT_QR_PRIVATE_KEY", "QR_SIGNING_PRIVATE_KEY", "VITE_QR_PRIVATE_KEY") ?? "";
   const adminConfig = resolveSupabaseAdminConfig(env);
-  const debug: Record<string, unknown> = {
+  const debug: ScanDebugPayload = {
     action,
     enabled: true,
     requestId: typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`,

@@ -40,6 +40,7 @@ type SupabaseAdminConfigResult =
   | {
       config: SupabaseAdminConfig;
       diagnostics: SupabaseAdminConfigDiagnostics;
+      detail: string;
       ok: true;
     }
   | {
@@ -353,6 +354,7 @@ export const resolveSupabaseAdminConfig = (env: EnvLike = process.env): Supabase
 
   return {
     diagnostics,
+    detail: "",
     config: {
       linkedProjectRef: linkedProjectRef.projectRef,
       serviceRoleKey: selectedPair.keyCandidate.value,

@@ -246,7 +246,7 @@ export const resolveDeviceHeartbeatRequest = async (
       .from("entry_devices")
       .upsert({
         device_id: deviceId,
-        device_name: deviceName || DEVICE_ID,
+        device_name: deviceName || deviceId,
         is_active: true,
         library_id: resolvedLibraryId,
         last_seen_at: heartbeatAt,

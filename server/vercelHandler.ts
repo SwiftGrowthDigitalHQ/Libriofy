@@ -529,7 +529,14 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
         String(body.device_id ?? body.deviceId ?? "").trim(),
       );
 
-      sendJson(res, result.valid ? 200 : result.code === "DEVICE_SETUP_LOCKED" ? 429 : 404, result);
+      let statusCode = 404;
+      if (result.valid) {
+        statusCode = 200;
+      } else if (result.code === "DEVICE_SETUP_LOCKED") {
+        statusCode = 429;
+      }
+
+      sendJson(res, statusCode, result);
       return;
     }
 
