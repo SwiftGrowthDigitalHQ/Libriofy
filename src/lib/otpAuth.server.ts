@@ -303,12 +303,12 @@ const emitDebugLog = (
   }).catch(() => {});
 };
 
-const buildError = <T>(
+const buildError = (
   statusCode: number,
   message: string,
   code?: string,
   extras?: Partial<ErrorResponseBody>,
-) => {
+): ServiceResponse<never> => {
   const requestId = getRequestTraceContext()?.requestId;
   return {
     statusCode,
@@ -323,13 +323,13 @@ const buildError = <T>(
   };
 };
 
-const buildErrorWithCookies = <T>(
+const buildErrorWithCookies = (
   statusCode: number,
   message: string,
   code: string,
   cookies: string[],
   extras?: Partial<ErrorResponseBody>,
-) => {
+): ServiceResponse<never> => {
   const requestId = getRequestTraceContext()?.requestId;
   return {
     statusCode,
@@ -348,7 +348,7 @@ const buildErrorWithCookies = <T>(
 const createServiceClient = (env: EnvLike) => {
   const adminConfig = resolveSupabaseAdminConfig(env);
   if (!adminConfig.ok) {
-    throw new Error(adminConfig.detail);
+    throw new Error("detail" in adminConfig ? adminConfig.detail : "Supabase admin configuration is invalid.");
   }
 
   return createClient(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
