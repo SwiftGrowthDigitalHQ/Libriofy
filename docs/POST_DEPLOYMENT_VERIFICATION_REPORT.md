@@ -1,57 +1,52 @@
 # Post-Deployment Verification Report
 
-Scope: verify the production deployment after the `otpAuth.server.ts` build fix.
+Scope: verify the production deployment triggered by commit `a1aecb1` (`Fix production build blockers`).
 
-## Deployment Summary
+## Deployment Status
 
-- Production branch: `main`
-- Fix commit: `bc9d4f1`
-- Production URL: `https://www.libriofy.com`
-- Vercel deployment URL: `https://libriofy-oihrm54u1-swiftgrowthdigitals-projects.vercel.app`
+- Status: `FAILED`
+- GitHub commit status: `failure`
+- Vercel deployment URL: `https://vercel.com/swiftgrowthdigitals-projects/libriofy/FhT9QXeivTwuoHzmgJ1zdfmy393T`
+- Vercel deployment ID: `dpl_FhT9QXeivTwuoHzmgJ1zdfmy393T`
 
 ## Build Status
 
-- Status: `FAIL`
-- GitHub/Vercel deployment status: `failure`
-- Deployment record: `dpl_2A5b9ddXJnabVqS1U5mnErtpyfqH`
+- Status: `FAILED`
+- New build log first error:
+  - `src/lib/observability/store.server.ts(75,5): error TS2322: Type 'Json' is not assignable to type 'ObservabilityMetadata'.`
+  - Follow-up detail: `Type 'string' is not assignable to type 'ObservabilityMetadata'.`
+- Interpretation:
+  - The new deployment did not reach a successful build.
+  - This is a fresh blocker in the observability metadata typing path, not the previously fixed `otpAuth.server.ts` issue.
 
-## Live Route Checks
+## Health Status
 
-- `/` -> `200 OK`
-- `/scan` -> `200 OK`
-- `/dashboard/attendance` -> `200 OK`
-- `/release.json` -> `200 OK`
-- `/api/health/ready` -> `503 Service Unavailable`
+- Status: `NOT VERIFIED`
+- Reason:
+  - The deployment failed before it could become ready, so the production readiness gate was not cleared for this release.
 
-## Attendance Scan Status
+## Live Route Verification
 
-- Result: `NOT VERIFIED IN PRODUCTION`
-- Reason: deployment ended in `failure`, so the production scan flow was not validated end-to-end in a ready release.
+- ` / `: `NOT VERIFIED FOR THIS RELEASE`
+- `/scan`: `NOT VERIFIED FOR THIS RELEASE`
+- `/dashboard/attendance`: `NOT VERIFIED FOR THIS RELEASE`
+- `/api/health/ready`: `NOT VERIFIED FOR THIS RELEASE`
+- `/release.json`: `NOT VERIFIED FOR THIS RELEASE`
 
-## Monthly Analytics Status
+## Attendance V3 Status
 
-- Result: `NOT VERIFIED IN PRODUCTION`
-- Reason: the deployment did not complete successfully, so the monthly dashboard path was not validated in the live ready release.
+- Status: `NOT FULLY DEPLOYED`
+- Reason:
+  - The `a1aecb1` production deployment failed at build time, so Attendance V3 was not confirmed in a ready production release.
 
-## PGRST203 Status
+## Remaining Blockers
 
-- Result: `NOT OBSERVED IN THIS DEPLOYMENT CHECK`
-- Notes:
-  - Local `npm run build` passes.
-  - Local `npx tsc --noEmit` passes.
-  - Browser console and live log verification were not available because the production deployment failed before readiness.
+- Primary blocker:
+  - `src/lib/observability/store.server.ts` has a type mismatch when building the observability insert payload.
+- Additional build errors remain in the same deployment log after the first blocker, including more TypeScript failures in super-admin and public-app modules.
+- Because the build failed, the deployment never reached a state where the health endpoint and live routes could be certified for this release.
 
-## Production Readiness Score
-
-- Score: `4 / 10`
-
-## PASS / FAIL Verdict
+## PASS / FAIL
 
 - Verdict: `FAIL`
-
-## Notes
-
-- The earlier TypeScript blocker in `src/lib/otpAuth.server.ts` was fixed and pushed.
-- The new deployment still failed at the production pipeline level.
-- The accessible evidence points to a live production readiness issue, not a local TypeScript build failure.
 

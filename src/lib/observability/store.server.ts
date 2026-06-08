@@ -1,12 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 
-import type { Database, Json } from "../../integrations/supabase/types.js";
+import type { Database } from "../../integrations/supabase/types.js";
 import { withRequestTraceMetadata } from "./requestContext.server.js";
 import { sanitizeObservabilityMetadata } from "./logSanitizer.js";
 import { createInstrumentedServerSupabaseFetch } from "./serverSupabaseFetch.server.js";
 import { SUPABASE_OBSERVABILITY_SKIP_HEADER, SUPABASE_OBSERVABILITY_SKIP_VALUE } from "./supabaseRequestDetails.js";
 import { resolveSupabaseAdminConfig } from "./supabaseAdminConfig.server.js";
-import type { AlertSeverity, EventLogInput, EventLogStatus, RecentObservabilitySignal } from "./types.js";
+import type { AlertSeverity, EventLogInput, EventLogStatus, ObservabilityMetadata, RecentObservabilitySignal } from "./types.js";
 import {
   resolveEventClassification,
   resolveFingerprint,
@@ -69,7 +69,7 @@ export const createObservabilityServiceClient = (env: EnvLike = process.env) => 
 };
 
 export const buildAppEventLogInsert = (input: EventLogInput): AppEventLogInsertRecord => {
-  const metadata = withRequestTraceMetadata(normalizeMetadata(input.metadata)) as Json;
+  const metadata = withRequestTraceMetadata(normalizeMetadata(input.metadata)) as ObservabilityMetadata;
   const classification = resolveEventClassification({
     classification: input.classification,
     metadata,

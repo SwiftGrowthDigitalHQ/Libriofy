@@ -532,7 +532,7 @@ const routeRequest = async (req: ApiRequest, res: ApiResponse, pathname: string)
       let statusCode = 404;
       if (result.valid) {
         statusCode = 200;
-      } else if (result.code === "DEVICE_SETUP_LOCKED") {
+      } else if ("code" in result && result.code === "DEVICE_SETUP_LOCKED") {
         statusCode = 429;
       }
 

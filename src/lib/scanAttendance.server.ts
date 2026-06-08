@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { expandPhoneCandidates } from "./auth.shared.js";
 import { getLibraryAccessKeySuffix, normalizeLibraryAccessKey } from "./libraryAccessKey.js";
 import { resolvePublicScanDenial } from "./scanDenial.js";
@@ -11,6 +12,7 @@ import {
 import { logAttendanceFailure } from "./attendanceFailureLogger.js";
 import { createInstrumentedServerSupabaseFetch } from "./observability/serverSupabaseFetch.server.js";
 import { resolveSupabaseAdminConfig } from "./observability/supabaseAdminConfig.server.js";
+import type { Database } from "../integrations/supabase/types.js";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -444,7 +446,7 @@ const resolveLibraryIdFromAccessKey = async ({
   supabase,
 }: {
   accessKey: string;
-  supabase: any;
+  supabase: SupabaseClient<Database>;
 }) => {
   const cachedLibraryId = getCacheValue(libraryAccessKeyCache, accessKey);
   if (cachedLibraryId !== undefined) {
@@ -474,7 +476,7 @@ const resolveDeviceLookup = async ({
   supabase,
 }: {
   deviceId: string;
-  supabase: any;
+  supabase: SupabaseClient<Database>;
 }) => {
   const cachedDevice = getCacheValue(deviceLookupCache, deviceId);
   if (cachedDevice !== undefined) {
@@ -508,7 +510,7 @@ const resolveSubscriptionBlockedState = async ({
   supabase,
 }: {
   libraryId: string;
-  supabase: any;
+  supabase: SupabaseClient<Database>;
 }) => {
   const cachedState = getCacheValue(subscriptionStateCache, libraryId);
   if (cachedState !== undefined) {
@@ -572,7 +574,7 @@ const resolveStudentRecordForDebug = async ({
   libraryId,
   parsedQr,
 }: {
-  supabase: any;
+  supabase: SupabaseClient<Database>;
   libraryId: string;
   parsedQr: ValidStudentQrPayload;
 }): Promise<ScanStudentRecord | null> => {
@@ -627,12 +629,12 @@ export const resolveScanAttendanceRequest = async (
       ? (requestBody as ScanAttendanceRequestBody)
       : {};
   const debugEnabled = readBooleanField(body, "debug", "scan_debug", "scanDebug");
-  const debug = debugEnabled
-    ? ({
+  const debug: ScanDebugPayload | null = debugEnabled
+    ? {
         enabled: true,
         requestId: typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`,
-        stages: [] as ScanDebugStage[],
-      } satisfies ScanDebugPayload)
+        stages: [],
+      }
     : null;
   const route = "/api/attendance/scan";
   const publicKey =
@@ -1160,7 +1162,7 @@ export const resolveScanAttendanceRequest = async (
   };
   let result: unknown = null;
   let scanError: unknown = null;
-  let rpcVariant: RpcAttempt["variant"] | null = rpcAttempt.variant;
+  const rpcVariant: RpcAttempt["variant"] | null = rpcAttempt.variant;
   const rpcResponse = await supabase.rpc(rpcAttempt.fn, rpcAttempt.args);
   const rpcDebugAttempts: Record<string, unknown>[] = [{
     args: Object.keys(rpcAttempt.args),
@@ -1261,7 +1263,7 @@ const resolveManualDebugStudent = async ({
   libraryId: string;
   phone: string;
   studentId: string;
-  supabase: any;
+  supabase: SupabaseClient<Database>;
 }): Promise<{ matchedBy: "phone" | "student_id"; student: ScanStudentRecord } | null> => {
   const normalizedStudentId = normalizeString(studentId);
   if (normalizedStudentId) {
