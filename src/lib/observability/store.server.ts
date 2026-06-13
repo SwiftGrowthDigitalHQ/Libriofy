@@ -115,7 +115,7 @@ export const buildAppEventLogInsert = (input: EventLogInput): AppEventLogInsertR
     fingerprint,
     group_key: groupKey,
     message: normalizeText(input.message) || null,
-    metadata,
+    metadata: metadata as unknown as AppEventLogInsertRecord["metadata"],
     metric_key: metricKey,
     occurred_at: resolveOccurredAt(input.occurredAt ?? metadata.occurred_at ?? metadata.timestamp) ?? new Date().toISOString(),
     occurrence_count: 1,

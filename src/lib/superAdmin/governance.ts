@@ -845,7 +845,12 @@ const normalizeScopeBoundary = (
 ): AdminOperatorScopeBoundary => {
   const metadataBoundaryRecord = toBoundaryRecord(toBoundaryRecord(metadataValue)?.boundary);
   const directBoundaryRecord = toBoundaryRecord(toBoundaryRecord(value)?.boundary);
-  const record = metadataBoundaryRecord ?? directBoundaryRecord ?? toBoundaryRecord(value) ?? EMPTY_OPERATOR_SCOPE_BOUNDARY;
+  const record =
+    metadataBoundaryRecord ??
+    directBoundaryRecord ??
+    toBoundaryRecord(value) ??
+    toBoundaryRecord(EMPTY_OPERATOR_SCOPE_BOUNDARY) ??
+    {};
 
   return {
     delegatedScopeId: normalizeText(record.delegatedScopeId ?? record.delegated_scope_id) || null,
@@ -1014,12 +1019,23 @@ const normalizeRestrictions = (value: unknown): AdminOperatorGrantRestrictions =
     ? (value as Record<string, unknown>)
     : {};
 
+  const deniedActions = Array.isArray(record.deniedActions)
+    ? record.deniedActions
+    : Array.isArray(record.denied_actions)
+      ? record.denied_actions
+      : [];
+  const deniedPermissions = Array.isArray(record.deniedPermissions)
+    ? record.deniedPermissions
+    : Array.isArray(record.denied_permissions)
+      ? record.denied_permissions
+      : [];
+
   return {
-    deniedActions: (Array.isArray(record.deniedActions) ? record.deniedActions : record.denied_actions)
-      ?.map((entry) => normalizeAction(entry))
+    deniedActions: deniedActions
+      .map((entry) => normalizeAction(entry))
       .filter((entry): entry is AdminOperatorActionId => Boolean(entry)),
-    deniedPermissions: (Array.isArray(record.deniedPermissions) ? record.deniedPermissions : record.denied_permissions)
-      ?.map((entry) => normalizePermission(entry))
+    deniedPermissions: deniedPermissions
+      .map((entry) => normalizePermission(entry))
       .filter((entry): entry is AdminOperatorPermission => Boolean(entry)),
     note: normalizeText(record.note) || null,
     readOnlyMode: record.readOnlyMode === true || record.read_only_mode === true,

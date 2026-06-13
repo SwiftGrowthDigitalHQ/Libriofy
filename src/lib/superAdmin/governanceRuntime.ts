@@ -660,7 +660,7 @@ export const buildGovernanceCoordination = ({
           incident.regionLabel,
         ]),
         to: transition.to,
-        type: transition.type === "assignment" ? "assignment" : transition.type,
+        type: (transition.type === "assignment" ? "assignment" : transition.type) as AdminOperatorGovernanceCoordination["handoffs"][number]["type"],
       })),
     )
     .sort((left, right) => right.at.localeCompare(left.at));
@@ -691,7 +691,7 @@ export const buildGovernanceCoordination = ({
         incident.teamLabel,
         incident.regionLabel,
       ]),
-      severity: incident.severity === "CRITICAL" ? "critical" : incident.escalationLevel > 0 ? "high" : "medium",
+      severity: (incident.severity === "CRITICAL" ? "critical" : incident.escalationLevel > 0 ? "high" : "medium") as AdminOperatorGovernanceCoordination["ownershipGaps"][number]["severity"],
     }));
 
   const regionalFailovers = incidents
@@ -768,7 +768,7 @@ export const buildGovernanceCoordination = ({
         pendingApprovals,
         principal,
         regions: base.regions,
-        shiftState: base.availability?.status ?? "unknown",
+        shiftState: (base.availability?.status ?? "unknown") as AdminOperatorGovernanceCoordination["loadBalancing"]["operatorLoads"][number]["shiftState"],
         utilizationPercent,
       };
     })
@@ -1253,7 +1253,7 @@ export const buildGovernanceDirectory = ({
         id: `${request.id}:delegation:${index + 1}`,
         outOfOfficeDelegate: request.outOfOfficeDelegate ?? null,
         scopeSummary: entry.scopeSummary.length ? entry.scopeSummary : buildRequestScopeSummary(request),
-        status: request.status === "pending" ? "active" : "historical",
+        status: (request.status === "pending" ? "active" : "historical") as AdminOperatorGovernanceDirectory["delegatedRoles"][number]["status"],
       }));
     })
     .filter((entry) => entry.delegatedBy || entry.delegatedTo || entry.fallbackApprover || entry.outOfOfficeDelegate);

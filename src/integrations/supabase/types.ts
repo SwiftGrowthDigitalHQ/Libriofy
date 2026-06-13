@@ -3599,6 +3599,27 @@ export type Database = {
         }
         Relationships: []
       }
+      super_admin_operator_assignments: {
+        Row: {
+          email: string | null
+          is_active: boolean
+          role: string
+          user_id: string
+        }
+        Insert: {
+          email?: string | null
+          is_active?: boolean
+          role: string
+          user_id: string
+        }
+        Update: {
+          email?: string | null
+          is_active?: boolean
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       super_admin_approval_decisions: {
         Row: {
           actor_email: string | null

@@ -2,8 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import IORedis from "ioredis";
 import { createHash, randomUUID } from "node:crypto";
 
+import type { Database } from "../../integrations/supabase/types.js";
 import { sendEmail } from "../email.server.js";
-import { revokeImpersonationSessionsForTargetUser } from "../impersonationRuntime.server.js";
+import { createImpersonationSessionState, revokeImpersonationSessionsForTargetUser } from "../impersonationRuntime.server.js";
 import { resolveLibriofyAppUrl, resolveLibriofyEmailFrom } from "../libriofyConfig.js";
 import { sendAdminAlert } from "../observability/alertService.server.js";
 import { getCriticalDatabaseHealth } from "../observability/databaseHealth.server.js";
@@ -195,7 +196,7 @@ export type SuperAdminActorContext = {
 };
 
 type JsonRecord = Record<string, unknown>;
-type UntypedClient = ReturnType<typeof createClient>;
+type UntypedClient = ReturnType<typeof createClient<Database>>;
 
 type FeatureFlagRow = {
   cache_ttl_seconds?: number | null;
@@ -619,6 +620,7 @@ type AppEventLogRow = {
   metadata?: unknown;
   metric_key?: string | null;
   occurred_at?: string | null;
+  message?: string | null;
   resolution_note?: string | null;
   resolved_at?: string | null;
   resolved_by?: string | null;
@@ -1049,7 +1051,7 @@ export const buildServiceClient = (env: EnvLike = process.env) => {
     throw new Error(adminConfig.detail);
   }
 
-  return createClient(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
+  return createClient<Database>(adminConfig.config.supabaseUrl, adminConfig.config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -1412,7 +1414,7 @@ const buildPaymentHistoryRows = ({
     verificationAttempts: 0,
     linkedIncidentKeys: [],
     lifecycleTimeline: [],
-  }));
+  } satisfies AdminBillingPaymentRow));
 
   const subscriptionPaymentRows = subscriptionPayments.map((row) => {
     const metadata = toRecord(row.metadata);
@@ -1497,7 +1499,7 @@ const buildPaymentHistoryRows = ({
       verificationAttempts,
       linkedIncidentKeys: [],
       lifecycleTimeline: [],
-    };
+    } satisfies AdminBillingPaymentRow;
   });
 
   return [...studentPayments, ...subscriptionPaymentRows].sort(
@@ -1584,14 +1586,14 @@ const buildLibraryControlRows = ({
           lastActivityByLibraryId.get(libraryId) ??
           normalizeNullableText(library.updated_at) ??
           normalizeNullableText(library.created_at),
-        controlStatus: isControlled
+        controlStatus: (isControlled
           ? normalizeText(control?.status) === "banned"
             ? "banned"
             : "suspended"
-          : "active",
+          : "active") as AdminLibraryControlRow["controlStatus"],
         controlUntilAt: isControlled ? normalizeNullableText(control?.until_at) : null,
         controlReason: isControlled ? normalizeNullableText(control?.reason) : null,
-      };
+      } satisfies AdminLibraryControlRow;
     })
     .sort(
       (left, right) =>
@@ -1715,18 +1717,18 @@ const buildUserControlRows = ({
         libraryName: normalizeNullableText(library?.name),
         lastLoginAt: lastLoginByUserId.get(userId) ?? null,
         loginFailures24h: failedLoginsByUserId.get(userId) ?? 0,
-        controlStatus: isControlled
+        controlStatus: (isControlled
           ? normalizeText(accountControl?.status) === "banned"
             ? "banned"
             : "suspended"
-          : "active",
+          : "active") as AdminUserControlRow["controlStatus"],
         controlUntilAt: isControlled ? normalizeNullableText(accountControl?.until_at) : null,
         controlReason: isControlled ? normalizeNullableText(accountControl?.reason) : null,
         clearSessionsAfter: normalizeNullableText(accountControl?.clear_sessions_after),
         passwordResetRequired: toBoolean(accountControl?.password_reset_required, false),
         activeImpersonationId: normalizeNullableText(activeImpersonation?.id),
         activeImpersonationStartedAt: normalizeNullableText(activeImpersonation?.started_at),
-      };
+      } satisfies AdminUserControlRow;
     })
     .sort((left, right) => {
       const severityDelta =
@@ -2279,6 +2281,7 @@ const TRACE_METADATA_TOKEN_KEYS = [
 
 const collectUniqueStrings = (values: Array<string | null | undefined>) =>
   [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+const uniqueStrings = collectUniqueStrings;
 
 const toTraceSeverity = (value: unknown): AdminRuntimeTraceEvent["severity"] => {
   const normalized = normalizeText(value).toUpperCase();
@@ -3191,9 +3194,9 @@ const startJobLeaseHeartbeat = ({
 };
 
 const readRows = async <TRow extends Record<string, unknown>>(
-  queryPromise: Promise<{ data: TRow[] | null; error: { message?: string } | null }>,
+  queryPromise: PromiseLike<unknown>,
 ): Promise<TRow[]> => {
-  const { data, error } = await queryPromise;
+  const { data, error } = (await queryPromise) as { data?: TRow[] | null; error?: { message?: string } | null };
   if (error) {
     throw new Error(error.message || "Supabase query failed.");
   }
@@ -3202,7 +3205,7 @@ const readRows = async <TRow extends Record<string, unknown>>(
 };
 
 const readOptionalRows = async <TRow extends Record<string, unknown>>(
-  queryPromise: Promise<{ data: TRow[] | null; error: { message?: string } | null }>,
+  queryPromise: PromiseLike<unknown>,
 ) => {
   try {
     return await readRows(queryPromise);
@@ -3212,9 +3215,9 @@ const readOptionalRows = async <TRow extends Record<string, unknown>>(
 };
 
 const readMaybeSingle = async <TRow extends Record<string, unknown>>(
-  queryPromise: Promise<{ data: TRow | null; error: { message?: string } | null }>,
+  queryPromise: PromiseLike<unknown>,
 ) => {
-  const { data, error } = await queryPromise;
+  const { data, error } = (await queryPromise) as { data?: TRow | null; error?: { message?: string } | null };
   if (error) {
     throw new Error(error.message || "Supabase query failed.");
   }
@@ -6753,9 +6756,9 @@ const buildStatusSignals = async ({
   const redisTimeoutCount = getRuntimeCounterTotal("redis_timeouts_total", { dependency: "redis" });
 
   const databaseSignal = databaseHealth
-    ? {
+    ? ({
         label: "Database",
-        status: databaseHealth.status === "ok" ? "green" : databaseHealth.status === "degraded" ? "yellow" : "red",
+        status: (databaseHealth.status === "ok" ? "green" : databaseHealth.status === "degraded" ? "yellow" : "red") as const,
         value:
           databaseHealth.status === "ok"
             ? "Healthy"
@@ -6765,8 +6768,8 @@ const buildStatusSignals = async ({
         detail:
           normalizeText(databaseHealth.detail) ||
           (databaseRequestLatency.count > 0 ? `p95 ${databaseRequestLatency.p95}ms` : null),
-      }
-    : {
+      } satisfies AdminStatusSignal)
+    : ({
         label: "Database",
         status: "yellow" as const,
         value: "Telemetry pending",
@@ -6774,19 +6777,19 @@ const buildStatusSignals = async ({
           databaseRequestLatency.count > 0
             ? `Live database health snapshot is catching up. p95 ${databaseRequestLatency.p95}ms`
             : "Live database health snapshot is catching up.",
-      };
+      } satisfies AdminStatusSignal);
 
   const readinessSignal = readiness
-    ? {
+    ? ({
         label: "API",
-        status: readiness.ok ? "green" : "red",
+        status: (readiness.ok ? "green" : "red") as const,
         value: readiness.ok ? "Ready" : "Degraded",
         detail:
           adminRequestLatency.count > 0
             ? `${apiSuccessRate}% success rate, p95 ${adminRequestLatency.p95}ms`
             : `${apiSuccessRate}% success rate`,
-      }
-    : {
+      } satisfies AdminStatusSignal)
+    : ({
         label: "API",
         status: "yellow" as const,
         value: "Telemetry pending",
@@ -6794,7 +6797,7 @@ const buildStatusSignals = async ({
           adminRequestLatency.count > 0
             ? `${apiSuccessRate}% success rate, p95 ${adminRequestLatency.p95}ms`
             : `${apiSuccessRate}% success rate`,
-      };
+      } satisfies AdminStatusSignal);
 
   const emailSignal = {
     label: "Email",
@@ -6979,7 +6982,7 @@ const buildQueuedJobInsert = ({
       retryHistory: Array.isArray(metadata.retryHistory) ? metadata.retryHistory : [],
       trace,
       visibilityTimeoutAt: null,
-    }),
+    }) as never,
     scheduled_for: scheduledFor ?? nowIso(),
     source_correlation_id: normalizeNullableText(trace.correlationId),
     source_request_id: normalizeNullableText(trace.originRequestId),
@@ -7665,7 +7668,7 @@ const markJobCancelled = async ({
         claimedBy: null,
         lastHeartbeatAt: cancelledAt,
         visibilityTimeoutAt: null,
-      }),
+      }) as never,
       status: "cancelled",
       visibility_timeout_at: null,
     })
@@ -7737,7 +7740,7 @@ const claimJobExecution = async ({
         maxConcurrency,
         recoveredAt: job.status === "running" ? now : normalizeNullableText(readJobQueueMetadata(job.payload).recoveredAt),
         visibilityTimeoutAt,
-      }),
+      }) as never,
       recovered_at: job.status === "running" ? now : null,
       started_at: now,
       status: "running",
@@ -7843,7 +7846,7 @@ const markJobForRetry = async ({
         lastHeartbeatAt: now,
         retryHistory,
         visibilityTimeoutAt: null,
-      }),
+      }) as never,
       scheduled_for: nextScheduledFor,
       started_at: null,
       status: "queued",
@@ -8095,7 +8098,7 @@ const executeJob = async ({
               lastHeartbeatAt: completedAt,
               lastResult: result,
               visibilityTimeoutAt: null,
-            }),
+            }) as never,
             status: "completed",
             visibility_timeout_at: null,
           })
@@ -11659,7 +11662,7 @@ export const handleJobActionData = async (
             lastHeartbeatAt: null,
             retryHistory,
             visibilityTimeoutAt: null,
-          }),
+          }) as never,
           scheduled_for: nowIso(),
           started_at: null,
           status: "queued",
@@ -11746,6 +11749,7 @@ export const handleJobActionData = async (
         traceId: actor.traceId,
       },
     );
+    const replayMetadata = readJobQueueMetadata(replayPayload);
     const replayDeduplicationKey = buildQueueDeduplicationKey(
       normalizeText(deadLetter.job_type) || normalizeText(existingJob?.job_type),
       replayPayload,
@@ -11788,10 +11792,7 @@ export const handleJobActionData = async (
           previewDeadLetter?.sourceTraceId ?? "",
         ].filter(Boolean),
         idempotencyKey: normalizeNullableText(
-          replayPayload.idempotencyKey ??
-            replayPayload.idempotency_key ??
-            toRecord(replayPayload.metadata).idempotency_key ??
-            toRecord(replayPayload.metadata).idempotencyKey,
+          replayMetadata.idempotencyKey ?? replayMetadata.deduplicationKey ?? null,
         ),
         impacts: [
           {
@@ -12186,21 +12187,16 @@ export const createImpersonationData = async (
     );
   }
 
-  const session = await readMaybeSingle<Record<string, unknown>>(
-    client
-      .from("super_admin_impersonation_sessions")
-      .insert({
-        metadata: {
-          generated_by: actor.actorUserId,
-        },
-        reason: input.reason ?? null,
-        super_admin_user_id: actor.actorUserId,
-        target_library_id: input.libraryId ?? null,
-        target_user_id: targetUserId,
-      })
-      .select("id")
-      .maybeSingle(),
-  );
+  const session = await createImpersonationSessionState(env, {
+    metadata: {
+      generated_by: actor.actorUserId,
+    },
+    reason: input.reason ?? null,
+    superAdminUserId: actor.actorUserId,
+    targetLibraryId: input.libraryId ?? null,
+    targetUserId,
+    trustedSessionId: randomUUID(),
+  });
 
   await recordAdminAction(client, actor, {
     action: "impersonation_started",

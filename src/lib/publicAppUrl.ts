@@ -2,6 +2,13 @@ import { normalizeBasePath } from "./maintenance.js";
 
 const PRODUCTION_PUBLIC_APP_URL = "https://www.libriofy.com";
 const VERCEL_PREVIEW_HOST_SUFFIX = ["vercel", "app"].join(".");
+const importMeta = import.meta as ImportMeta & {
+  env?: {
+    BASE_URL?: string;
+    VITE_APP_URL?: string;
+    VITE_PUBLIC_APP_URL?: string;
+  };
+};
 
 const trimText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -17,8 +24,8 @@ export const isPreviewAppUrl = (urlValue: string) => {
 
 export const getPublicAppBaseUrl = () => {
   const candidates = [
-    import.meta.env.VITE_PUBLIC_APP_URL as string | undefined,
-    import.meta.env.VITE_APP_URL as string | undefined,
+    importMeta.env?.VITE_PUBLIC_APP_URL,
+    importMeta.env?.VITE_APP_URL,
   ];
 
   for (const candidate of candidates) {
@@ -41,7 +48,7 @@ export const getPublicAppBaseUrl = () => {
 export const buildPublicAppUrl = (path = "/") => {
   const baseUrl = getPublicAppBaseUrl();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const basePath = normalizeBasePath(import.meta.env.BASE_URL);
+  const basePath = normalizeBasePath(importMeta.env?.BASE_URL ?? "/");
   const resolvedBasePath = basePath === "/" ? "" : basePath;
   if (!path || path === "/") {
     return `${baseUrl}${resolvedBasePath}`;
