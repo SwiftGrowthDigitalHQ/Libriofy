@@ -68,35 +68,14 @@ const buildServiceClient = (env: EnvLike) => {
   });
 };
 
-const buildAnonClient = (env: EnvLike) => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
-  const anonKey = readEnv(env, "SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY");
-
-  if (!supabaseUrl || !anonKey) {
-    throw new Error("Supabase anon credentials are missing.");
-  }
-
-  return createClient(supabaseUrl, anonKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-    global: {
-      fetch: createInstrumentedServerSupabaseFetch("request_auth_anon"),
-    },
-  });
-};
-
-const loadAuthUser = async (env: EnvLike, userId: string) => {
-  const serviceClient = buildServiceClient(env);
-
+const loadAuthUser = async (client: ReturnType<typeof createClient>, userId: string) => {
   const [{ data: profile, error: profileError }, { data: roles, error: rolesError }] = await Promise.all([
-    serviceClient
+    client
       .from("profiles")
       .select("user_id, email, full_name, phone_number")
       .eq("user_id", userId)
       .maybeSingle(),
-    serviceClient
+    client
       .from("user_roles")
       .select("role")
       .eq("user_id", userId),
@@ -120,6 +99,26 @@ const loadAuthUser = async (env: EnvLike, userId: string) => {
     phone: typedProfile?.phone_number ?? null,
     roles: typedRoles.map((role) => role.role),
   } satisfies AuthUser;
+};
+
+const buildAnonClient = (env: EnvLike, authorizationHeader?: string) => {
+  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
+  const anonKey = readEnv(env, "SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY");
+
+  if (!supabaseUrl || !anonKey) {
+    throw new Error("Supabase anon credentials are missing.");
+  }
+
+  return createClient(supabaseUrl, anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+    global: {
+      ...(authorizationHeader ? { headers: { Authorization: authorizationHeader } } : {}),
+      fetch: createInstrumentedServerSupabaseFetch("request_auth_anon"),
+    },
+  });
 };
 
 const loadTrustedSession = async (env: EnvLike, sessionId: string) => {
@@ -163,13 +162,14 @@ export const parseBearerToken = (authorizationHeader: string | undefined) => {
 
 const resolveSupabaseTokenUser = async (env: EnvLike, token: string) => {
   try {
-    const anonClient = buildAnonClient(env);
+    const authHeader = `Bearer ${token}`;
+    const anonClient = buildAnonClient(env, authHeader);
     const { data, error } = await anonClient.auth.getUser(token);
     if (error || !data.user?.id) {
       return null;
     }
 
-    const user = await loadAuthUser(env, data.user.id);
+    const user = await loadAuthUser(anonClient, data.user.id);
     return {
       ...user,
       token,
@@ -210,7 +210,7 @@ const resolveCustomTokenUser = async (env: EnvLike, token: string) => {
         : "general";
     const realUserId = trimText(appMetadata.real_user_id);
     const impersonationId = trimText(appMetadata.impersonation_id);
-    const effectiveUser = await loadAuthUser(env, userId);
+    const effectiveUser = await loadAuthUser(buildServiceClient(env), userId);
 
     if (sessionScope === "impersonation") {
       const trustedSession = await loadTrustedSession(env, sessionId);
@@ -228,7 +228,7 @@ const resolveCustomTokenUser = async (env: EnvLike, token: string) => {
         return null;
       }
 
-      const realUser = await loadAuthUser(env, realUserId);
+      const realUser = await loadAuthUser(buildServiceClient(env), realUserId);
       return {
         ...effectiveUser,
         effectiveUser,

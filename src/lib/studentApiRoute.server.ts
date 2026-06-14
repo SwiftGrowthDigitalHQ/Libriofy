@@ -237,21 +237,37 @@ export const readStudentApiRequestPath = (req: StudentApiRequest) => {
 const readParsedBody = (req: StudentApiRequest) =>
   normalizeParsedRequestBody(req.body, readHeaderValue(req.headers, "content-type"));
 
-const buildServiceClient = (env: EnvLike) => {
+const buildStudentClient = (env: EnvLike, authorizationHeader?: string) => {
   const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
   const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error("Supabase service credentials are missing.");
+  if (supabaseUrl && serviceRoleKey) {
+    return createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+      global: {
+        fetch: createInstrumentedServerSupabaseFetch("student_update_api"),
+      },
+    });
   }
 
-  return createClient(supabaseUrl, serviceRoleKey, {
+  const anonKey = readEnv(env, "SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !anonKey || !authorizationHeader) {
+    return null;
+  }
+
+  return createClient(supabaseUrl, anonKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
     global: {
       fetch: createInstrumentedServerSupabaseFetch("student_update_api"),
+      headers: {
+        Authorization: authorizationHeader,
+      },
     },
   });
 };
@@ -542,7 +558,10 @@ const resolveStudentUpdateRequest = async (
     return buildError("Unauthorized.", 401, "UNAUTHORIZED");
   }
 
-  const serviceClient = buildServiceClient(env);
+  const serviceClient = buildStudentClient(env, authorization);
+  if (!serviceClient) {
+    return buildError("Supabase credentials are missing.", 503, "SUPABASE_CONFIG_MISSING");
+  }
 
   try {
     const [{ data: rolesData, error: rolesError }, { data: rawStudent, error: studentError }] = await Promise.all([
