@@ -191,6 +191,8 @@ describe("student update route", () => {
     const response = createMockResponse();
     const env = {
       SUPABASE_ANON_KEY: "anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      SUPABASE_URL: "https://drifted.supabase.co",
       VITE_SUPABASE_ANON_KEY: "anon-key",
       VITE_SUPABASE_URL: "https://example.supabase.co",
     };
@@ -216,5 +218,25 @@ describe("student update route", () => {
     });
     expect(payload.student.status).toBe("Paid");
     expect(createClientMock).toHaveBeenCalled();
+    expect(createClientMock).toHaveBeenCalledWith(
+      "https://example.supabase.co",
+      "anon-key",
+      expect.objectContaining({
+        auth: expect.objectContaining({
+          autoRefreshToken: false,
+          persistSession: false,
+        }),
+      }),
+    );
+    expect(createClientMock).toHaveBeenCalledWith(
+      "https://example.supabase.co",
+      "service-role-key",
+      expect.objectContaining({
+        auth: expect.objectContaining({
+          autoRefreshToken: false,
+          persistSession: false,
+        }),
+      }),
+    );
   });
 });

@@ -102,7 +102,8 @@ const loadAuthUser = async (client: ReturnType<typeof createClient>, userId: str
 };
 
 const buildAnonClient = (env: EnvLike, authorizationHeader?: string) => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
+  // Prefer the browser-linked URL first so server auth follows the live project even when envs drift.
+  const supabaseUrl = readEnv(env, "VITE_SUPABASE_URL", "SUPABASE_URL");
   const anonKey = readEnv(env, "SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY");
 
   if (!supabaseUrl || !anonKey) {

@@ -238,7 +238,8 @@ const readParsedBody = (req: StudentApiRequest) =>
   normalizeParsedRequestBody(req.body, readHeaderValue(req.headers, "content-type"));
 
 const buildStudentClient = (env: EnvLike, authorizationHeader?: string) => {
-  const supabaseUrl = readEnv(env, "SUPABASE_URL", "VITE_SUPABASE_URL");
+  // Prefer the live browser-linked URL first to avoid writing through a drifted Supabase project.
+  const supabaseUrl = readEnv(env, "VITE_SUPABASE_URL", "SUPABASE_URL");
   const serviceRoleKey = readEnv(env, "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
 
   if (supabaseUrl && serviceRoleKey) {
