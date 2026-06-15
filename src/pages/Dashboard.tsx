@@ -207,7 +207,6 @@ type TodayTask = {
 };
 
 type DashboardDayState = {
-  attendanceSkipUsed: boolean;
   completedTaskIds: string[];
 };
 
@@ -301,24 +300,23 @@ const getDashboardDayStorageKey = (libraryId: string, dateKey: string) =>
 
 const readDashboardDayState = (libraryId: string | null, dateKey: string): DashboardDayState => {
   if (!libraryId || typeof window === "undefined") {
-    return { attendanceSkipUsed: false, completedTaskIds: [] };
+    return { completedTaskIds: [] };
   }
 
   try {
     const raw = readBrowserStorageItem("local", getDashboardDayStorageKey(libraryId, dateKey));
     if (!raw) {
-      return { attendanceSkipUsed: false, completedTaskIds: [] };
+      return { completedTaskIds: [] };
     }
 
     const parsed = JSON.parse(raw) as Partial<DashboardDayState>;
     return {
-      attendanceSkipUsed: parsed.attendanceSkipUsed === true,
       completedTaskIds: Array.isArray(parsed.completedTaskIds)
         ? parsed.completedTaskIds.filter((item): item is string => typeof item === "string")
         : [],
     };
   } catch {
-    return { attendanceSkipUsed: false, completedTaskIds: [] };
+    return { completedTaskIds: [] };
   }
 };
 
@@ -626,11 +624,7 @@ const Dashboard = () => {
   const skipDashboardDayStateWriteRef = useRef(true);
   const [showAllUrgentRisk, setShowAllUrgentRisk] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  const [dashboardDayState, setDashboardDayState] = useState<DashboardDayState>({
-    attendanceSkipUsed: false,
-    completedTaskIds: [],
-  });
-  const [attendanceAlertCollapsed, setAttendanceAlertCollapsed] = useState(false);
+  const [dashboardDayState, setDashboardDayState] = useState<DashboardDayState>({ completedTaskIds: [] });
   const [tasksOpen, setTasksOpen] = useState(true);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -668,7 +662,6 @@ const Dashboard = () => {
     skipDashboardDayStateWriteRef.current = true;
     const nextState = readDashboardDayState(resolvedLibraryId, currentDateKey);
     setDashboardDayState(nextState);
-    setAttendanceAlertCollapsed(nextState.attendanceSkipUsed);
     setTasksOpen(true);
   }, [currentDateKey, resolvedLibraryId]);
 
@@ -685,7 +678,6 @@ const Dashboard = () => {
     isLoading: dashboardLoading,
     isError: dashboardError,
     error: dashboardQueryError,
-    refetch: refetchDashboard,
   } = useQuery({
     queryKey: ["dashboard-overview", resolvedLibraryId],
     queryFn: async (): Promise<DashboardData> => {
@@ -1150,11 +1142,6 @@ const Dashboard = () => {
     : dashboardData.eligibleStudents > 0
       ? `Attendance not marked for ${dashboardData.eligibleStudents} tracked students. ${attendanceCountdownLabel}.`
       : "Add students and start marking attendance to unlock streaks and risk alerts.";
-
-  const showAttendanceGate =
-    dashboardData.eligibleStudents > 0 &&
-    dashboardData.missedAttendanceCompletedDays >= 2 &&
-    !dashboardData.attendanceMarkedToday;
 
   const revenueChange = useMemo(() => {
     const current = dashboardData.revenueMTD;
@@ -1756,18 +1743,6 @@ const Dashboard = () => {
     });
   };
 
-  const handleAttendanceSkip = () => {
-    setDashboardDayState((current) => ({
-      ...current,
-      attendanceSkipUsed: true,
-    }));
-    setAttendanceAlertCollapsed(true);
-    toast({
-      title: "Attendance reminder minimized",
-      description: "Reminder compact mode me rahega, but aaj ke liye hide nahi hoga.",
-    });
-  };
-
   const riskStatus = useMemo(() => {
     if (dashboardData.urgentRiskStudents.length > 0) {
       return { icon: "🔴", label: "High", className: "text-destructive" };
@@ -1803,33 +1778,6 @@ const Dashboard = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {showAttendanceGate ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/85 p-4 backdrop-blur-sm">
-            <Card className="w-full max-w-xl border-destructive/30 bg-card shadow-2xl">
-              <CardHeader className="space-y-4">
-                <Badge variant="outline" className="w-fit border-destructive/20 bg-destructive/10 text-destructive">
-                  Dashboard Locked
-                </Badge>
-                <div className="space-y-2">
-                  <CardTitle className="text-2xl font-display">Please complete attendance to continue</CardTitle>
-                  <CardDescription className="text-base">
-                    Attendance was not marked for the last {dashboardData.missedAttendanceCompletedDays} completed days. Mark
-                    today&apos;s attendance to unlock the dashboard.
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3 sm:flex-row">
-                <Button asChild className="sm:flex-1">
-                  <Link to="/dashboard/attendance">Mark Attendance</Link>
-                </Button>
-                <Button variant="outline" className="sm:flex-1" onClick={() => refetchDashboard()}>
-                  I already completed it
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        ) : null}
-
         {!resolvedLibraryId && !loading ? (
           <Card>
             <CardContent className="py-10 text-center text-destructive">
@@ -1857,21 +1805,17 @@ const Dashboard = () => {
                 <Alert
                   className={cn(
                     "border-destructive/20 bg-gradient-to-r from-destructive/10 via-card to-card shadow-lg",
-                    attendanceAlertCollapsed ? "py-3" : "py-4",
+                    "py-4",
                   )}
                 >
                   <AlertTriangle className="h-4 w-4 text-destructive" />
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div className="space-y-1">
                       <AlertTitle className="text-base font-display text-foreground">
-                        {attendanceAlertCollapsed
-                          ? "Attendance reminder minimized"
-                          : "Attendance not marked today (Required)"}
+                        Attendance not marked today
                       </AlertTitle>
                       <AlertDescription className="text-sm text-muted-foreground">
-                        {attendanceAlertCollapsed
-                          ? `Reminder stays visible until attendance is completed. ${attendanceCountdownLabel}.`
-                          : `You still need to open attendance for ${dashboardData.eligibleStudents} tracked students. ${attendanceCountdownLabel}.`}
+                        You still need to open attendance for {dashboardData.eligibleStudents} tracked students. {attendanceCountdownLabel}.
                       </AlertDescription>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1879,18 +1823,8 @@ const Dashboard = () => {
                         {attendanceCountdownLabel}
                       </Badge>
                       <Button asChild size="sm">
-                        <Link to="/dashboard/attendance">Mark Now</Link>
+                        <Link to="/dashboard/attendance">Review Attendance</Link>
                       </Button>
-                      {!dashboardDayState.attendanceSkipUsed && !attendanceAlertCollapsed ? (
-                        <Button size="sm" variant="outline" onClick={handleAttendanceSkip}>
-                          Skip
-                        </Button>
-                      ) : null}
-                      {attendanceAlertCollapsed ? (
-                        <Button size="sm" variant="ghost" onClick={() => setAttendanceAlertCollapsed(false)}>
-                          Expand
-                        </Button>
-                      ) : null}
                     </div>
                   </div>
                 </Alert>

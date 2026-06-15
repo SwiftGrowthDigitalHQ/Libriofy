@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { differenceInCalendarDays, format, startOfMonth, startOfDay } from "date-fns";
 import { CalendarDays, Clock3, ShieldCheck, UserRoundCheck } from "lucide-react";
 
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useCurrentLibraryId } from "@/hooks/useCurrentLibraryId";
+import { getStoredAccessToken } from "@/lib/authSession";
 import { getSafeErrorMessage } from "@/lib/errorHandling";
 
 type MonthlyAttendanceRow = {
@@ -21,6 +22,123 @@ type MonthlyAttendanceRow = {
   membership_status: string | null;
   present_days: number;
   student_id: string;
+};
+
+type MonthlyAttendanceRpcError = {
+  code?: string;
+  details?: string;
+  hint?: string;
+  message?: string;
+};
+
+type MonthlyAttendanceStudentRow = Pick<
+  Database["public"]["Tables"]["students"]["Row"],
+  "full_name" | "id" | "status"
+>;
+
+type MonthlyAttendanceLogRow = Pick<
+  Database["public"]["Tables"]["attendance_logs"]["Row"],
+  "check_in" | "check_out" | "date" | "student_id"
+>;
+
+const normalizeMonthlyAttendanceRows = (rows: MonthlyAttendanceRow[] | null | undefined): MonthlyAttendanceRow[] => {
+  if (!Array.isArray(rows)) return [];
+
+  return rows
+    .map((row) => ({
+      absent_days: Number(row.absent_days ?? 0),
+      attendance_percent: Number(row.attendance_percent ?? 0),
+      full_name: row.full_name || "Unknown Student",
+      last_check_in: row.last_check_in ?? null,
+      last_check_out: row.last_check_out ?? null,
+      membership_status: row.membership_status ?? null,
+      present_days: Number(row.present_days ?? 0),
+      student_id: String(row.student_id ?? ""),
+    }))
+    .filter((row) => row.student_id.length > 0);
+};
+
+const isMonthlyAttendanceRpcMissing = (error: MonthlyAttendanceRpcError | null | undefined) => error?.code === "PGRST202";
+
+const getScopeDateKey = (value: Date) => value.toISOString().split("T")[0];
+
+const getMaxTimestamp = (current: string | null, next: string | null) => {
+  if (!next) return current;
+  if (!current) return next;
+  return new Date(next).getTime() > new Date(current).getTime() ? next : current;
+};
+
+const buildMonthlyAttendanceFallback = async (libraryId: string, monthStart: Date): Promise<MonthlyAttendanceRow[]> => {
+  const scopeStart = startOfMonth(monthStart);
+  const scopeEnd = startOfDay(new Date());
+  const daysInScope = Math.max(1, differenceInCalendarDays(scopeEnd, scopeStart) + 1);
+
+  const [studentsRes, attendanceRes] = await Promise.all([
+    supabase
+      .from("students")
+      .select("full_name, id, status")
+      .eq("library_id", libraryId)
+      .order("full_name", { ascending: true })
+      .order("id", { ascending: true }),
+    supabase
+      .from("attendance_logs")
+      .select("check_in, check_out, date, student_id")
+      .eq("library_id", libraryId)
+      .gte("date", getScopeDateKey(scopeStart))
+      .lte("date", getScopeDateKey(scopeEnd))
+      .order("date", { ascending: true })
+      .order("check_in", { ascending: true })
+      .order("id", { ascending: true }),
+  ]);
+
+  if (studentsRes.error) throw studentsRes.error;
+  if (attendanceRes.error) throw attendanceRes.error;
+
+  const students = (studentsRes.data ?? []) as MonthlyAttendanceStudentRow[];
+  const attendance = (attendanceRes.data ?? []) as MonthlyAttendanceLogRow[];
+
+  const attendanceMap = new Map<
+    string,
+    {
+      lastCheckIn: string | null;
+      lastCheckOut: string | null;
+      presentDates: Set<string>;
+    }
+  >();
+
+  for (const row of attendance) {
+    const dateKey = typeof row.date === "string" ? row.date : null;
+    if (!dateKey || !row.student_id) continue;
+
+    const current = attendanceMap.get(row.student_id) ?? {
+      lastCheckIn: null,
+      lastCheckOut: null,
+      presentDates: new Set<string>(),
+    };
+
+    current.presentDates.add(dateKey);
+    current.lastCheckIn = getMaxTimestamp(current.lastCheckIn, row.check_in ?? null);
+    current.lastCheckOut = getMaxTimestamp(current.lastCheckOut, row.check_out ?? null);
+    attendanceMap.set(row.student_id, current);
+  }
+
+  return students.map((student) => {
+    const studentAttendance = attendanceMap.get(student.id);
+    const presentDays = studentAttendance?.presentDates.size ?? 0;
+    const absentDays = Math.max(daysInScope - presentDays, 0);
+    const attendancePercent = Math.round((presentDays / daysInScope) * 10000) / 100;
+
+    return {
+      absent_days: absentDays,
+      attendance_percent: attendancePercent,
+      full_name: student.full_name || "Unknown Student",
+      last_check_in: studentAttendance?.lastCheckIn ?? null,
+      last_check_out: studentAttendance?.lastCheckOut ?? null,
+      membership_status: student.status?.trim() || "unknown",
+      present_days: presentDays,
+      student_id: student.id,
+    };
+  });
 };
 
 const formatDateTime = (value: string | null) => {
@@ -69,6 +187,7 @@ const AttendancePage = () => {
   });
 
   const resolvedLibraryId = libraryId ?? fallbackLibraries[0]?.id ?? null;
+  const currentMonthStart = format(startOfMonth(new Date()), "yyyy-MM-dd");
 
   const {
     data: monthlyAttendance = [],
@@ -79,12 +198,31 @@ const AttendancePage = () => {
     queryFn: async (): Promise<MonthlyAttendanceRow[]> => {
       if (!resolvedLibraryId) return [];
 
-      const { data, error } = await supabase.rpc("get_monthly_attendance_analytics", {
-        p_library_id: resolvedLibraryId,
+      const accessToken = await getStoredAccessToken();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/rpc/get_monthly_attendance_analytics`, {
+        method: "POST",
+        headers: {
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          Authorization: accessToken ? `Bearer ${accessToken}` : `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          p_library_id: resolvedLibraryId,
+          p_month: currentMonthStart,
+        }),
       });
 
-      if (error) throw error;
-      return (data ?? []) as MonthlyAttendanceRow[];
+      const payload = (await response.json().catch(() => null)) as MonthlyAttendanceRpcError | MonthlyAttendanceRow[] | null;
+
+      if (!response.ok) {
+        if (isMonthlyAttendanceRpcMissing(payload as MonthlyAttendanceRpcError | null)) {
+          return normalizeMonthlyAttendanceRows(await buildMonthlyAttendanceFallback(resolvedLibraryId, new Date()));
+        }
+
+        throw Object.assign(new Error(payload?.message || `Monthly attendance RPC failed with status ${response.status}`), payload ?? {});
+      }
+
+      return normalizeMonthlyAttendanceRows(payload as MonthlyAttendanceRow[] | null | undefined);
     },
     enabled: !!resolvedLibraryId,
   });
