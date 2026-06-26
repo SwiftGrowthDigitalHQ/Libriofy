@@ -1,0 +1,35 @@
+{
+  "name": "Libriofy",
+  "description": "Library automation platform for seat management, attendance, payments, and student management.",
+  "url": "https://www.libriofy.com",
+  "manifestUrl": "https://www.libriofy.com/manifest.webmanifest",
+  "serviceWorkerUrl": "https://www.libriofy.com/service-worker.js",
+  "packageOptions": {
+    "windows": {
+      "packageId": "com.libriofy.app",
+      "publisherId": "CN=Libriofy",
+      "publisherDisplayName": "Libriofy",
+      "version": "1.0.0.0",
+      "classicPackage": {
+        "generate": true,
+        "version": "1.0.0.0"
+      },
+      "allowSigning": true,
+      "targetDeviceFamilies": ["Desktop"],
+      "minWindowsVersion": "10.0.17763.0",
+      "architecture": "x64",
+      "capabilities": [
+        "internetClient",
+        "internetClientServer"
+      ]
+    }
+  },
+  "certification": {
+    "storeCategory": "Business",
+    "storeSubCategory": "Collaboration",
+    "ageRating": "3+",
+    "privacyUrl": "https://www.libriofy.com/privacy-policy",
+    "termsUrl": "https://www.libriofy.com/terms",
+    "supportUrl": "https://www.libriofy.com/support"
+  }
+}

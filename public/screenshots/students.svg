@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f8fafc"/>
+      <stop offset="100%" style="stop-color:#e2e8f0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect x="0" y="0" width="260" height="1080" fill="#0e161b"/>
+  <text x="130" y="50" font-family="system-ui" font-size="24" font-weight="700" fill="white" text-anchor="middle">Libriofy</text>
+  <rect x="20" y="145" width="220" height="40" rx="8" fill="#1a7f72" opacity="0.9"/>
+  <text x="130" y="171" font-family="system-ui" font-size="14" fill="white" text-anchor="middle">Students</text>
+  <!-- Content -->
+  <text x="320" y="70" font-family="system-ui" font-size="28" font-weight="600" fill="#1e293b">Student Management</text>
+  <!-- Search bar -->
+  <rect x="300" y="90" width="600" height="44" rx="8" fill="white" stroke="#e2e8f0"/>
+  <text x="340" y="118" font-family="system-ui" font-size="14" fill="#94a3b8">Search students...</text>
+  <!-- Add button -->
+  <rect x="1680" y="90" width="150" height="44" rx="8" fill="#1a7f72"/>
+  <text x="1755" y="118" font-family="system-ui" font-size="14" fill="white" text-anchor="middle">+ Add Student</text>
+  <!-- Student cards -->
+  <rect x="300" y="160" width="820" height="120" rx="12" fill="white" stroke="#e2e8f0"/>
+  <circle cx="370" cy="220" r="30" fill="#e2e8f0"/>
+  <text x="370" y="226" font-family="system-ui" font-size="20" fill="#64748b" text-anchor="middle">RS</text>
+  <text x="420" y="200" font-family="system-ui" font-size="16" font-weight="600" fill="#1e293b">Rahul Sharma</text>
+  <text x="420" y="225" font-family="system-ui" font-size="13" fill="#64748b">Seat A-12 • Plan: Premium Monthly</text>
+  <text x="420" y="250" font-family="system-ui" font-size="12" fill="#1a7f72">Active • Expires: 15 Jul 2026</text>
+  <rect x="300" y="295" width="820" height="120" rx="12" fill="white" stroke="#e2e8f0"/>
+  <circle cx="370" cy="355" r="30" fill="#e2e8f0"/>
+  <text x="370" y="361" font-family="system-ui" font-size="20" fill="#64748b" text-anchor="middle">PP</text>
+  <text x="420" y="335" font-family="system-ui" font-size="16" font-weight="600" fill="#1e293b">Priya Patel</text>
+  <text x="420" y="360" font-family="system-ui" font-size="13" fill="#64748b">Seat B-07 • Plan: Standard Monthly</text>
+  <text x="420" y="385" font-family="system-ui" font-size="12" fill="#1a7f72">Active • Expires: 22 Jul 2026</text>
+  <rect x="300" y="430" width="820" height="120" rx="12" fill="white" stroke="#e2e8f0"/>
+  <circle cx="370" cy="490" r="30" fill="#e2e8f0"/>
+  <text x="370" y="496" font-family="system-ui" font-size="20" fill="#64748b" text-anchor="middle">AK</text>
+  <text x="420" y="470" font-family="system-ui" font-size="16" font-weight="600" fill="#1e293b">Amit Kumar</text>
+  <text x="420" y="495" font-family="system-ui" font-size="13" fill="#64748b">Seat C-03 • Plan: Premium Quarterly</text>
+  <text x="420" y="520" font-family="system-ui" font-size="12" fill="#f59e0b">Renewal Due • Expires: 28 Jun 2026</text>
+</svg>

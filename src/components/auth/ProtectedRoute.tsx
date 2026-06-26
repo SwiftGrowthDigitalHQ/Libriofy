@@ -64,7 +64,7 @@ const ProtectedRoute = ({
   const shouldDebug = debugLabel === "partner" || location.pathname === "/partner" || location.pathname.startsWith("/partner/");
   const currentUser = user ? { email: user.email, id: user.id } : null;
   const logDebug = (message: string, extra?: Record<string, unknown>) => {
-    if (!shouldDebug) return;
+    if (!shouldDebug || !import.meta.env.DEV) return;
 
     console.log(`[ProtectedRoute:${debugLabel ?? location.pathname}] ${message}`, {
       allowRoles: allowRoles ?? [],

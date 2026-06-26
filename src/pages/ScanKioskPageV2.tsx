@@ -709,7 +709,7 @@ const ScanKioskPageV2 = () => {
     });
 
     try { if (typeof navigator?.vibrate === "function") navigator.vibrate(20); } catch {}
-    console.log("[scan] QR detected:", val.slice(0, 40));
+    if (import.meta.env.DEV) console.log("[scan] QR detected:", val.slice(0, 40));
 
     try {
       const verificationStartedAt = performance.now();
@@ -720,7 +720,7 @@ const ScanKioskPageV2 = () => {
         publicKeyPem: QR_PUBLIC_KEY,
       });
       const verificationMs = Math.round(performance.now() - verificationStartedAt);
-      console.log("[scan] Parse result:", parsed ? { valid: parsed.valid, source: parsed.source, code: parsed.code } : "null");
+      if (import.meta.env.DEV) console.log("[scan] Parse result:", parsed ? { valid: parsed.valid, source: parsed.source, code: parsed.code } : "null");
 
       if (debugMode) {
         setDebugPanel((prev) => ({
@@ -804,7 +804,7 @@ const ScanKioskPageV2 = () => {
 
       if (online) {
         try {
-          console.log("[scan] Submitting to API...");
+          if (import.meta.env.DEV) console.log("[scan] Submitting to API...");
           const attendanceStartedAt = performance.now();
           const detailed = await submitAttendanceScanDetailed({
             debug: debugMode,
@@ -816,7 +816,7 @@ const ScanKioskPageV2 = () => {
           serverDebug = detailed.debug;
           responseStatus = detailed.responseStatus;
           const attendanceMs = Math.round(performance.now() - attendanceStartedAt);
-          console.log("[scan] API response:", res.status, res.message);
+          if (import.meta.env.DEV) console.log("[scan] API response:", res.status, res.message);
           if (debugMode) {
             setDebugPanel((prev) => ({
               ...prev,
@@ -854,7 +854,7 @@ const ScanKioskPageV2 = () => {
             return;
           }
         } catch (err) {
-          console.log("[scan] API error, queuing:", err);
+          if (import.meta.env.DEV) console.log("[scan] API error, queuing:", err);
           await enqueueAttendanceQueueEntry(entry);
           const cached = readOfflineVerifiedStudent({ libraryId: lid, studentId: sid });
           res = {
@@ -920,7 +920,7 @@ const ScanKioskPageV2 = () => {
     mountRef.current = true;
     const sc = new ScanController({
       onDetect: (d: ScanDetectionPayload) => {
-        console.log("[scan] onDetect fired:", d.rawValue?.slice(0, 30));
+        if (import.meta.env.DEV) console.log("[scan] onDetect fired:", d.rawValue?.slice(0, 30));
         processRef.current(d.rawValue, {
           analysis: d.analysis,
           bounds: d.bounds,
@@ -945,7 +945,7 @@ const ScanKioskPageV2 = () => {
       await sc.init();
       if (!mountRef.current) return;
       await sc.start("page-load");
-      console.log("[scan] Scanner started, status:", sc.getState().status);
+      if (import.meta.env.DEV) console.log("[scan] Scanner started, status:", sc.getState().status);
     };
     void boot().catch((e) => { console.error("[scan] Boot failed:", e); });
     const hb = setInterval(() => { void heartbeat(); }, HEARTBEAT_MS);

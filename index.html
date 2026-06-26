@@ -3,6 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Preconnect for faster font loading -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Non-render-blocking font loading with display=swap -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'" />
+    <noscript>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" />
+    </noscript>
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-HKKT02JQ2Z"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
@@ -24,21 +32,69 @@
     <meta name="apple-mobile-web-app-title" content="Libriofy" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <meta name="msapplication-TileColor" content="#0e161b" />
+    <meta name="msapplication-TileImage" content="/icons/mstile-144x144.png" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
 
     <meta property="og:title" content="Libriofy - Library Automation System" />
     <meta property="og:description" content="Automate library seat management, payments, and attendance." />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="/favicon.svg" />
+    <meta property="og:url" content="https://libriofy.com/" />
+    <meta property="og:site_name" content="Libriofy" />
+    <meta property="og:image" content="https://libriofy.com/icons/icon-300x300.svg" />
+    <meta property="og:image:width" content="300" />
+    <meta property="og:image:height" content="300" />
+    <meta property="og:locale" content="en_US" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Libriofy - Library Automation System" />
     <meta name="twitter:description" content="Automate library seat management, payments, and attendance." />
-    <meta name="twitter:image" content="/favicon.svg" />
+    <meta name="twitter:image" content="https://libriofy.com/icons/wide-620x300.svg" />
+
+    <!-- Microsoft-specific metadata -->
+    <meta name="msapplication-starturl" content="/dashboard" />
+    <meta name="msapplication-navbutton-color" content="#0e161b" />
+    <meta name="msapplication-window" content="width=1280;height=800" />
+    <meta name="msapplication-task" content="name=Dashboard;action-uri=/dashboard;icon-uri=/icons/icon-44x44.svg" />
+    <meta name="msapplication-tooltip" content="Libriofy - Library Automation Platform" />
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://libriofy.com/" />
+
+    <!-- Structured data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Libriofy",
+      "alternateName": "Libriofy Library Automation",
+      "description": "Complete library automation for seat management, attendance tracking, payments, student records, and business analytics.",
+      "url": "https://libriofy.com",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Windows 10, Windows 11, Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "INR"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "Libriofy",
+        "url": "https://libriofy.com"
+      },
+      "screenshot": "https://libriofy.com/screenshots/dashboard.svg",
+      "featureList": "Attendance Tracking, Student Management, Payment Tracking, Seat Management, Analytics, Offline Support"
+    }
+    </script>
   </head>
 
   <body>
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[9999] focus:bg-primary focus:text-white focus:px-4 focus:py-2 focus:rounded-md focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-ring">
+      Skip to content
+    </a>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

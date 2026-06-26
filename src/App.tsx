@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
+import { useRouteAnnouncer } from "@/hooks/useRouteAnnouncer";
 import DomainRouter from "@/components/DomainRouter";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import AuthRoute from "@/components/auth/AuthRoute";
@@ -99,6 +100,12 @@ const DeviceSetupRoute = () => {
 
 const DebugScanSingleRoute = () => <Navigate to="/scan?scanDebug=1" replace />;
 
+/** Accessibility: announces route changes to screen readers */
+const RouteAnnouncer = () => {
+  useRouteAnnouncer();
+  return null;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
@@ -111,8 +118,10 @@ const App = () => (
               future={routerFutureFlags}
               {...(useHashRouter ? {} : { basename: import.meta.env.BASE_URL })}
             >
+              <RouteAnnouncer />
               <GlobalErrorBoundary>
                 <ImpersonationBanner />
+                <main id="main-content" role="main">
                 <Suspense fallback={<RouteFallback />}>
                   <DomainRouter>
                     <Routes>
@@ -432,6 +441,7 @@ const App = () => (
                     </Routes>
                   </DomainRouter>
                 </Suspense>
+                </main>
               </GlobalErrorBoundary>
             </Router>
           </PWAProvider>

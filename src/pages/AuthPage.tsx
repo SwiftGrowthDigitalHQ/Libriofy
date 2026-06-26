@@ -186,12 +186,14 @@ const AuthPage = ({ initialMode = "login" }: AuthPageProps) => {
         : null;
     const nextPath = requestedPath ?? await getRedirectPath(userId);
 
-    console.log("[AuthPage] login redirect resolved", {
-      currentRoute: location.pathname,
-      currentUser: { email: currentSession?.user.email ?? null, id: userId },
-      redirectTo: nextPath,
-      requestedPath,
-    });
+    if (import.meta.env.DEV) {
+      console.log("[AuthPage] login redirect resolved", {
+        currentRoute: location.pathname,
+        currentUser: { email: currentSession?.user.email ?? null, id: userId },
+        redirectTo: nextPath,
+        requestedPath,
+      });
+    }
 
     setSuccessState(true);
     navigator.vibrate?.(45);

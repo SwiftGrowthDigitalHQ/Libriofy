@@ -552,11 +552,11 @@ const handleImageDataDecodeMessage = async (message: DecodeImageDataMessage) => 
       (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt,
     );
 
-    // Debug: log every 50 frames
+    // Periodic diagnostic log (development only, throttled to every 3s)
     const now = Date.now();
     if (now - lastLogAt > 3000) {
       lastLogAt = now;
-      console.log(`[scan-worker] frames=${frameCount} size=${message.imageData.width}x${message.imageData.height} brightness=${Math.round(result.brightness)} edge=${result.edgeScore.toFixed(1)} blurry=${result.blurry} found=${!!result.rawValue}`);
+      // Removed in production: scan worker frame debug logging
     }
 
     postWorkerMessage({

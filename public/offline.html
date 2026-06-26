@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0e161b" />
-    <title>Libriofy Offline</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Libriofy - Offline</title>
     <style>
       :root {
         color-scheme: light;
@@ -14,107 +15,227 @@
         --sidebar: #0e161b;
         --muted: #64748b;
         --border: rgba(14, 22, 27, 0.08);
+        --success: #16a34a;
       }
 
       * {
         box-sizing: border-box;
+        margin: 0;
+        padding: 0;
       }
 
       body {
-        margin: 0;
         min-height: 100dvh;
-        font-family: Inter, system-ui, sans-serif;
+        font-family: Inter, system-ui, -apple-system, sans-serif;
         background:
-          radial-gradient(circle at top, rgba(26, 127, 114, 0.14), transparent 28%),
+          radial-gradient(circle at top, rgba(26, 127, 114, 0.12), transparent 30%),
           linear-gradient(180deg, var(--background), #eef4f5 100%);
         color: var(--foreground);
         display: grid;
         place-items: center;
         padding: 24px;
+        line-height: 1.5;
       }
 
       main {
-        width: min(100%, 460px);
-        background: rgba(255, 255, 255, 0.92);
+        width: min(100%, 500px);
+        background: rgba(255, 255, 255, 0.95);
         border: 1px solid var(--border);
         border-radius: 24px;
-        padding: 28px;
-        box-shadow: 0 22px 60px rgba(14, 22, 27, 0.12);
+        padding: 36px 32px;
+        box-shadow: 0 24px 64px rgba(14, 22, 27, 0.1);
+        text-align: center;
       }
 
-      .badge {
-        width: 56px;
-        height: 56px;
+      .logo {
+        width: 64px;
+        height: 64px;
         border-radius: 18px;
         background: var(--sidebar);
         color: white;
-        display: grid;
+        display: inline-grid;
         place-items: center;
-        font-size: 26px;
-        margin-bottom: 18px;
+        font-size: 30px;
+        font-weight: 700;
+        font-family: 'Space Grotesk', system-ui, sans-serif;
+        margin-bottom: 20px;
       }
 
       h1 {
-        margin: 0 0 10px;
-        font-family: "Space Grotesk", system-ui, sans-serif;
-        font-size: clamp(1.75rem, 5vw, 2.2rem);
+        font-family: 'Space Grotesk', system-ui, sans-serif;
+        font-size: clamp(1.6rem, 4vw, 2rem);
+        font-weight: 700;
+        margin-bottom: 12px;
+        color: var(--foreground);
       }
 
       p {
-        margin: 0 0 18px;
-        line-height: 1.6;
         color: var(--muted);
+        margin-bottom: 20px;
+        font-size: 0.95rem;
+        line-height: 1.7;
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 500;
+        margin-bottom: 20px;
+      }
+
+      .status-badge.offline {
+        background: #fef2f2;
+        color: #dc2626;
+        border: 1px solid #fecaca;
+      }
+
+      .status-badge.online {
+        background: #f0fdf4;
+        color: var(--success);
+        border: 1px solid #bbf7d0;
+      }
+
+      .status-badge .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
       }
 
       .actions {
         display: flex;
         gap: 12px;
+        justify-content: center;
         flex-wrap: wrap;
+        margin-bottom: 20px;
       }
 
-      a,
-      button {
+      button, a.btn {
         appearance: none;
         border: 0;
         border-radius: 999px;
-        padding: 12px 18px;
+        padding: 12px 24px;
         font: inherit;
+        font-size: 0.9rem;
+        font-weight: 500;
         cursor: pointer;
         text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: transform 0.15s, box-shadow 0.15s;
       }
 
-      .primary {
+      button:hover, a.btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      }
+
+      button:active, a.btn:active {
+        transform: translateY(0);
+      }
+
+      button:focus-visible, a.btn:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+
+      .btn-primary {
         background: var(--primary);
         color: white;
       }
 
-      .secondary {
+      .btn-secondary {
         background: rgba(14, 22, 27, 0.06);
         color: var(--foreground);
       }
 
       .hint {
-        margin-top: 18px;
-        font-size: 0.95rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
       }
+
+      .hidden { display: none; }
     </style>
   </head>
   <body>
-    <main>
-      <div class="badge">L</div>
-      <h1>You're offline</h1>
-      <p>
-        Libriofy cached app shell aur recent pages available hone par open kar dega. Agar yeh screen dikh rahi hai,
-        to current route abhi cache me nahi mila.
-      </p>
-      <div class="actions">
-        <button class="primary" type="button" onclick="window.location.reload()">Try again</button>
-        <a class="secondary" href="/dashboard">Open dashboard</a>
+    <main role="main" aria-labelledby="offline-heading">
+      <div class="logo" aria-hidden="true">L</div>
+
+      <div id="status-indicator" class="status-badge offline" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="status-text">No internet connection</span>
       </div>
+
+      <h1 id="offline-heading">You're offline</h1>
+
+      <p>
+        Your internet connection appears to be unavailable. Libriofy caches key pages for offline access.
+        If this page is showing, the requested route hasn't been cached yet.
+      </p>
+
+      <div class="actions">
+        <button class="btn-primary" type="button" id="retry-btn" aria-label="Retry loading the page">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M14 8A6 6 0 1 1 3.05 5.05" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M2 2v4h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Try again
+        </button>
+        <a class="btn btn-secondary" href="/dashboard" aria-label="Go to dashboard">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 6l6-4 6 4v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Dashboard
+        </a>
+      </div>
+
       <p class="hint">
-        Future-ready offline foundation enabled hai, so attendance sync jaise features later isi base par add kiye ja
-        sakte hain.
+        Libriofy automatically reconnects when your network is available. Pages you've visited before will continue to work offline.
       </p>
     </main>
+
+    <script>
+      // Reconnection detection
+      const statusIndicator = document.getElementById('status-indicator');
+      const statusText = document.getElementById('status-text');
+      const retryBtn = document.getElementById('retry-btn');
+
+      function updateOnlineStatus() {
+        if (navigator.onLine) {
+          statusIndicator.className = 'status-badge online';
+          statusText.textContent = 'Connection restored';
+          // Auto-reload after brief delay
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          statusIndicator.className = 'status-badge offline';
+          statusText.textContent = 'No internet connection';
+        }
+      }
+
+      window.addEventListener('online', updateOnlineStatus);
+      window.addEventListener('offline', updateOnlineStatus);
+
+      retryBtn.addEventListener('click', () => {
+        retryBtn.disabled = true;
+        retryBtn.textContent = 'Retrying...';
+        window.location.reload();
+      });
+
+      // Check immediately in case status changed
+      updateOnlineStatus();
+    </script>
   </body>
 </html>

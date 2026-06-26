@@ -435,11 +435,13 @@ const RenewalsPage = () => {
   const reminderLogsFetchingMore = reminderLogsQuery.isFetchingNextPage;
 
   useEffect(() => {
-    console.log({
-      totalLogs: reminderLogsTotalCount,
-      loadedLogs: reminderLogsLoadedCount,
-      hasMore: reminderLogsHasMore,
-    });
+    if (import.meta.env.DEV) {
+      console.log({
+        totalLogs: reminderLogsTotalCount,
+        loadedLogs: reminderLogsLoadedCount,
+        hasMore: reminderLogsHasMore,
+      });
+    }
   }, [reminderLogsHasMore, reminderLogsLoadedCount, reminderLogsTotalCount]);
 
   const groupedReminderLogs = useMemo<ReminderLogGroup[]>(() => {

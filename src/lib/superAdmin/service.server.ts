@@ -6344,15 +6344,17 @@ const loadLibraryCenterCoreData = async (client: UntypedClient) => {
   }
 
   const profiles = await loadProfilesByUserIds(client, [...relevantUserIds]);
-  console.log("[admin-data] Library center core loaded:", {
-    libraries: libraries.length,
-    subscriptions: subscriptions.length,
-    userRoles: userRoles.length,
-    loginRows: loginRows.length,
-    profiles: profiles.length,
-    attendanceRows: attendanceRows.length,
-    impersonationRows: impersonationRows.length,
-  });
+  if (process.env.APP_ENV !== "production") {
+    console.log("[admin-data] Library center core loaded:", {
+      libraries: libraries.length,
+      subscriptions: subscriptions.length,
+      userRoles: userRoles.length,
+      loginRows: loginRows.length,
+      profiles: profiles.length,
+      attendanceRows: attendanceRows.length,
+      impersonationRows: impersonationRows.length,
+    });
+  }
   const lastActivityByLibraryId = new Map<string, string>();
   for (const row of attendanceRows) {
     const libraryId = normalizeText(row.library_id);
