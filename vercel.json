@@ -18,6 +18,14 @@
         {
           "key": "Cache-Control",
           "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
         }
       ]
     },
@@ -134,7 +142,7 @@
       "destination": "/api/health/db"
     },
     {
-      "source": "/((?!api/|assets/|favicon.ico|robots.txt|sitemap.xml|service-worker.js|manifest.webmanifest|release.json).*)",
+      "source": "/((?!api/|assets/|favicon.ico|favicon.svg|favicon.png|robots.txt|sitemap.xml|service-worker.js|pwabuilder-sw.js|manifest.webmanifest|browserconfig.xml|release.json|icons/|screenshots/).*)",
       "destination": "/index.html"
     }
   ]

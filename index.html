@@ -97,5 +97,21 @@
     </a>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- Inline SW registration for PWABuilder detection -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(function(reg) {
+          if (reg.installing) {
+            console.log("[SW] Installing...");
+          } else if (reg.waiting) {
+            console.log("[SW] Installed, waiting.");
+          } else if (reg.active) {
+            console.log("[SW] Active.");
+          }
+        }).catch(function(err) {
+          console.error("[SW] Registration failed:", err);
+        });
+      }
+    </script>
   </body>
 </html>

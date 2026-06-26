@@ -5,6 +5,12 @@
   "description": "Complete library automation for seat management, attendance tracking, payments, student records, and business analytics. Built for modern libraries and study centers.",
   "start_url": "/dashboard",
   "scope": "/",
+  "serviceworker": {
+    "src": "/service-worker.js",
+    "scope": "/",
+    "type": "classic",
+    "update_via_cache": "none"
+  },
   "lang": "en",
   "dir": "ltr",
   "display": "standalone",
